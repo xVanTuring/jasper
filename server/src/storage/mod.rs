@@ -24,6 +24,12 @@ pub trait StorageBackend: Send + Sync {
 
     /// 读取资源二进制。`resource_id` 形如 `<32hex>`（对应 `.resource/<id>`）。
     fn get_resource(&self, resource_id: &str) -> Result<Vec<u8>>;
+
+    /// 写入（新建或覆盖）一个条目文件。`name` 形如 `<32hex>.md`。
+    fn put_item(&self, name: &str, content: &str) -> Result<()>;
+
+    /// 删除一个条目文件。
+    fn delete_item(&self, name: &str) -> Result<()>;
 }
 
 /// 判断文件名是否为合法条目文件：32 位十六进制 + `.md`。

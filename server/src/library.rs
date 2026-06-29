@@ -21,6 +21,9 @@ pub struct Library {
     notes_by_folder: HashMap<String, Vec<String>>,
     /// parent folder_id -> 子笔记本 id（根用空串 ""）
     child_folders: HashMap<String, Vec<String>>,
+
+    /// 笔记的原始 .md 内容（用于保存时保留元数据，避免重新拉取）
+    raw_notes: HashMap<String, String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -41,22 +44,22 @@ impl Library {
         let mut lib = Library::default();
         let mut stats = BuildStats::default();
 
-        // 并行拉取 + 解析（WebDAV 场景下数百个文件串行下载太慢）。
+        // 并行拉取 + 解析（WebDAV 场景下数百个文件串行下载太慢）。保留笔记原始内容用于写回。
         let item_stats = storage.list_items()?;
-        let parsed: Vec<Option<RawItem>> = item_stats
+        let parsed: Vec<Option<(String, RawItem)>> = item_stats
             .par_iter()
             .map(|s| {
                 storage
                     .get_item(&s.name)
                     .ok()
-                    .and_then(|content| parser::parse_item(&content).ok())
+                    .and_then(|content| parser::parse_item(&content).ok().map(|raw| (content, raw)))
             })
             .collect();
 
         // 分类（顺序执行，构建索引）
         for item in parsed {
-            let raw = match item {
-                Some(r) => r,
+            let (content, raw) = match item {
+                Some(x) => x,
                 None => {
                     stats.errors += 1;
                     continue;
@@ -69,6 +72,7 @@ impl Library {
             match raw.item_type() {
                 ItemType::Note => match parser::to_note(&raw) {
                     Ok(n) => {
+                        lib.raw_notes.insert(n.id.clone(), content);
                         lib.notes.insert(n.id.clone(), n);
                         stats.notes += 1;
                     }
@@ -180,5 +184,28 @@ impl Library {
         hits.sort_by(|a, b| b.updated_time.cmp(&a.updated_time));
         hits.truncate(200);
         hits
+    }
+
+    /// 笔记的原始 .md 内容（保存时用于保留元数据）。
+    pub fn note_raw(&self, id: &str) -> Option<&str> {
+        self.raw_notes.get(id).map(|s| s.as_str())
+    }
+
+    /// 新增或更新一篇笔记（写回成功后同步内存）。返回笔记 id。
+    pub fn upsert_note(&mut self, content: &str) -> anyhow::Result<String> {
+        let raw = parser::parse_item(content)?;
+        let note = parser::to_note(&raw)?;
+        let id = note.id.clone();
+        self.raw_notes.insert(id.clone(), content.to_string());
+        self.notes.insert(id.clone(), note);
+        self.build_indexes();
+        Ok(id)
+    }
+
+    /// 删除一篇笔记（写回成功后同步内存）。
+    pub fn remove_note(&mut self, id: &str) {
+        self.notes.remove(id);
+        self.raw_notes.remove(id);
+        self.build_indexes();
     }
 }

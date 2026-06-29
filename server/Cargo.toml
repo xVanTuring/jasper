@@ -18,6 +18,7 @@ ureq = "2"
 roxmltree = "0.20"
 base64 = "0.22"
 rayon = "1"
+getrandom = "0.2"
 
 [profile.release]
 opt-level = "z"

@@ -74,6 +74,23 @@ impl StorageBackend for WebDavStorage {
         resp.into_reader().read_to_end(&mut buf)?;
         Ok(buf)
     }
+
+    fn put_item(&self, name: &str, content: &str) -> Result<()> {
+        let url = format!("{}/{}", self.base, name);
+        self.req("PUT", &url)
+            .set("Content-Type", "text/plain; charset=utf-8")
+            .send_string(content)
+            .map_err(|e| anyhow!("PUT {name} 失败: {e}"))?;
+        Ok(())
+    }
+
+    fn delete_item(&self, name: &str) -> Result<()> {
+        let url = format!("{}/{}", self.base, name);
+        self.req("DELETE", &url)
+            .call()
+            .map_err(|e| anyhow!("DELETE {name} 失败: {e}"))?;
+        Ok(())
+    }
 }
 
 /// 解析 PROPFIND 的 multistatus XML，提取根目录下的条目文件及其修改时间。

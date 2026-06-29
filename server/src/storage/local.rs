@@ -59,4 +59,18 @@ impl StorageBackend for LocalStorage {
         let path = self.root.join(".resource").join(resource_id);
         std::fs::read(&path).with_context(|| format!("读取资源失败 {:?}", path))
     }
+
+    fn put_item(&self, name: &str, content: &str) -> Result<()> {
+        // 写临时文件后原子 rename，避免写一半导致文件损坏
+        let path = self.root.join(name);
+        let tmp = self.root.join(format!(".{name}.tmp"));
+        std::fs::write(&tmp, content).with_context(|| format!("写入临时文件失败 {:?}", tmp))?;
+        std::fs::rename(&tmp, &path).with_context(|| format!("替换条目失败 {:?}", path))?;
+        Ok(())
+    }
+
+    fn delete_item(&self, name: &str) -> Result<()> {
+        let path = self.root.join(name);
+        std::fs::remove_file(&path).with_context(|| format!("删除条目失败 {:?}", path))
+    }
 }

@@ -15,6 +15,7 @@ mod api;
 mod library;
 mod model;
 mod parser;
+mod serialize;
 mod storage;
 
 use anyhow::Result;
@@ -62,7 +63,7 @@ async fn main() -> Result<()> {
     );
 
     let state = Arc::new(AppState {
-        library: RwLock::new(Arc::new(lib)),
+        library: RwLock::new(lib),
         storage,
     });
 
