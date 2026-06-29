@@ -12,8 +12,10 @@ RUN pnpm build
 
 # ---- 2) 构建后端 (release 二进制) ----
 FROM rust:1-bookworm AS rustbuild
+# core 是 server 的路径依赖（纯逻辑 crate），先拷入
+COPY core /build/core
 WORKDIR /build/server
-# 先用清单构建依赖层（rusqlite/axum 等编译较久，缓存复用）
+# 先用清单 + 占位 main 构建依赖层（rusqlite/axum 等编译较久，缓存复用）
 COPY server/Cargo.toml server/Cargo.lock ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs \
  && cargo build --release \

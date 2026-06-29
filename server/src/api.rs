@@ -225,7 +225,7 @@ async fn apply_config(
         if create_new {
             st.init_new()?;
         }
-        let (lib, stats) = Library::build_cached(st.as_ref(), &state2.cache, &source)?;
+        let (lib, stats) = crate::indexer::build_cached(st.as_ref(), &state2.cache, &source)?;
         Ok((lib, stats))
     })
     .await;

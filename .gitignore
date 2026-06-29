@@ -6,10 +6,14 @@
 
 # Rust 构建产物
 /server/target/
+/core/target/
+/wasm/target/
 
 # 前端依赖与构建产物
 /web/node_modules/
 /web/dist/
+# WASM demo 产物（由 `pnpm build:wasm` / wasm-pack 生成，不入库）
+/web/src/wasm-pkg/
 
 # 系统/编辑器杂项
 .DS_Store

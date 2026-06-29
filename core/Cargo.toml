@@ -1,0 +1,10 @@
+[package]
+name = "joplin-core"
+version = "0.1.0"
+edition = "2021"
+description = "Joplin sync-format core: model, parser, serializer, in-memory index (no IO; portable to WASM)"
+
+[dependencies]
+anyhow = "1"
+chrono = "0.4"
+getrandom = "0.2"

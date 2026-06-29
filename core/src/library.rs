@@ -1,14 +1,10 @@
-//! 内存索引层：把存储后端里的全部条目解析后组织成可查询的库。
+//! 内存索引层：把一批条目原始内容解析后组织成可查询的库（纯计算，无 IO）。
 //!
-//! 只读、构建一次即不可变；后续刷新通过重建+原子替换实现（见 AppState）。
-//! 构建有两条路径：`build`（全量拉取）与 `build_cached`（走 SQLite 增量缓存，
-//! 只拉取 mtime 变化/新增的条目，见 crate::cache）。
+//! 只读、构建一次即不可变。从存储拉取 + 增量缓存的协调放在 server 的 `indexer`，
+//! 它拿到原始内容后调用 `Library::from_contents`。本模块不引入线程/IO，可编译到 WASM。
 
-use crate::cache::CacheStore;
 use crate::model::*;
 use crate::parser;
-use crate::storage::StorageBackend;
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
@@ -45,75 +41,19 @@ pub struct BuildStats {
 }
 
 impl Library {
-    /// 增量构建：复用 SQLite 缓存，只拉取新增/变化（mtime 不同）的条目。
-    /// `source` 为数据源标识（见 config::source_key），用于隔离不同数据源的缓存。
-    pub fn build_cached(
-        storage: &dyn StorageBackend,
-        cache: &CacheStore,
-        source: &str,
-    ) -> anyhow::Result<(Library, BuildStats)> {
-        let listed = storage.list_items()?;
-        let cached = cache.load(source).unwrap_or_default();
-        let listed_names: HashSet<&str> = listed.iter().map(|s| s.name.as_str()).collect();
-
-        // 划分：命中缓存（mtime 相同且非 0）直接复用，其余待拉取。
-        let mut reuse_contents: Vec<String> = Vec::new();
-        let mut to_fetch: Vec<&str> = Vec::new();
-        for s in &listed {
-            match cached.get(&s.name) {
-                Some(c) if s.updated_time != 0 && c.updated_time == s.updated_time => {
-                    reuse_contents.push(c.content.clone())
-                }
-                _ => to_fetch.push(&s.name),
-            }
-        }
-        let cached_count = reuse_contents.len();
-
-        // 只并行拉取变化的条目。返回 (name, updated_time, content) 以便写回缓存。
-        let mtime_of: HashMap<&str, i64> =
-            listed.iter().map(|s| (s.name.as_str(), s.updated_time)).collect();
-        let fetched: Vec<(String, i64, String)> = to_fetch
-            .par_iter()
-            .filter_map(|name| {
-                storage
-                    .get_item(name)
-                    .ok()
-                    .map(|content| (name.to_string(), mtime_of[name], content))
-            })
-            .collect();
-
-        // 组装：复用 + 新拉取的内容一起解析建索引。
-        let mut all_contents = reuse_contents;
-        all_contents.extend(fetched.iter().map(|(_, _, c)| c.clone()));
-        let mut stats = BuildStats::default();
-        stats.cached = cached_count;
-        stats.fetched = fetched.len();
-        stats.errors += to_fetch.len() - fetched.len(); // 拉取失败计入错误
-        let lib = Library::from_contents(all_contents, &mut stats);
-
-        // 持久化缓存：写入变化项，清理数据源中已删除的条目。
-        let removed: Vec<String> = cached
-            .keys()
-            .filter(|k| !listed_names.contains(k.as_str()))
-            .cloned()
-            .collect();
-        if let Err(e) = cache.sync(source, &fetched, &removed) {
-            eprintln!("缓存写入失败（不影响本次运行）: {e}");
-        }
-        Ok((lib, stats))
-    }
-
-    /// 把一批原始 .md 内容解析、分类、建索引为 Library。类型计数与解析错误写入 `stats`。
-    fn from_contents(contents: Vec<String>, stats: &mut BuildStats) -> Library {
+    /// 把一批原始 .md 内容解析、分类、建索引为 Library，返回类型计数 + 解析错误数。
+    /// 拉取（并行/缓存）由调用方负责；这里只做纯解析与索引，便于编译到 WASM。
+    pub fn from_contents(contents: Vec<String>) -> (Library, BuildStats) {
         let mut lib = Library::default();
+        let mut stats = BuildStats::default();
 
-        // 并行解析；保留笔记原始内容用于写回。
+        // 顺序解析（核心库不引入线程）；保留笔记原始内容用于写回。
         let parsed: Vec<Option<(String, RawItem)>> = contents
-            .into_par_iter()
+            .into_iter()
             .map(|content| parser::parse_item(&content).ok().map(|raw| (content, raw)))
             .collect();
 
-        // 分类（顺序执行，构建索引）
+        // 分类，构建索引
         for item in parsed {
             let (content, raw) = match item {
                 Some(x) => x,
@@ -168,7 +108,7 @@ impl Library {
         }
 
         lib.build_indexes();
-        lib
+        (lib, stats)
     }
 
     fn build_indexes(&mut self) {

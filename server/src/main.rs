@@ -17,11 +17,12 @@
 mod api;
 mod cache;
 mod config;
-mod library;
-mod model;
-mod parser;
-mod serialize;
+mod indexer;
 mod storage;
+
+// 纯逻辑（数据模型/解析/序列化/索引）来自 joplin-core；以 crate 路径重导出，
+// 让既有的 crate::{model,parser,serialize,library} 引用保持不变。
+pub use joplin_core::{library, model, parser, serialize};
 
 use anyhow::Result;
 use api::AppState;
@@ -75,7 +76,7 @@ async fn main() -> Result<()> {
 
     if let Some(cfg) = &cfg {
         match config::build_storage(cfg) {
-            Ok(storage) => match Library::build_cached(
+            Ok(storage) => match indexer::build_cached(
                 storage.as_ref(),
                 &cache_store,
                 &config::source_key(cfg),
