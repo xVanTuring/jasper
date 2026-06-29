@@ -91,6 +91,14 @@ impl StorageBackend for WebDavStorage {
             .map_err(|e| anyhow!("DELETE {name} 失败: {e}"))?;
         Ok(())
     }
+
+    fn init_new(&self) -> Result<()> {
+        // 创建根目录与 .resource（已存在则忽略 MKCOL 错误），再写入 info.json
+        let _ = self.req("MKCOL", &format!("{}/", self.base)).call();
+        let _ = self.req("MKCOL", &format!("{}/.resource/", self.base)).call();
+        self.put_item("info.json", super::DEFAULT_INFO_JSON)?;
+        Ok(())
+    }
 }
 
 /// 解析 PROPFIND 的 multistatus XML，提取根目录下的条目文件及其修改时间。

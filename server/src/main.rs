@@ -2,16 +2,18 @@
 //!
 //! 启动后扫描本地数据目录 → 内存索引 → 提供 HTTP API + 托管前端 SPA。
 //!
-//! 用法：joplin-lite [数据源]
+//! 用法：joplin-lite [数据源]   （可选，首次也可在浏览器里完成配置）
 //!   数据源可以是本地目录路径，或 http(s):// 开头的 WebDAV 地址。
+//! 配置持久化在平台配置目录 joplin-lite/config.db；命令行参数仅用于首次引导。
 //! 环境变量：
-//!   JOPLIN_LITE_SOURCE        数据源（等价于命令行参数）
-//!   JOPLIN_LITE_WEBDAV_USER   WebDAV 用户名
-//!   JOPLIN_LITE_WEBDAV_PASS   WebDAV 密码
+//!   JOPLIN_LITE_SOURCE        引导用数据源（仅当尚无保存配置时生效）
+//!   JOPLIN_LITE_WEBDAV_USER   引导用 WebDAV 用户名
+//!   JOPLIN_LITE_WEBDAV_PASS   引导用 WebDAV 密码
 //!   JOPLIN_LITE_HOST          监听地址（默认 127.0.0.1；局域网访问设 0.0.0.0）
 //!   JOPLIN_LITE_PORT          端口（默认 27583）
 
 mod api;
+mod config;
 mod library;
 mod model;
 mod parser;
@@ -20,51 +22,78 @@ mod storage;
 
 use anyhow::Result;
 use api::AppState;
+use config::{ConfigStore, SourceConfig};
 use library::Library;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
-use storage::local::LocalStorage;
-use storage::webdav::WebDavStorage;
+use std::sync::{Arc, Mutex, RwLock};
+use storage::StorageBackend;
 use tower_http::services::{ServeDir, ServeFile};
+
+// 首次引导：把命令行/环境变量里的数据源转成配置（仅当配置库里还没有时使用）。
+fn bootstrap_config() -> Option<SourceConfig> {
+    let src = std::env::args()
+        .nth(1)
+        .or_else(|| std::env::var("JOPLIN_LITE_SOURCE").ok())?;
+    if src.starts_with("http://") || src.starts_with("https://") {
+        Some(SourceConfig {
+            source_type: "webdav".to_string(),
+            webdav_url: src,
+            webdav_user: std::env::var("JOPLIN_LITE_WEBDAV_USER").unwrap_or_default(),
+            webdav_pass: std::env::var("JOPLIN_LITE_WEBDAV_PASS").unwrap_or_default(),
+            ..Default::default()
+        })
+    } else {
+        Some(SourceConfig {
+            source_type: "local".to_string(),
+            local_path: src,
+            ..Default::default()
+        })
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let source = std::env::args()
-        .nth(1)
-        .or_else(|| std::env::var("JOPLIN_LITE_SOURCE").ok())
-        .unwrap_or_else(|| format!("{}/../JopinData", env!("CARGO_MANIFEST_DIR")));
     let host = std::env::var("JOPLIN_LITE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("JOPLIN_LITE_PORT").unwrap_or_else(|_| "27583".to_string());
 
     println!("joplin-lite 启动中…");
 
-    let storage: Arc<dyn storage::StorageBackend> =
-        if source.starts_with("http://") || source.starts_with("https://") {
-            let user = std::env::var("JOPLIN_LITE_WEBDAV_USER").ok();
-            let pass = std::env::var("JOPLIN_LITE_WEBDAV_PASS").ok();
-            println!("数据源: WebDAV {source}");
-            Arc::new(WebDavStorage::new(&source, user.as_deref(), pass.as_deref()))
-        } else {
-            println!("数据源: 本地目录 {source}");
-            Arc::new(LocalStorage::new(&source))
-        };
+    let config_store = ConfigStore::open()?;
+    // 已保存配置优先；否则用命令行/环境变量引导
+    let cfg = config_store.load().or_else(bootstrap_config);
 
-    let (lib, stats) = Library::build(storage.as_ref())?;
-    println!(
-        "索引完成: 笔记={} 笔记本={} 资源={} 标签={} note_tag={} 其它={} 加密(跳过)={} 错误={}",
-        stats.notes,
-        stats.folders,
-        stats.resources,
-        stats.tags,
-        stats.note_tags,
-        stats.others,
-        stats.encrypted,
-        stats.errors
-    );
+    let mut library = Library::default();
+    let mut storage_opt: Option<Arc<dyn StorageBackend>> = None;
+
+    if let Some(cfg) = &cfg {
+        match config::build_storage(cfg) {
+            Ok(storage) => match Library::build(storage.as_ref()) {
+                Ok((lib, stats)) => {
+                    println!(
+                        "数据源: {} | 索引: 笔记={} 笔记本={} 资源={} 标签={} 错误={}",
+                        cfg.source_type, stats.notes, stats.folders, stats.resources, stats.tags, stats.errors
+                    );
+                    library = lib;
+                    storage_opt = Some(storage);
+                    // 引导成功则持久化，省得每次传参
+                    if config_store.load().is_none() {
+                        config_store.save(cfg).ok();
+                    }
+                }
+                Err(e) => eprintln!("索引失败（进入未配置状态，可在浏览器重新配置）: {e}"),
+            },
+            Err(e) => eprintln!("数据源无效（进入未配置状态）: {e}"),
+        }
+    }
+
+    if storage_opt.is_none() {
+        println!("尚未配置数据源 —— 请在浏览器中完成首次配置。");
+    }
 
     let state = Arc::new(AppState {
-        library: RwLock::new(lib),
-        storage,
+        library: RwLock::new(library),
+        storage: RwLock::new(storage_opt),
+        config: Mutex::new(config_store),
     });
 
     // 托管前端构建产物（web/dist），SPA 回退到 index.html。开发期前端跑 Vite 即可。

@@ -30,7 +30,14 @@ pub trait StorageBackend: Send + Sync {
 
     /// 删除一个条目文件。
     fn delete_item(&self, name: &str) -> Result<()>;
+
+    /// 初始化一个全新的笔记库（创建根目录与 .resource、写入默认 info.json）。
+    /// 仅在"新建库"时调用；"使用现有库"不应调用，以免覆盖已有 info.json。
+    fn init_new(&self) -> Result<()>;
 }
+
+/// 全新笔记库的默认 info.json（Joplin 同步格式版本 3，未加密）。
+pub const DEFAULT_INFO_JSON: &str = r#"{"version":3,"e2ee":{"value":false,"updatedTime":0},"activeMasterKeyId":{"value":"","updatedTime":0},"masterKeys":[],"ppk":{"value":null,"updatedTime":0},"appMinVersion":"3.0.0"}"#;
 
 /// 判断文件名是否为合法条目文件：32 位十六进制 + `.md`。
 /// 来源：joplin/packages/lib/models/BaseItem.ts:174-183 (isSystemPath)

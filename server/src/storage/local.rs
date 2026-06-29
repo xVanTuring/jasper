@@ -73,4 +73,11 @@ impl StorageBackend for LocalStorage {
         let path = self.root.join(name);
         std::fs::remove_file(&path).with_context(|| format!("删除条目失败 {:?}", path))
     }
+
+    fn init_new(&self) -> Result<()> {
+        std::fs::create_dir_all(&self.root).with_context(|| format!("创建目录失败 {:?}", self.root))?;
+        std::fs::create_dir_all(self.root.join(".resource")).ok();
+        self.put_item("info.json", super::DEFAULT_INFO_JSON)?;
+        Ok(())
+    }
 }

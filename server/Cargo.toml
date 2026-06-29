@@ -19,6 +19,8 @@ roxmltree = "0.20"
 base64 = "0.22"
 rayon = "1"
 getrandom = "0.2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "5"
 
 [profile.release]
 opt-level = "z"
