@@ -6,6 +6,7 @@
 use crate::model::*;
 use crate::parser;
 use crate::storage::StorageBackend;
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 #[derive(Default)]
@@ -40,17 +41,23 @@ impl Library {
         let mut lib = Library::default();
         let mut stats = BuildStats::default();
 
-        for stat in storage.list_items()? {
-            let content = match storage.get_item(&stat.name) {
-                Ok(c) => c,
-                Err(_) => {
-                    stats.errors += 1;
-                    continue;
-                }
-            };
-            let raw = match parser::parse_item(&content) {
-                Ok(r) => r,
-                Err(_) => {
+        // 并行拉取 + 解析（WebDAV 场景下数百个文件串行下载太慢）。
+        let item_stats = storage.list_items()?;
+        let parsed: Vec<Option<RawItem>> = item_stats
+            .par_iter()
+            .map(|s| {
+                storage
+                    .get_item(&s.name)
+                    .ok()
+                    .and_then(|content| parser::parse_item(&content).ok())
+            })
+            .collect();
+
+        // 分类（顺序执行，构建索引）
+        for item in parsed {
+            let raw = match item {
+                Some(r) => r,
+                None => {
                     stats.errors += 1;
                     continue;
                 }

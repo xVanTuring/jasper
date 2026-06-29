@@ -2,10 +2,14 @@
 //!
 //! 启动后扫描本地数据目录 → 内存索引 → 提供 HTTP API + 托管前端 SPA。
 //!
-//! 用法：joplin-lite [数据目录]
+//! 用法：joplin-lite [数据源]
+//!   数据源可以是本地目录路径，或 http(s):// 开头的 WebDAV 地址。
 //! 环境变量：
-//!   JOPLIN_LITE_HOST  监听地址（默认 127.0.0.1；局域网访问设 0.0.0.0）
-//!   JOPLIN_LITE_PORT  端口（默认 27583）
+//!   JOPLIN_LITE_SOURCE        数据源（等价于命令行参数）
+//!   JOPLIN_LITE_WEBDAV_USER   WebDAV 用户名
+//!   JOPLIN_LITE_WEBDAV_PASS   WebDAV 密码
+//!   JOPLIN_LITE_HOST          监听地址（默认 127.0.0.1；局域网访问设 0.0.0.0）
+//!   JOPLIN_LITE_PORT          端口（默认 27583）
 
 mod api;
 mod library;
@@ -19,20 +23,31 @@ use library::Library;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use storage::local::LocalStorage;
+use storage::webdav::WebDavStorage;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let data_path = std::env::args()
+    let source = std::env::args()
         .nth(1)
+        .or_else(|| std::env::var("JOPLIN_LITE_SOURCE").ok())
         .unwrap_or_else(|| format!("{}/../JopinData", env!("CARGO_MANIFEST_DIR")));
     let host = std::env::var("JOPLIN_LITE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("JOPLIN_LITE_PORT").unwrap_or_else(|_| "27583".to_string());
 
     println!("joplin-lite 启动中…");
-    println!("数据目录: {data_path}");
 
-    let storage: Arc<dyn storage::StorageBackend> = Arc::new(LocalStorage::new(&data_path));
+    let storage: Arc<dyn storage::StorageBackend> =
+        if source.starts_with("http://") || source.starts_with("https://") {
+            let user = std::env::var("JOPLIN_LITE_WEBDAV_USER").ok();
+            let pass = std::env::var("JOPLIN_LITE_WEBDAV_PASS").ok();
+            println!("数据源: WebDAV {source}");
+            Arc::new(WebDavStorage::new(&source, user.as_deref(), pass.as_deref()))
+        } else {
+            println!("数据源: 本地目录 {source}");
+            Arc::new(LocalStorage::new(&source))
+        };
+
     let (lib, stats) = Library::build(storage.as_ref())?;
     println!(
         "索引完成: 笔记={} 笔记本={} 资源={} 标签={} note_tag={} 其它={} 加密(跳过)={} 错误={}",

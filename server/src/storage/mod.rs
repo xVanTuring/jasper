@@ -2,6 +2,7 @@
 //! 只读客户端只需要三种能力：列条目、取条目文本、取资源二进制。
 
 pub mod local;
+pub mod webdav;
 
 use anyhow::Result;
 

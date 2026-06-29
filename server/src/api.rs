@@ -168,8 +168,12 @@ async fn resource(
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    match state.storage.get_resource(&id) {
-        Ok(bytes) => (
+    // 资源可能来自 WebDAV（阻塞网络 IO），放到 blocking 线程，避免阻塞异步执行器。
+    let storage = state.storage.clone();
+    let bytes = tokio::task::spawn_blocking(move || storage.get_resource(&id)).await;
+
+    match bytes {
+        Ok(Ok(bytes)) => (
             [
                 (header::CONTENT_TYPE, mime),
                 (header::CACHE_CONTROL, "public, max-age=31536000".to_string()),
@@ -177,7 +181,7 @@ async fn resource(
             bytes,
         )
             .into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
