@@ -1,0 +1,11 @@
+# hacdias/webdav v5 配置（开发联调用）。账号 joplin / joplin。
+# 密码这里用明文（仅本地开发）；如需哈希：`docker run --rm hacdias/webdav bcrypt -p <pass>`。
+address: 0.0.0.0
+port: 6065
+prefix: /
+directory: /data # 同步根目录（条目 <id>.md + .resource/ 平铺其下）
+permissions: none # 默认无权限，逐用户授权
+users:
+  - username: joplin
+    password: joplin
+    permissions: CRUD # 增/读/改/删，joplin-lite 读写都需要
