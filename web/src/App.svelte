@@ -4,6 +4,7 @@
   import FolderTree from './lib/FolderTree.svelte'
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
+  import Settings from './lib/Settings.svelte'
 
   let folders = $state<FolderNode[]>([])
   let selectedFolderId = $state<string | null>(null)
@@ -17,15 +18,47 @@
   let listTitle = $state('')
   let error = $state('')
 
-  onMount(async () => {
+  let configured = $state<boolean | null>(null)
+  let showSettings = $state(false)
+
+  onMount(checkStatus)
+
+  async function checkStatus() {
+    try {
+      const s = await api.status()
+      configured = s.configured
+      if (configured) await loadFolders()
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  async function loadFolders() {
     try {
       folders = await api.folders()
+      detail = null
+      selectedNoteId = null
       const first = findFirstWithNotes(folders)
-      if (first) selectFolder(first.id, first.title)
+      if (first) {
+        selectFolder(first.id, first.title)
+      } else {
+        notes = []
+        selectedFolderId = null
+        listTitle = ''
+      }
     } catch (e) {
       error = `加载失败：${e}`
     }
-  })
+  }
+
+  // 配置完成（首次或切换数据源）后重载
+  async function onConfigured() {
+    configured = true
+    showSettings = false
+    query = ''
+    searchMode = false
+    await loadFolders()
+  }
 
   function findFirstWithNotes(list: FolderNode[]): FolderNode | null {
     for (const f of list) {
@@ -140,6 +173,7 @@
       bind:value={query}
       oninput={onSearchInput}
     />
+    <button class="gear" onclick={() => (showSettings = true)} title="设置">⚙</button>
   </header>
 
   {#if error}
@@ -178,6 +212,12 @@
   </div>
 </div>
 
+{#if configured === false}
+  <Settings mode="setup" onDone={onConfigured} />
+{:else if showSettings}
+  <Settings mode="settings" onDone={onConfigured} onClose={() => (showSettings = false)} />
+{/if}
+
 <style>
   .app {
     display: flex;
@@ -209,6 +249,20 @@
     background: var(--bg);
     color: var(--text);
     font-size: 13px;
+  }
+  .gear {
+    margin-left: auto;
+    background: none;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    color: var(--text-dim);
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  .gear:hover {
+    background: var(--hover);
+    color: var(--text);
   }
   .error {
     background: #c0392b;

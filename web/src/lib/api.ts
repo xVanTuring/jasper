@@ -29,6 +29,32 @@ export interface NoteDetail {
   todo_completed: boolean
 }
 
+export interface SourceConfig {
+  source_type: string // 'local' | 'webdav'
+  local_path: string
+  webdav_url: string
+  webdav_user: string
+  webdav_pass: string
+}
+
+export interface StatusResp {
+  configured: boolean
+  source_type: string
+  notes: number
+  folders: number
+}
+
+export interface ConfigResult {
+  ok: boolean
+  error: string | null
+  notes: number
+  folders: number
+}
+
+export interface ApplyConfigReq extends SourceConfig {
+  create_new: boolean
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`${url} -> ${res.status}`)
@@ -46,6 +72,10 @@ async function sendJson<T>(url: string, method: string, body: unknown): Promise<
 }
 
 export const api = {
+  status: () => getJson<StatusResp>('/api/status'),
+  getConfig: () => getJson<SourceConfig>('/api/config'),
+  saveConfig: (data: ApplyConfigReq) => sendJson<ConfigResult>('/api/config', 'PUT', data),
+
   folders: () => getJson<FolderNode[]>('/api/folders'),
   notes: (folderId: string) =>
     getJson<NoteSummary[]>(`/api/notes?folder=${encodeURIComponent(folderId)}`),
