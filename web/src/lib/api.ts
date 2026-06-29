@@ -35,6 +35,16 @@ async function getJson<T>(url: string): Promise<T> {
   return res.json() as Promise<T>
 }
 
+async function sendJson<T>(url: string, method: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`${method} ${url} -> ${res.status}`)
+  return res.json() as Promise<T>
+}
+
 export const api = {
   folders: () => getJson<FolderNode[]>('/api/folders'),
   notes: (folderId: string) =>
@@ -42,4 +52,14 @@ export const api = {
   note: (id: string) => getJson<NoteDetail>(`/api/notes/${id}`),
   search: (q: string) => getJson<NoteSummary[]>(`/api/search?q=${encodeURIComponent(q)}`),
   resourceUrl: (id: string) => `/api/resources/${id}`,
+
+  // 写入
+  updateNote: (id: string, data: { title: string; body: string }) =>
+    sendJson<NoteDetail>(`/api/notes/${id}`, 'PUT', data),
+  createNote: (data: { parent_id: string; title?: string; body?: string }) =>
+    sendJson<NoteDetail>('/api/notes', 'POST', data),
+  deleteNote: async (id: string) => {
+    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`DELETE -> ${res.status}`)
+  },
 }

@@ -10,6 +10,7 @@
   let notes = $state<NoteSummary[]>([])
   let selectedNoteId = $state<string | null>(null)
   let detail = $state<NoteDetail | null>(null)
+  let editOnOpenId = $state<string | null>(null)
 
   let query = $state('')
   let searchMode = $state(false)
@@ -55,10 +56,13 @@
     }
   }
 
+  // 先取详情再切换 id（NoteView 按 id 重挂载，挂载时 detail 须已就绪）
   async function selectNote(id: string) {
-    selectedNoteId = id
+    editOnOpenId = null
     try {
-      detail = await api.note(id)
+      const d = await api.note(id)
+      detail = d
+      selectedNoteId = id
     } catch (e) {
       error = `${e}`
     }
@@ -66,13 +70,44 @@
 
   // 笔记内部链接点击：是笔记则跳转，否则当资源在新标签打开
   async function navigate(id: string) {
+    editOnOpenId = null
     try {
-      const n = await api.note(id)
-      detail = n
+      const d = await api.note(id)
+      detail = d
       selectedNoteId = id
     } catch {
       window.open(api.resourceUrl(id), '_blank')
     }
+  }
+
+  // 重新拉取当前列表（保存后标题/时间/排序更新）
+  async function refreshList() {
+    try {
+      if (searchMode) notes = await api.search(query.trim())
+      else if (selectedFolderId != null) notes = await api.notes(selectedFolderId)
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  async function handleNew() {
+    const parent = searchMode ? '' : selectedFolderId ?? ''
+    try {
+      const n = await api.createNote({ parent_id: parent, title: '新笔记', body: '' })
+      editOnOpenId = n.id
+      detail = n
+      selectedNoteId = n.id
+      await refreshList()
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  async function onNoteDeleted() {
+    detail = null
+    selectedNoteId = null
+    editOnOpenId = null
+    await refreshList()
   }
 
   let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -122,12 +157,23 @@
     </aside>
 
     <section class="notelist">
-      <div class="pane-title">{listTitle}</div>
+      <div class="pane-title">
+        <span>{listTitle}</span>
+        <button class="new-btn" onclick={handleNew} title="在当前笔记本新建笔记">＋</button>
+      </div>
       <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} />
     </section>
 
     <main class="reader">
-      <NoteView {detail} onNavigate={navigate} />
+      {#key selectedNoteId}
+        <NoteView
+          {detail}
+          onNavigate={navigate}
+          onChanged={refreshList}
+          onDeleted={onNoteDeleted}
+          initialEdit={detail != null && detail.id === editOnOpenId}
+        />
+      {/key}
     </main>
   </div>
 </div>
@@ -196,13 +242,27 @@
     flex: 0 0 auto;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     box-sizing: border-box;
     background: var(--bg-side);
-    padding: 0 12px;
+    padding: 0 6px 0 12px;
     font-size: 12px;
     font-weight: 600;
     color: var(--text-dim);
     border-bottom: 1px solid var(--border);
+  }
+  .new-btn {
+    background: none;
+    border: none;
+    color: var(--accent);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+  .new-btn:hover {
+    background: var(--accent-soft);
   }
   .reader {
     overflow-y: auto;
