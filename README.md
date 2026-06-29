@@ -2,6 +2,8 @@
 
 **English** · [中文](README.zh-CN.md)
 
+[![Deploy WASM demo to Pages](https://github.com/xVanTuring/joplin-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/joplin-web/actions/workflows/pages.yml)
+
 > 🌐 **Live demo (runs entirely in your browser via WASM, no server):** https://xvanturing.github.io/joplin-web/
 
 A lightweight, **read-write** [Joplin](https://joplinapp.org/)-compatible client: a local **Rust (axum) server + browser SPA** — no Electron, Tauri, or WebView. It reads and writes your existing Joplin sync library directly, so edits are picked up by Joplin on its next sync.
