@@ -1,0 +1,146 @@
+:root {
+  --bg: #ffffff;
+  --bg-bar: #f7f7f8;
+  --bg-side: #fafafa;
+  --text: #1f2328;
+  --text-dim: #8a8f98;
+  --border: #e4e6ea;
+  --hover: #f0f1f3;
+  --accent: #8a3ffc;
+  --accent-soft: rgba(138, 63, 252, 0.12);
+  --code-bg: #f4f4f6;
+
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC',
+    'Microsoft YaHei', sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e22;
+    --bg-bar: #26262b;
+    --bg-side: #232328;
+    --text: #e3e3e6;
+    --text-dim: #8a8f98;
+    --border: #34343a;
+    --hover: #2c2c32;
+    --accent: #b388ff;
+    --accent-soft: rgba(179, 136, 255, 0.18);
+    --code-bg: #2a2a30;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+#app {
+  height: 100vh;
+}
+
+/* ---------- 渲染后的笔记内容 ---------- */
+.content {
+  font-size: 15px;
+  line-height: 1.7;
+  word-wrap: break-word;
+}
+.content h1,
+.content h2,
+.content h3,
+.content h4 {
+  line-height: 1.3;
+  margin: 1.4em 0 0.6em;
+}
+.content h1 {
+  font-size: 1.6em;
+}
+.content h2 {
+  font-size: 1.35em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.content h3 {
+  font-size: 1.15em;
+}
+.content p {
+  margin: 0.7em 0;
+}
+.content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.content a:hover {
+  text-decoration: underline;
+}
+.content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+.content blockquote {
+  margin: 0.8em 0;
+  padding: 0.2em 1em;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+.content code {
+  background: var(--code-bg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: 'SF Mono', Menlo, Consolas, monospace;
+}
+.content pre {
+  /* 始终深色背景，配 github-dark 语法配色，浅色模式下也清晰 */
+  background: #0d1117;
+  color: #c9d1d9;
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+.content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+  color: inherit;
+}
+.content table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  display: block;
+  overflow-x: auto;
+}
+.content th,
+.content td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+}
+.content th {
+  background: var(--bg-side);
+}
+.content ul,
+.content ol {
+  padding-left: 1.5em;
+}
+.content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+.content input[type='checkbox'] {
+  margin-right: 0.4em;
+}
+.content .task-list-item {
+  list-style: none;
+}
+.content .task-list-item input {
+  margin-left: -1.4em;
+}

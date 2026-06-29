@@ -1,0 +1,17 @@
+# 上游 Joplin 源码（仅作格式参考，自带独立 git 仓库，不纳入本项目）
+/joplin/
+
+# 个人笔记测试数据（隐私，勿提交）
+/JopinData/
+
+# Rust 构建产物
+/server/target/
+
+# 前端依赖与构建产物
+/web/node_modules/
+/web/dist/
+
+# 系统/编辑器杂项
+.DS_Store
+*.log
+Thumbs.db
