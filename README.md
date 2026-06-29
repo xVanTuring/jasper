@@ -82,6 +82,19 @@ python3 docs/gen-demo-library.py /tmp/joplin-demo
 cd server && cargo run -- /tmp/joplin-demo
 ```
 
+### Browser-only demo (WASM, no server)
+
+The core (model / parser / serializer / index) is a dependency-light `joplin-core` crate that also compiles to WebAssembly. With a bundled sample library it powers a **read-only, server-less preview** that runs entirely in the browser tab — handy for a static demo (e.g. GitHub Pages).
+
+```bash
+# needs: rustup target add wasm32-unknown-unknown + wasm-pack
+cd web && pnpm build:demo   # builds the wasm, then a static demo bundle into web/dist
+```
+
+It does not affect the native build: when not in demo mode the wasm import is tree-shaken out entirely.
+
+![Browser WASM demo](docs/screenshots/05-wasm-demo.png)
+
 ## How it works
 
 ```

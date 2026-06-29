@@ -82,6 +82,19 @@ python3 docs/gen-demo-library.py /tmp/joplin-demo
 cd server && cargo run -- /tmp/joplin-demo
 ```
 
+### 浏览器 demo（WASM，无 server）
+
+核心逻辑（数据模型 / 解析 / 序列化 / 索引）抽成了依赖很轻的 `joplin-core` crate，它也能编译到 WebAssembly。配上内置的演示库，就能做一个**只读、零服务器**的预览——整页跑在浏览器标签里，适合做静态演示站（如 GitHub Pages）。
+
+```bash
+# 需先装：rustup target add wasm32-unknown-unknown + wasm-pack
+cd web && pnpm build:demo   # 先编 wasm，再产出静态 demo 到 web/dist
+```
+
+不影响原生构建：非 demo 模式下 wasm import 会被整体 tree-shake 掉。
+
+![浏览器 WASM demo](docs/screenshots/05-wasm-demo.png)
+
 ## 工作原理
 
 ```

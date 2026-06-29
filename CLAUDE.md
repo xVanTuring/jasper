@@ -5,25 +5,31 @@
 
 > 注意：仓库根目录下的 `joplin/` 是**上游 Joplin v3.6.15 源码（仅作格式参考，自带独立 git，已 gitignore）**；
 > `JopinData/` 是**用户真实笔记测试数据（隐私，已 gitignore，勿提交/勿误删/勿在其上做破坏性测试）**。
-> 本项目代码只在 `server/` 和 `web/`。
+> 本项目代码在 `core/`（纯逻辑）、`server/`（原生后端）、`web/`（前端）、`wasm/`（浏览器 demo）。
+> 三个 Rust crate 用 path 依赖串联，**无 workspace**（`cd server && cargo run` 照常）。
 
 ## 目录结构
 
 ```
-server/        Rust 后端 (axum)
+core/          纯逻辑 crate (joplin-core)：无 IO，可编译到 WASM
   src/
-    main.rs        启动：加载配置→建索引→挂 API + 托管前端
+    model.rs       Note/Folder/Resource/Tag/NoteTag + ItemType/MarkupLanguage 枚举
+    parser.rs      解析 Joplin .md 条目（含真实数据单测）
+    serialize.rs   写回：update_note_md / new_note_md / new_resource_md / new_id / ISO 时间
+    library.rs     内存索引（笔记本树/笔记/资源/标签/搜索 + 增删改）；Library::from_contents
+server/        Rust 后端 (axum)，依赖 joplin-core
+  src/
+    main.rs        启动：加载配置→建索引→挂 API + 托管前端；pub use joplin_core::{...} 重导出
     config.rs      SQLite 配置存储(ConfigStore) + build_storage 工厂 + source_key
     cache.rs       SQLite 增量缓存(CacheStore)：按数据源缓存条目原始内容+mtime
+    indexer.rs     从存储拉取(rayon 并行)+增量缓存协调 → 调 Library::from_contents（IO 在此，不进 core）
     storage/       StorageBackend trait
       mod.rs         trait 定义 + is_item_filename + DEFAULT_INFO_JSON
       local.rs       本地文件夹后端
       webdav.rs      WebDAV 后端 (ureq + roxmltree, PROPFIND/GET/PUT/DELETE/MKCOL)
-    parser.rs      解析 Joplin .md 条目（含真实数据单测）
-    serialize.rs   写回：update_note_md / new_note_md / new_id / ISO 时间
-    library.rs     内存索引（笔记本树/笔记/资源/标签/搜索 + 增删改）；build/build_cached
-    model.rs       Note/Folder/Resource/Tag/NoteTag + ItemType/MarkupLanguage 枚举
     api.rs         axum 路由与 handler，AppState
+wasm/          浏览器 demo crate (joplin-wasm)：joplin-core + 内置演示库 → wasm-bindgen
+  src/lib.rs / demo.rs   暴露 folders/notes/note/search（只读），内置纯文本演示库
 web/           Svelte 5 (runes) + Vite + TS 前端
   src/
     App.svelte         三栏布局 + 状态/配置流程
@@ -65,6 +71,15 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 - `JOPLIN_LITE_CONFIG_DIR`（配置库目录；默认平台配置目录 `joplin-lite/config.db`）
 - `JOPLIN_LITE_WEB_DIR`（前端静态目录；默认相对源码，容器里指向打包路径）
 - 首次引导：`JOPLIN_LITE_SOURCE` / `JOPLIN_LITE_WEBDAV_USER` / `JOPLIN_LITE_WEBDAV_PASS`
+
+## 浏览器 WASM demo（纯前端预览，无 server）
+
+- `joplin-core`（model/parser/serialize/library）编译到 wasm，配 `wasm/` 内置纯文本演示库，做成**零服务器**的只读预览（GitHub Pages 可挂）。
+- 构建：`cd web && pnpm build:demo`（= `wasm-pack build ../wasm --target web --out-dir ../web/src/wasm-pkg` + `VITE_DEMO=1 vite build`）。需先装 `rustup target add wasm32-unknown-unknown` 与 `wasm-pack`。
+- 前端切换：`web/src/lib/api.ts` 里 `VITE_DEMO=1` → 只读路径走 wasm（`IS_DEMO` 导出供 UI 用）；否则照常走 HTTP。
+- **不影响原生**：`DEMO=false` 时 Rollup 把 wasm import 整个 tree-shake 掉，原生构建既不打包也不依赖 `web/src/wasm-pkg`（该目录由 wasm-pack 生成、已 gitignore）。
+- demo 下隐藏所有写入入口（新建/编辑/删除/设置/资源），顶部有「演示预览」横幅说明能力边界。
+- 截图见 `docs/screenshots/05-wasm-demo.png`。
 
 ## 数据源与配置
 

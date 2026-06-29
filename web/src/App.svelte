@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
+  import { api, IS_DEMO, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
   import FolderTree from './lib/FolderTree.svelte'
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
@@ -22,6 +22,7 @@
   let configured = $state<boolean | null>(null)
   let showSettings = $state(false)
   let showResources = $state(false)
+  let showDemoBanner = $state(true)
 
   // 资源被删除/重命名后，刷新当前笔记详情（被引用资源变动可能影响渲染）
   async function onResourcesChanged() {
@@ -186,9 +187,22 @@
       bind:value={query}
       oninput={onSearchInput}
     />
-    <button class="gear" onclick={() => (showResources = true)} title="资源管理">🖼</button>
-    <button class="gear" onclick={() => (showSettings = true)} title="设置">⚙</button>
+    {#if !IS_DEMO}
+      <button class="gear" onclick={() => (showResources = true)} title="资源管理">🖼</button>
+      <button class="gear" onclick={() => (showSettings = true)} title="设置">⚙</button>
+    {/if}
   </header>
+
+  {#if IS_DEMO && showDemoBanner}
+    <div class="demo-banner">
+      <span>
+        🌐 <b>演示预览</b> · 全程在浏览器内由 Rust&nbsp;→&nbsp;WASM 运行，<b>无后端</b>。
+        可浏览笔记本/笔记、Markdown 渲染（代码 · 表格 · 公式 · 任务清单）、全文搜索。
+        <span class="dim">编辑、图片资源、WebDAV / 本地读写为完整版（本地 server）能力。</span>
+      </span>
+      <button class="bx" onclick={() => (showDemoBanner = false)} aria-label="关闭">✕</button>
+    </div>
+  {/if}
 
   {#if error}
     <div class="error">{error}</div>
@@ -207,7 +221,9 @@
     <section class="notelist">
       <div class="pane-title">
         <span>{listTitle}</span>
-        <button class="new-btn" onclick={handleNew} title="在当前笔记本新建笔记">＋</button>
+        {#if !IS_DEMO}
+          <button class="new-btn" onclick={handleNew} title="在当前笔记本新建笔记">＋</button>
+        {/if}
       </div>
       <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} />
     </section>
@@ -220,6 +236,7 @@
           onChanged={refreshList}
           onDeleted={onNoteDeleted}
           initialEdit={detail != null && detail.id === editOnOpenId}
+          readOnly={IS_DEMO}
         />
       {/key}
     </main>
@@ -287,6 +304,33 @@
     color: #fff;
     padding: 6px 14px;
     font-size: 13px;
+  }
+  .demo-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--accent-soft);
+    border-bottom: 1px solid var(--border);
+    flex: 0 0 auto;
+  }
+  .demo-banner .dim {
+    color: var(--text-dim);
+  }
+  .demo-banner .bx {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    flex: 0 0 auto;
+  }
+  .demo-banner .bx:hover {
+    color: var(--text);
   }
   .panes {
     display: grid;

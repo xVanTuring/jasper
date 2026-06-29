@@ -1,0 +1,20 @@
+[package]
+name = "joplin-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "浏览器 WASM demo：joplin-core 编进浏览器，配内置演示库（无 server）"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+joplin-core = { path = "../core" }
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# core::serialize 用到 getrandom，wasm 下需 js 后端（浏览器 crypto）
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = "s"
+lto = true

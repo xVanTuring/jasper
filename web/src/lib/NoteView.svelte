@@ -11,12 +11,14 @@
     onChanged,
     onDeleted,
     initialEdit = false,
+    readOnly = false,
   }: {
     detail: NoteDetail | null
     onNavigate: (id: string) => void
     onChanged: () => void
     onDeleted: () => void
     initialEdit?: boolean
+    readOnly?: boolean
   } = $props()
 
   // 本组件按笔记 id 在父级以 {#key} 重挂载，故这里用初始值即可，无需响应 detail 变化。
@@ -105,10 +107,12 @@
         {/if}
       </div>
       <div class="right">
-        <button class="btn" onclick={() => (editMode = !editMode)}>
-          {editMode ? '👁 阅读' : '✏️ 编辑'}
-        </button>
-        <button class="btn danger" onclick={remove}>🗑 删除</button>
+        {#if !readOnly}
+          <button class="btn" onclick={() => (editMode = !editMode)}>
+            {editMode ? '👁 阅读' : '✏️ 编辑'}
+          </button>
+          <button class="btn danger" onclick={remove}>🗑 删除</button>
+        {/if}
       </div>
     </div>
 

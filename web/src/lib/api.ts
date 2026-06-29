@@ -74,6 +74,24 @@ export interface ResourceInfo {
   used_by: number // 引用该资源的笔记数（0 = 孤儿）
 }
 
+// 「demo 模式」：构建时 VITE_DEMO=1，则只读查询走浏览器内的 WASM（joplin-core 编译产物），
+// 不需要任何后端 server——用于纯静态演示站点。
+const DEMO = import.meta.env.VITE_DEMO === '1'
+/// 是否为浏览器内 WASM 演示构建（只读）。供 UI 提示/禁用写入用。
+export const IS_DEMO = DEMO
+
+let _demo: Promise<{ folders(): string; notes(f: string): string; note(id: string): string; search(q: string): string }> | null = null
+function wasmDemo() {
+  if (!_demo) {
+    _demo = (async () => {
+      const mod = await import('../wasm-pkg/joplin_wasm.js')
+      await mod.default() // 加载并初始化 .wasm
+      return new mod.Demo()
+    })()
+  }
+  return _demo
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`${url} -> ${res.status}`)
@@ -90,7 +108,7 @@ async function sendJson<T>(url: string, method: string, body: unknown): Promise<
   return res.json() as Promise<T>
 }
 
-export const api = {
+const httpApi = {
   status: () => getJson<StatusResp>('/api/status'),
   getConfig: () => getJson<SourceConfig>('/api/config'),
   saveConfig: (data: ApplyConfigReq) => sendJson<ConfigResult>('/api/config', 'PUT', data),
@@ -132,3 +150,20 @@ export const api = {
     if (!res.ok) throw new Error(`删除资源 -> ${res.status}`)
   },
 }
+
+// demo 模式只覆盖只读路径；写入/资源等仍是 httpApi（demo 站点里不会触发）。
+const demoApi = {
+  status: async (): Promise<StatusResp> => ({
+    configured: true,
+    source_type: 'demo',
+    notes: 0,
+    folders: 0,
+  }),
+  folders: async (): Promise<FolderNode[]> => JSON.parse((await wasmDemo()).folders()),
+  notes: async (folderId: string): Promise<NoteSummary[]> =>
+    JSON.parse((await wasmDemo()).notes(folderId)),
+  note: async (id: string): Promise<NoteDetail> => JSON.parse((await wasmDemo()).note(id)),
+  search: async (q: string): Promise<NoteSummary[]> => JSON.parse((await wasmDemo()).search(q)),
+}
+
+export const api = DEMO ? { ...httpApi, ...demoApi } : httpApi
