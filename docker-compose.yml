@@ -1,0 +1,17 @@
+services:
+  joplin-lite:
+    build: .
+    image: joplin-lite
+    container_name: joplin-lite
+    ports:
+      - "27583:27583"
+    volumes:
+      # 配置（数据源设置 / config.db）持久化
+      - joplin-lite-config:/config
+      # 若数据源选「本地文件夹」，把宿主机的 Joplin 同步目录挂进来，
+      # 然后在设置里把路径填成容器内路径（如 /data）：
+      # - /宿主机/路径/JoplinData:/data
+    restart: unless-stopped
+
+volumes:
+  joplin-lite-config:

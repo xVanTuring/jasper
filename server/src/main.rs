@@ -9,8 +9,10 @@
 //!   JOPLIN_LITE_SOURCE        引导用数据源（仅当尚无保存配置时生效）
 //!   JOPLIN_LITE_WEBDAV_USER   引导用 WebDAV 用户名
 //!   JOPLIN_LITE_WEBDAV_PASS   引导用 WebDAV 密码
-//!   JOPLIN_LITE_HOST          监听地址（默认 127.0.0.1；局域网访问设 0.0.0.0）
+//!   JOPLIN_LITE_HOST          监听地址（默认 127.0.0.1；局域网/容器设 0.0.0.0）
 //!   JOPLIN_LITE_PORT          端口（默认 27583）
+//!   JOPLIN_LITE_CONFIG_DIR    配置库目录（默认平台配置目录；容器里挂卷）
+//!   JOPLIN_LITE_WEB_DIR       前端静态目录（默认相对源码；容器里指向打包路径）
 
 mod api;
 mod config;
@@ -97,7 +99,10 @@ async fn main() -> Result<()> {
     });
 
     // 托管前端构建产物（web/dist），SPA 回退到 index.html。开发期前端跑 Vite 即可。
-    let web_dist = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/dist");
+    // 路径可用 JOPLIN_LITE_WEB_DIR 覆盖（Docker 等场景下编译期路径不存在）。
+    let web_dist = std::env::var("JOPLIN_LITE_WEB_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/dist"));
     let index = web_dist.join("index.html");
     let serve_dir = ServeDir::new(&web_dist).not_found_service(ServeFile::new(&index));
 

@@ -1,0 +1,14 @@
+# 上游 Joplin 源码（仅参考，~387MB）
+joplin/
+# 个人笔记数据（隐私，~106MB）
+JopinData/
+# 构建产物 / 依赖（容器内会重新构建）
+server/target/
+web/node_modules/
+web/dist/
+# 版本库与杂项
+.git/
+**/.DS_Store
+*.log
+docs/
+scratchpad/
