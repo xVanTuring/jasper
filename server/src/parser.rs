@@ -241,8 +241,8 @@ mod tests {
             "解析结果: 笔记={notes} 笔记本={folders} 资源={resources} 标签={tags} note_tag={note_tags} 其它={others}"
         );
         assert!(errors.is_empty(), "解析失败: {:#?}", errors);
-        // 与 grep 统计对齐：340/88/135/3/4，其余(43 revisions)归 Other
-        assert_eq!(notes, 340);
+        // 与 grep 统计对齐：341/88/135/3/4，其余(43 revisions)归 Other
+        assert_eq!(notes, 341);
         assert_eq!(folders, 88);
         assert_eq!(resources, 135);
         assert_eq!(tags, 3);

@@ -60,6 +60,26 @@ impl StorageBackend for LocalStorage {
         std::fs::read(&path).with_context(|| format!("读取资源失败 {:?}", path))
     }
 
+    fn put_resource(&self, resource_id: &str, bytes: &[u8]) -> Result<()> {
+        let dir = self.root.join(".resource");
+        std::fs::create_dir_all(&dir).with_context(|| format!("创建资源目录失败 {:?}", dir))?;
+        // 写临时文件后原子 rename，避免写一半损坏
+        let path = dir.join(resource_id);
+        let tmp = dir.join(format!(".{resource_id}.tmp"));
+        std::fs::write(&tmp, bytes).with_context(|| format!("写入临时资源失败 {:?}", tmp))?;
+        std::fs::rename(&tmp, &path).with_context(|| format!("替换资源失败 {:?}", path))?;
+        Ok(())
+    }
+
+    fn delete_resource(&self, resource_id: &str) -> Result<()> {
+        let path = self.root.join(".resource").join(resource_id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).with_context(|| format!("删除资源失败 {:?}", path)),
+        }
+    }
+
     fn put_item(&self, name: &str, content: &str) -> Result<()> {
         // 写临时文件后原子 rename，避免写一半导致文件损坏
         let path = self.root.join(name);

@@ -75,6 +75,27 @@ impl StorageBackend for WebDavStorage {
         Ok(buf)
     }
 
+    fn put_resource(&self, resource_id: &str, bytes: &[u8]) -> Result<()> {
+        // 确保 .resource/ 存在（已存在则忽略 MKCOL 错误）
+        let _ = self.req("MKCOL", &format!("{}/.resource/", self.base)).call();
+        let url = format!("{}/.resource/{}", self.base, resource_id);
+        self.req("PUT", &url)
+            .set("Content-Type", "application/octet-stream")
+            .send_bytes(bytes)
+            .map_err(|e| anyhow!("PUT resource {resource_id} 失败: {e}"))?;
+        Ok(())
+    }
+
+    fn delete_resource(&self, resource_id: &str) -> Result<()> {
+        let url = format!("{}/.resource/{}", self.base, resource_id);
+        match self.req("DELETE", &url).call() {
+            Ok(_) => Ok(()),
+            // 已不存在视作成功（幂等）
+            Err(ureq::Error::Status(404, _)) => Ok(()),
+            Err(e) => Err(anyhow!("DELETE resource {resource_id} 失败: {e}")),
+        }
+    }
+
     fn put_item(&self, name: &str, content: &str) -> Result<()> {
         let url = format!("{}/{}", self.base, name);
         self.req("PUT", &url)

@@ -5,6 +5,7 @@
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
   import Settings from './lib/Settings.svelte'
+  import ResourcePanel from './lib/ResourcePanel.svelte'
 
   let folders = $state<FolderNode[]>([])
   let selectedFolderId = $state<string | null>(null)
@@ -20,6 +21,18 @@
 
   let configured = $state<boolean | null>(null)
   let showSettings = $state(false)
+  let showResources = $state(false)
+
+  // 资源被删除/重命名后，刷新当前笔记详情（被引用资源变动可能影响渲染）
+  async function onResourcesChanged() {
+    if (selectedNoteId) {
+      try {
+        detail = await api.note(selectedNoteId)
+      } catch {
+        /* 忽略 */
+      }
+    }
+  }
 
   onMount(checkStatus)
 
@@ -165,7 +178,7 @@
 
 <div class="app">
   <header class="topbar">
-    <div class="brand">joplin-lite</div>
+    <div class="brand">Joplin Web</div>
     <input
       class="search"
       type="search"
@@ -173,6 +186,7 @@
       bind:value={query}
       oninput={onSearchInput}
     />
+    <button class="gear" onclick={() => (showResources = true)} title="资源管理">🖼</button>
     <button class="gear" onclick={() => (showSettings = true)} title="设置">⚙</button>
   </header>
 
@@ -216,6 +230,10 @@
   <Settings mode="setup" onDone={onConfigured} />
 {:else if showSettings}
   <Settings mode="settings" onDone={onConfigured} onClose={() => (showSettings = false)} />
+{/if}
+
+{#if showResources}
+  <ResourcePanel onClose={() => (showResources = false)} onChanged={onResourcesChanged} />
 {/if}
 
 <style>

@@ -15,6 +15,7 @@
 //!   JOPLIN_LITE_WEB_DIR       前端静态目录（默认相对源码；容器里指向打包路径）
 
 mod api;
+mod cache;
 mod config;
 mod library;
 mod model;
@@ -61,6 +62,11 @@ async fn main() -> Result<()> {
     println!("joplin-lite 启动中…");
 
     let config_store = ConfigStore::open()?;
+    // 增量缓存库；打开失败则退化为内存缓存（等同禁用缓存，不影响功能）。
+    let cache_store = cache::CacheStore::open().unwrap_or_else(|e| {
+        eprintln!("缓存库打开失败，本次禁用增量缓存: {e}");
+        cache::CacheStore::in_memory().expect("内存缓存初始化失败")
+    });
     // 已保存配置优先；否则用命令行/环境变量引导
     let cfg = config_store.load().or_else(bootstrap_config);
 
@@ -69,11 +75,16 @@ async fn main() -> Result<()> {
 
     if let Some(cfg) = &cfg {
         match config::build_storage(cfg) {
-            Ok(storage) => match Library::build(storage.as_ref()) {
+            Ok(storage) => match Library::build_cached(
+                storage.as_ref(),
+                &cache_store,
+                &config::source_key(cfg),
+            ) {
                 Ok((lib, stats)) => {
                     println!(
-                        "数据源: {} | 索引: 笔记={} 笔记本={} 资源={} 标签={} 错误={}",
-                        cfg.source_type, stats.notes, stats.folders, stats.resources, stats.tags, stats.errors
+                        "数据源: {} | 索引: 笔记={} 笔记本={} 资源={} 标签={} 错误={} | 缓存命中={} 拉取={}",
+                        cfg.source_type, stats.notes, stats.folders, stats.resources, stats.tags,
+                        stats.errors, stats.cached, stats.fetched
                     );
                     library = lib;
                     storage_opt = Some(storage);
@@ -96,6 +107,7 @@ async fn main() -> Result<()> {
         library: RwLock::new(library),
         storage: RwLock::new(storage_opt),
         config: Mutex::new(config_store),
+        cache: cache_store,
     });
 
     // 托管前端构建产物（web/dist），SPA 回退到 index.html。开发期前端跑 Vite 即可。

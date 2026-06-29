@@ -25,6 +25,12 @@ pub trait StorageBackend: Send + Sync {
     /// 读取资源二进制。`resource_id` 形如 `<32hex>`（对应 `.resource/<id>`）。
     fn get_resource(&self, resource_id: &str) -> Result<Vec<u8>>;
 
+    /// 写入资源二进制到 `.resource/<id>`（不含扩展名）。`.resource/` 不存在时应先创建。
+    fn put_resource(&self, resource_id: &str, bytes: &[u8]) -> Result<()>;
+
+    /// 删除资源二进制 `.resource/<id>`；已不存在视作成功（幂等）。
+    fn delete_resource(&self, resource_id: &str) -> Result<()>;
+
     /// 写入（新建或覆盖）一个条目文件。`name` 形如 `<32hex>.md`。
     fn put_item(&self, name: &str, content: &str) -> Result<()>;
 

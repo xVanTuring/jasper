@@ -105,6 +105,81 @@ pub fn new_note_md(id: &str, parent_id: &str, title: &str, body: &str, now: i64)
     format!("{title}\n\n{body}\n\n{}", props.join("\n"))
 }
 
+/// 生成一个新资源（type_=4）的元数据 `.md` 内容。
+/// 字段集/顺序/默认值对齐真实 Joplin 资源（含 OCR 字段：ocr_driver_id 默认 1、ocr_status 0）。
+/// 资源条目无正文段，仅 `标题\n\n元数据`。
+pub fn new_resource_md(
+    id: &str,
+    title: &str,
+    mime: &str,
+    file_extension: &str,
+    size: i64,
+    now: i64,
+) -> String {
+    let iso = format_iso(now);
+    let props = [
+        format!("id: {id}"),
+        format!("mime: {mime}"),
+        "filename: ".to_string(),
+        format!("created_time: {iso}"),
+        format!("updated_time: {iso}"),
+        format!("user_created_time: {iso}"),
+        format!("user_updated_time: {iso}"),
+        format!("file_extension: {file_extension}"),
+        "encryption_cipher_text: ".to_string(),
+        "encryption_applied: 0".to_string(),
+        "encryption_blob_encrypted: 0".to_string(),
+        format!("size: {size}"),
+        "is_shared: 0".to_string(),
+        "share_id: ".to_string(),
+        "master_key_id: ".to_string(),
+        "user_data: ".to_string(),
+        format!("blob_updated_time: {now}"),
+        "ocr_text: ".to_string(),
+        "ocr_details: ".to_string(),
+        "ocr_status: 0".to_string(),
+        "ocr_error: ".to_string(),
+        "ocr_driver_id: 1".to_string(),
+        "type_: 4".to_string(),
+    ];
+    format!("{title}\n\n{}", props.join("\n"))
+}
+
+/// 更新资源条目的标题并刷新更新时间，其余元数据原样保留。
+/// 资源条目“正文段”仅一行标题，故直接以新标题替换。
+pub fn update_resource_md(original: &str, new_title: &str, now: i64) -> Result<String> {
+    let lines: Vec<&str> = original.split('\n').collect();
+    let mut sep = None;
+    let mut i = lines.len();
+    while i > 0 {
+        i -= 1;
+        let t = lines[i].trim();
+        if t.is_empty() {
+            sep = Some(i);
+            break;
+        }
+        if !t.contains(':') {
+            break;
+        }
+    }
+    let sep = sep.ok_or_else(|| anyhow!("无法定位元数据块"))?;
+    let iso = format_iso(now);
+    let new_meta: Vec<String> = lines[sep + 1..]
+        .iter()
+        .map(|l| {
+            let key = l.trim_start();
+            if key.starts_with("updated_time:") {
+                format!("updated_time: {iso}")
+            } else if key.starts_with("user_updated_time:") {
+                format!("user_updated_time: {iso}")
+            } else {
+                (*l).to_string()
+            }
+        })
+        .collect();
+    Ok(format!("{new_title}\n\n{}", new_meta.join("\n")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +214,37 @@ mod tests {
         assert_eq!(note.body, "正文内容");
         assert_eq!(note.parent_id, "parentparentparentparentparent12");
         assert_eq!(note.markup_language, crate::model::MarkupLanguage::Markdown);
+    }
+
+    #[test]
+    fn new_resource_is_parseable() {
+        let id = "abcdef0123456789abcdef0123456789";
+        let out = new_resource_md(id, "photo.png", "image/png", "png", 12345, 1_700_000_000_000);
+        let raw = parser::parse_item(&out).unwrap();
+        assert_eq!(raw.item_type(), crate::model::ItemType::Resource);
+        let r = parser::to_resource(&raw).unwrap();
+        assert_eq!(r.id, id);
+        assert_eq!(r.title, "photo.png");
+        assert_eq!(r.mime, "image/png");
+        assert_eq!(r.file_extension, "png");
+        assert_eq!(r.size, 12345);
+        // 资源条目无正文
+        assert!(raw.body.is_none());
+        assert_eq!(raw.prop("ocr_driver_id"), Some("1"));
+    }
+
+    #[test]
+    fn rename_resource_keeps_metadata() {
+        let id = "abcdef0123456789abcdef0123456789";
+        let orig = new_resource_md(id, "old.png", "image/png", "png", 99, 1_700_000_000_000);
+        let out = update_resource_md(&orig, "新名字.png", 1_700_000_999_000).unwrap();
+        let raw = parser::parse_item(&out).unwrap();
+        let r = parser::to_resource(&raw).unwrap();
+        assert_eq!(r.title, "新名字.png");
+        assert_eq!(r.id, id); // id 不变
+        assert_eq!(r.mime, "image/png");
+        assert_eq!(r.size, 99);
+        assert_eq!(r.updated_time, 1_700_000_999_000); // 已刷新
     }
 
     #[test]

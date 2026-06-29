@@ -103,11 +103,25 @@ pub fn build_storage(cfg: &SourceConfig) -> Result<Arc<dyn StorageBackend>> {
     }
 }
 
-fn config_db_path() -> Result<PathBuf> {
-    // 允许通过环境变量覆盖配置目录（便于测试 / 便携部署）
+/// 配置/缓存库所在目录（config.db、cache.db 同处）。
+/// 允许通过环境变量覆盖（便于测试 / 便携部署 / 容器挂卷）。
+pub fn config_base_dir() -> Result<PathBuf> {
     if let Ok(dir) = std::env::var("JOPLIN_LITE_CONFIG_DIR") {
-        return Ok(PathBuf::from(dir).join("config.db"));
+        return Ok(PathBuf::from(dir));
     }
     let base = dirs::config_dir().context("无法定位配置目录")?;
-    Ok(base.join("joplin-lite").join("config.db"))
+    Ok(base.join("joplin-lite"))
+}
+
+fn config_db_path() -> Result<PathBuf> {
+    Ok(config_base_dir()?.join("config.db"))
+}
+
+/// 数据源的稳定标识，用于隔离不同数据源的增量缓存（不含密码）。
+pub fn source_key(cfg: &SourceConfig) -> String {
+    match cfg.source_type.as_str() {
+        "local" => format!("local:{}", cfg.local_path.trim()),
+        "webdav" => format!("webdav:{}|{}", cfg.webdav_url.trim(), cfg.webdav_user),
+        other => format!("{other}:"),
+    }
 }

@@ -55,6 +55,25 @@ export interface ApplyConfigReq extends SourceConfig {
   create_new: boolean
 }
 
+export interface ResourceUpload {
+  id: string
+  title: string
+  mime: string
+  file_extension: string
+  size: number
+  markdown: string // 可直接插入正文的引用片段
+}
+
+export interface ResourceInfo {
+  id: string
+  title: string
+  mime: string
+  file_extension: string
+  size: number
+  updated_time: number
+  used_by: number // 引用该资源的笔记数（0 = 孤儿）
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url)
   if (!res.ok) throw new Error(`${url} -> ${res.status}`)
@@ -91,5 +110,25 @@ export const api = {
   deleteNote: async (id: string) => {
     const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })
     if (!res.ok) throw new Error(`DELETE -> ${res.status}`)
+  },
+
+  // 上传资源（图片/附件）：原始二进制作请求体，Content-Type=文件 MIME，文件名走 query。
+  uploadResource: async (file: Blob, filename: string): Promise<ResourceUpload> => {
+    const res = await fetch(`/api/resources?filename=${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      body: file,
+    })
+    if (!res.ok) throw new Error(`上传失败 -> ${res.status}`)
+    return res.json() as Promise<ResourceUpload>
+  },
+
+  // 资源管理
+  resources: () => getJson<ResourceInfo[]>('/api/resources'),
+  renameResource: (id: string, title: string) =>
+    sendJson<ResourceInfo>(`/api/resources/${id}`, 'PUT', { title }),
+  deleteResource: async (id: string) => {
+    const res = await fetch(`/api/resources/${id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error(`删除资源 -> ${res.status}`)
   },
 }

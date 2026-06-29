@@ -1,13 +1,15 @@
 //! 内存索引层：把存储后端里的全部条目解析后组织成可查询的库。
 //!
 //! 只读、构建一次即不可变；后续刷新通过重建+原子替换实现（见 AppState）。
-//! 阶段2 接入 WebDAV 时，可在此之上加 SQLite 持久化缓存。
+//! 构建有两条路径：`build`（全量拉取）与 `build_cached`（走 SQLite 增量缓存，
+//! 只拉取 mtime 变化/新增的条目，见 crate::cache）。
 
+use crate::cache::CacheStore;
 use crate::model::*;
 use crate::parser;
 use crate::storage::StorageBackend;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub struct Library {
@@ -36,24 +38,79 @@ pub struct BuildStats {
     pub others: usize,
     pub encrypted: usize,
     pub errors: usize,
+    /// 命中增量缓存、免去拉取的条目数。
+    pub cached: usize,
+    /// 本轮实际从数据源拉取的条目数。
+    pub fetched: usize,
 }
 
 impl Library {
-    /// 从存储后端全量构建。
-    pub fn build(storage: &dyn StorageBackend) -> anyhow::Result<(Library, BuildStats)> {
-        let mut lib = Library::default();
-        let mut stats = BuildStats::default();
+    /// 增量构建：复用 SQLite 缓存，只拉取新增/变化（mtime 不同）的条目。
+    /// `source` 为数据源标识（见 config::source_key），用于隔离不同数据源的缓存。
+    pub fn build_cached(
+        storage: &dyn StorageBackend,
+        cache: &CacheStore,
+        source: &str,
+    ) -> anyhow::Result<(Library, BuildStats)> {
+        let listed = storage.list_items()?;
+        let cached = cache.load(source).unwrap_or_default();
+        let listed_names: HashSet<&str> = listed.iter().map(|s| s.name.as_str()).collect();
 
-        // 并行拉取 + 解析（WebDAV 场景下数百个文件串行下载太慢）。保留笔记原始内容用于写回。
-        let item_stats = storage.list_items()?;
-        let parsed: Vec<Option<(String, RawItem)>> = item_stats
+        // 划分：命中缓存（mtime 相同且非 0）直接复用，其余待拉取。
+        let mut reuse_contents: Vec<String> = Vec::new();
+        let mut to_fetch: Vec<&str> = Vec::new();
+        for s in &listed {
+            match cached.get(&s.name) {
+                Some(c) if s.updated_time != 0 && c.updated_time == s.updated_time => {
+                    reuse_contents.push(c.content.clone())
+                }
+                _ => to_fetch.push(&s.name),
+            }
+        }
+        let cached_count = reuse_contents.len();
+
+        // 只并行拉取变化的条目。返回 (name, updated_time, content) 以便写回缓存。
+        let mtime_of: HashMap<&str, i64> =
+            listed.iter().map(|s| (s.name.as_str(), s.updated_time)).collect();
+        let fetched: Vec<(String, i64, String)> = to_fetch
             .par_iter()
-            .map(|s| {
+            .filter_map(|name| {
                 storage
-                    .get_item(&s.name)
+                    .get_item(name)
                     .ok()
-                    .and_then(|content| parser::parse_item(&content).ok().map(|raw| (content, raw)))
+                    .map(|content| (name.to_string(), mtime_of[name], content))
             })
+            .collect();
+
+        // 组装：复用 + 新拉取的内容一起解析建索引。
+        let mut all_contents = reuse_contents;
+        all_contents.extend(fetched.iter().map(|(_, _, c)| c.clone()));
+        let mut stats = BuildStats::default();
+        stats.cached = cached_count;
+        stats.fetched = fetched.len();
+        stats.errors += to_fetch.len() - fetched.len(); // 拉取失败计入错误
+        let lib = Library::from_contents(all_contents, &mut stats);
+
+        // 持久化缓存：写入变化项，清理数据源中已删除的条目。
+        let removed: Vec<String> = cached
+            .keys()
+            .filter(|k| !listed_names.contains(k.as_str()))
+            .cloned()
+            .collect();
+        if let Err(e) = cache.sync(source, &fetched, &removed) {
+            eprintln!("缓存写入失败（不影响本次运行）: {e}");
+        }
+        Ok((lib, stats))
+    }
+
+    /// 把一批原始 .md 内容解析、分类、建索引为 Library。类型计数与解析错误写入 `stats`。
+    fn from_contents(contents: Vec<String>, stats: &mut BuildStats) -> Library {
+        let mut lib = Library::default();
+
+        // 并行解析；保留笔记原始内容用于写回。
+        let parsed: Vec<Option<(String, RawItem)>> = contents
+            .into_par_iter()
+            .map(|content| parser::parse_item(&content).ok().map(|raw| (content, raw)))
             .collect();
 
         // 分类（顺序执行，构建索引）
@@ -111,7 +168,7 @@ impl Library {
         }
 
         lib.build_indexes();
-        Ok((lib, stats))
+        lib
     }
 
     fn build_indexes(&mut self) {
@@ -202,10 +259,80 @@ impl Library {
         Ok(id)
     }
 
+    /// 新增或更新一个资源（上传成功后同步内存，使 /api/resources 能拿到 mime）。返回资源 id。
+    pub fn upsert_resource(&mut self, content: &str) -> anyhow::Result<String> {
+        let raw = parser::parse_item(content)?;
+        let r = parser::to_resource(&raw)?;
+        let id = r.id.clone();
+        self.resources.insert(id.clone(), r);
+        Ok(id)
+    }
+
     /// 删除一篇笔记（写回成功后同步内存）。
     pub fn remove_note(&mut self, id: &str) {
         self.notes.remove(id);
         self.raw_notes.remove(id);
         self.build_indexes();
+    }
+
+    /// 删除一个资源（写回成功后同步内存）。
+    pub fn remove_resource(&mut self, id: &str) {
+        self.resources.remove(id);
+    }
+
+    /// 每个资源被多少篇笔记引用（扫描所有笔记正文里的 `:/<id>`）。
+    /// 未出现在结果中的资源即为无人引用的“孤儿”。
+    pub fn resource_usage(&self) -> HashMap<String, usize> {
+        let mut usage: HashMap<String, usize> = HashMap::new();
+        for n in self.notes.values() {
+            for id in scan_resource_refs(&n.body) {
+                *usage.entry(id).or_insert(0) += 1;
+            }
+        }
+        usage
+    }
+}
+
+/// 扫描文本里的 Joplin 资源引用 `:/<32hex>`，返回去重后的 id 集合（每篇笔记内同一资源只计一次）。
+fn scan_resource_refs(body: &str) -> HashSet<String> {
+    let b = body.as_bytes();
+    let mut out = HashSet::new();
+    let mut i = 0;
+    while i + 34 <= b.len() {
+        // `:/` 后接恰好 32 个十六进制，且第 33 位不再是十六进制（id 长度精确为 32）
+        if b[i] == b':' && b[i + 1] == b'/' {
+            let hex = &b[i + 2..i + 34];
+            let bounded = i + 34 >= b.len() || !b[i + 34].is_ascii_hexdigit();
+            if bounded && hex.iter().all(|c| c.is_ascii_hexdigit()) {
+                out.insert(String::from_utf8_lossy(hex).to_lowercase());
+                i += 34;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scans_resource_refs() {
+        let body = "见图 ![a](:/0123456789abcdef0123456789abcdef) 和附件 [f](:/0123456789ABCDEF0123456789ABCDEF)\n\
+            重复同一个 :/0123456789abcdef0123456789abcdef 再来个 :/deadbeefdeadbeefdeadbeefdeadbeef";
+        let refs = scan_resource_refs(body);
+        // 大小写归一后，第一个引用去重为 1 个，另有 deadbeef 一个 → 共 2 个不同 id
+        assert_eq!(refs.len(), 2);
+        assert!(refs.contains("0123456789abcdef0123456789abcdef"));
+        assert!(refs.contains("deadbeefdeadbeefdeadbeefdeadbeef"));
+    }
+
+    #[test]
+    fn ignores_non_32hex() {
+        // 太短 / 太长 / 非 hex 都不算
+        let refs = scan_resource_refs(":/short :/0123456789abcdef0123456789abcdefEXTRA :/zzzz");
+        assert!(refs.is_empty());
     }
 }
