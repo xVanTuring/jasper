@@ -2,6 +2,8 @@
 
 [English](README.md) · **中文**
 
+> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://xvanturing.github.io/joplin-web/
+
 一个轻量、**可读可写**的 [Joplin](https://joplinapp.org/) 兼容客户端：**本地 Rust (axum) 服务 + 浏览器 SPA**，不依赖 Electron / Tauri / WebView。直接读写你已有的 Joplin 同步库，改动会被 Joplin 下次同步自动拾取。
 
 ![阅读视图](docs/screenshots/01-reading.png)
