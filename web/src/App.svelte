@@ -45,6 +45,24 @@
     }
   }
 
+  // 记忆上次打开的笔记：仅存笔记 id，重载时按 id 拉取（失效则回退）。
+  const LAST_NOTE_KEY = 'jasper.lastNote'
+  function loadLastNoteId(): string | null {
+    try {
+      return localStorage.getItem(LAST_NOTE_KEY)
+    } catch {
+      return null
+    }
+  }
+  function saveLastNoteId(id: string | null) {
+    try {
+      if (id) localStorage.setItem(LAST_NOTE_KEY, id)
+      else localStorage.removeItem(LAST_NOTE_KEY)
+    } catch {
+      /* 忽略（隐私模式/storage 被禁用） */
+    }
+  }
+
   onMount(checkStatus)
 
   async function checkStatus() {
@@ -62,6 +80,8 @@
       folders = await api.folders()
       detail = null
       selectedNoteId = null
+      // 优先恢复上次打开的笔记（含其所在笔记本）；无记录/已失效则回退到首个有笔记的笔记本
+      if (await restoreLastNote()) return
       const first = findFirstWithNotes(folders)
       if (first) {
         selectFolder(first.id, first.title)
@@ -72,6 +92,22 @@
       }
     } catch (e) {
       error = t('app.loadFailed', { err: `${e}` })
+    }
+  }
+
+  // 恢复上次打开的笔记：拉取详情成功 → 选中其所在笔记本并打开；笔记已不存在 → 清除记忆并回退。
+  async function restoreLastNote(): Promise<boolean> {
+    const id = loadLastNoteId()
+    if (!id) return false
+    try {
+      const d = await api.note(id)
+      await selectFolder(d.parent_id)
+      detail = d
+      selectedNoteId = id
+      return true
+    } catch {
+      saveLastNoteId(null)
+      return false
     }
   }
 
@@ -120,6 +156,7 @@
       const d = await api.note(id)
       detail = d
       selectedNoteId = id
+      saveLastNoteId(id)
     } catch (e) {
       error = `${e}`
     }
@@ -132,6 +169,7 @@
       const d = await api.note(id)
       detail = d
       selectedNoteId = id
+      saveLastNoteId(id)
     } catch {
       window.open(api.resourceUrl(id), '_blank')
     }
@@ -154,6 +192,7 @@
       editOnOpenId = n.id
       detail = n
       selectedNoteId = n.id
+      saveLastNoteId(n.id)
       await refreshList()
     } catch (e) {
       error = `${e}`
@@ -164,6 +203,7 @@
     detail = null
     selectedNoteId = null
     editOnOpenId = null
+    saveLastNoteId(null)
     await refreshList()
   }
 
