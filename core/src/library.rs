@@ -199,6 +199,33 @@ impl Library {
         Ok(id)
     }
 
+    /// 新增或更新一个笔记本（写回成功后同步内存）。返回笔记本 id。
+    pub fn upsert_folder(&mut self, content: &str) -> anyhow::Result<String> {
+        let raw = parser::parse_item(content)?;
+        let folder = parser::to_folder(&raw)?;
+        let id = folder.id.clone();
+        self.folders.insert(id.clone(), folder);
+        self.build_indexes();
+        Ok(id)
+    }
+
+    /// `candidate` 是否就是 `root` 本身、或位于 `root` 子树之下。
+    /// 用于移动笔记本时防止把笔记本移进它自己或其后代（成环）。
+    pub fn is_self_or_descendant(&self, root: &str, candidate: &str) -> bool {
+        let mut cur = candidate.to_string();
+        // 上限步数防御坏数据里的既有环，避免死循环
+        for _ in 0..=self.folders.len() {
+            if cur == root {
+                return true;
+            }
+            match self.folders.get(&cur) {
+                Some(f) if !f.parent_id.is_empty() => cur = f.parent_id.clone(),
+                _ => return false,
+            }
+        }
+        false
+    }
+
     /// 新增或更新一个资源（上传成功后同步内存，使 /api/resources 能拿到 mime）。返回资源 id。
     pub fn upsert_resource(&mut self, content: &str) -> anyhow::Result<String> {
         let raw = parser::parse_item(content)?;
@@ -231,6 +258,34 @@ impl Library {
         }
         usage
     }
+}
+
+/// 统计 markdown 任务清单（GFM checkbox）的完成/总数：`(已完成, 总数)`。
+/// 仅认行首（去缩进后）形如 `- [ ] ` / `* [x] ` / `+ [X] ` 的列表项。
+pub fn count_tasks(body: &str) -> (usize, usize) {
+    let mut done = 0;
+    let mut total = 0;
+    for line in body.lines() {
+        let b = line.trim_start().as_bytes();
+        // `<-|*|+>` SP `[` <mark> `]`  且其后是空白或行尾
+        if b.len() >= 5
+            && matches!(b[0], b'-' | b'*' | b'+')
+            && b[1] == b' '
+            && b[2] == b'['
+            && b[4] == b']'
+        {
+            let after_ok = b.len() == 5 || b[5] == b' ' || b[5] == b'\t';
+            match (after_ok, b[3]) {
+                (true, b' ') => total += 1,
+                (true, b'x') | (true, b'X') => {
+                    total += 1;
+                    done += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    (done, total)
 }
 
 /// 扫描文本里的 Joplin 资源引用 `:/<32hex>`，返回去重后的 id 集合（每篇笔记内同一资源只计一次）。
@@ -267,6 +322,14 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert!(refs.contains("0123456789abcdef0123456789abcdef"));
         assert!(refs.contains("deadbeefdeadbeefdeadbeefdeadbeef"));
+    }
+
+    #[test]
+    fn counts_task_list() {
+        let body = "标题\n- [ ] 待办一\n- [x] 已完成\n* [X] 也完成\n+ [ ] 第四\n普通行\n-[ ] 无空格不算\n- [] 非法不算";
+        assert_eq!(count_tasks(body), (2, 4));
+        assert_eq!(count_tasks("没有任何任务"), (0, 0));
+        assert_eq!(count_tasks("  - [x] 缩进也算"), (1, 1));
     }
 
     #[test]

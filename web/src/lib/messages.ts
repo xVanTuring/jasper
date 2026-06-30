@@ -27,10 +27,16 @@ const zh = {
 	'topbar.settings': '设置',
 	'pane.notebooks': '笔记本',
 	'pane.newNote': '在当前笔记本新建笔记',
+	'pane.newTodo': '在当前笔记本新建待办',
+	'pane.newNotebook': '新建笔记本',
 	'list.searchPrefix': '搜索：{q}',
 	'list.empty': '没有笔记',
+	'list.tasks': '任务 {done}/{total}',
 	'app.loadFailed': '加载失败：{err}',
 	'note.newNote': '新笔记',
+	'note.newTodoTitle': '新待办',
+	'notebook.namePrompt': '新笔记本名称：',
+	'notebook.defaultName': '新笔记本',
 
 	// 演示横幅（main 段含 <b> 标记，用 {@html} 渲染）
 	'demo.banner':
@@ -84,6 +90,7 @@ const zh = {
 
 	// 笔记本树
 	'tree.toggle': '展开/折叠',
+	'tree.moveToTop': '移到顶层',
 
 	// 资源管理
 	'res.title': '资源管理',
@@ -126,10 +133,16 @@ const en: typeof zh = {
 	'topbar.settings': 'Settings',
 	'pane.notebooks': 'Notebooks',
 	'pane.newNote': 'New note in this notebook',
+	'pane.newTodo': 'New to-do in this notebook',
+	'pane.newNotebook': 'New notebook',
 	'list.searchPrefix': 'Search: {q}',
 	'list.empty': 'No notes',
+	'list.tasks': 'Tasks {done}/{total}',
 	'app.loadFailed': 'Load failed: {err}',
 	'note.newNote': 'New note',
+	'note.newTodoTitle': 'New to-do',
+	'notebook.namePrompt': 'New notebook name:',
+	'notebook.defaultName': 'New notebook',
 
 	'demo.banner':
 		'<b>Demo preview</b> · Runs entirely in your browser via Rust&nbsp;→&nbsp;WASM, <b>no backend</b>. Browse notebooks/notes, Markdown rendering (code · tables · math · task lists), and full-text search.',
@@ -180,6 +193,7 @@ const en: typeof zh = {
 	'editor.wysiwygFailed': 'Failed to load the rich-text editor',
 
 	'tree.toggle': 'Expand/collapse',
+	'tree.moveToTop': 'Move to top level',
 
 	'res.title': 'Resources',
 	'res.count': '{n} resources',

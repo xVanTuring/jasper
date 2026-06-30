@@ -39,6 +39,12 @@ ICONS = {
 	'moon': '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
 	'contrast': '<circle cx="12" cy="12" r="9"/><path d="M12 3v18a9 9 0 0 0 0-18z" fill="#000" stroke="none"/>',
 	'palette': '<circle cx="13.5" cy="6.5" r=".6" fill="#000" stroke="none"/><circle cx="17.5" cy="10.5" r=".6" fill="#000" stroke="none"/><circle cx="8.5" cy="7.5" r=".6" fill="#000" stroke="none"/><circle cx="6.5" cy="12.5" r=".6" fill="#000" stroke="none"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10c.93 0 1.69-.76 1.69-1.69 0-.44-.18-.83-.44-1.13-.27-.3-.44-.69-.44-1.13A1.69 1.69 0 0 1 14.19 16H16c2.76 0 5-2.24 5-5 0-4.42-4.04-8-9-8z"/>',
+	# 新建笔记本（文件夹 + 加号）
+	'folder-plus': '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>',
+	# 新建待办（带勾方框）
+	'check-square': '<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+	# 任务进度勾
+	'check': '<polyline points="20 6 9 17 4 12"/>',
 }
 
 # 主题里要覆盖的额外图标（不进基础集）

@@ -112,7 +112,8 @@ pub fn move_note_md(original: &str, new_parent_id: &str, now: i64) -> Result<Str
 }
 
 /// 生成一篇新笔记的 `.md` 内容（字段顺序对齐真实 Joplin 笔记）。
-pub fn new_note_md(id: &str, parent_id: &str, title: &str, body: &str, now: i64) -> String {
+/// `is_todo` 为 true 时建为待办（is_todo: 1），否则普通笔记。
+pub fn new_note_md(id: &str, parent_id: &str, title: &str, body: &str, is_todo: bool, now: i64) -> String {
     let iso = format_iso(now);
     let props = [
         format!("id: {id}"),
@@ -125,7 +126,7 @@ pub fn new_note_md(id: &str, parent_id: &str, title: &str, body: &str, now: i64)
         "altitude: 0.0000".to_string(),
         "author: ".to_string(),
         "source_url: ".to_string(),
-        "is_todo: 0".to_string(),
+        format!("is_todo: {}", if is_todo { 1 } else { 0 }),
         "todo_due: 0".to_string(),
         "todo_completed: 0".to_string(),
         "source: jasper".to_string(),
@@ -146,6 +147,68 @@ pub fn new_note_md(id: &str, parent_id: &str, title: &str, body: &str, now: i64)
         "type_: 1".to_string(),
     ];
     format!("{title}\n\n{body}\n\n{}", props.join("\n"))
+}
+
+/// 生成一个新笔记本（type_=2）的 `.md` 内容（字段顺序对齐真实 Joplin 笔记本）。
+/// 笔记本无正文段，仅 `标题\n\n元数据`。
+pub fn new_folder_md(id: &str, parent_id: &str, title: &str, now: i64) -> String {
+    let iso = format_iso(now);
+    let props = [
+        format!("id: {id}"),
+        format!("created_time: {iso}"),
+        format!("updated_time: {iso}"),
+        format!("user_created_time: {iso}"),
+        format!("user_updated_time: {iso}"),
+        "encryption_cipher_text: ".to_string(),
+        "encryption_applied: 0".to_string(),
+        format!("parent_id: {parent_id}"),
+        "is_shared: 0".to_string(),
+        "share_id: ".to_string(),
+        "master_key_id: ".to_string(),
+        "icon: ".to_string(),
+        "user_data: ".to_string(),
+        "deleted_time: 0".to_string(),
+        "type_: 2".to_string(),
+    ];
+    format!("{title}\n\n{}", props.join("\n"))
+}
+
+/// 把现有笔记本移动到新的父笔记本（改 parent_id），刷新更新时间，其余元数据原样保留。
+/// 笔记本无正文段（仅标题），故标题逐字保留、仅重写元数据块。
+pub fn move_folder_md(original: &str, new_parent_id: &str, now: i64) -> Result<String> {
+    let lines: Vec<&str> = original.split('\n').collect();
+    let mut sep = None;
+    let mut i = lines.len();
+    while i > 0 {
+        i -= 1;
+        let t = lines[i].trim();
+        if t.is_empty() {
+            sep = Some(i);
+            break;
+        }
+        if !t.contains(':') {
+            break;
+        }
+    }
+    let sep = sep.ok_or_else(|| anyhow!("无法定位元数据块"))?;
+    let iso = format_iso(now);
+    let new_meta: Vec<String> = lines[sep + 1..]
+        .iter()
+        .map(|l| {
+            let key = l.trim_start();
+            if key.starts_with("parent_id:") {
+                format!("parent_id: {new_parent_id}")
+            } else if key.starts_with("updated_time:") {
+                format!("updated_time: {iso}")
+            } else if key.starts_with("user_updated_time:") {
+                format!("user_updated_time: {iso}")
+            } else {
+                (*l).to_string()
+            }
+        })
+        .collect();
+    let head = lines[..sep].join("\n");
+    Ok(format!("{head}\n\n{}", new_meta.join("\n")))
 }
 
 /// 生成一个新资源（type_=4）的元数据 `.md` 内容。
@@ -265,7 +328,7 @@ mod tests {
     #[test]
     fn new_note_is_parseable() {
         let id = "ffffffffffffffffffffffffffffffff";
-        let out = new_note_md(id, "parentparentparentparentparent12", "标题", "正文内容", 1_700_000_000_000);
+        let out = new_note_md(id, "parentparentparentparentparent12", "标题", "正文内容", false, 1_700_000_000_000);
         let raw = parser::parse_item(&out).unwrap();
         let note = parser::to_note(&raw).unwrap();
         assert_eq!(note.id, id);
@@ -273,6 +336,37 @@ mod tests {
         assert_eq!(note.body, "正文内容");
         assert_eq!(note.parent_id, "parentparentparentparentparent12");
         assert_eq!(note.markup_language, crate::model::MarkupLanguage::Markdown);
+        assert!(!note.is_todo);
+    }
+
+    #[test]
+    fn new_todo_sets_is_todo() {
+        let out = new_note_md("ffffffffffffffffffffffffffffffff", "parentparentparentparentparent12", "待办", "", true, 1_700_000_000_000);
+        let note = parser::to_note(&parser::parse_item(&out).unwrap()).unwrap();
+        assert!(note.is_todo);
+        assert!(!note.todo_completed);
+    }
+
+    #[test]
+    fn new_folder_is_parseable() {
+        let id = "abcabcabcabcabcabcabcabcabcabc12";
+        let out = new_folder_md(id, "parentparentparentparentparent12", "我的笔记本", 1_700_000_000_000);
+        let raw = parser::parse_item(&out).unwrap();
+        assert_eq!(raw.item_type(), crate::model::ItemType::Folder);
+        let f = parser::to_folder(&raw).unwrap();
+        assert_eq!(f.id, id);
+        assert_eq!(f.title, "我的笔记本");
+        assert_eq!(f.parent_id, "parentparentparentparentparent12");
+    }
+
+    #[test]
+    fn move_folder_changes_parent() {
+        let orig = new_folder_md("abcabcabcabcabcabcabcabcabcabc12", "oldoldoldoldoldoldoldoldoldold12", "本子", 1_700_000_000_000);
+        let out = move_folder_md(&orig, "newnewnewnewnewnewnewnewnewnew12", 1_700_000_999_000).unwrap();
+        let f = parser::to_folder(&parser::parse_item(&out).unwrap()).unwrap();
+        assert_eq!(f.parent_id, "newnewnewnewnewnewnewnewnewnew12");
+        assert_eq!(f.title, "本子");
+        assert_eq!(f.updated_time, 1_700_000_999_000);
     }
 
     #[test]

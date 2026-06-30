@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte'
   import { fade } from 'svelte/transition'
   import type { NoteDetail } from './api'
-  import { api } from './api'
+  import { api, taskProgress } from './api'
   import { t } from './i18n.svelte'
   import { renderNote } from './render'
   import Button from './Button.svelte'
@@ -62,6 +62,8 @@
   let html = $derived(
     detail ? renderNote({ ...detail, title, body }) : ''
   )
+  // 任务清单进度（随正文实时变化）
+  let tasks = $derived(taskProgress(body))
 
   function scheduleSave() {
     if (!detail) return
@@ -177,6 +179,12 @@
           · <a href={detail.source_url} target="_blank" rel="noopener noreferrer">{t('note.source')}</a>
         {/if}
         {#if detail.markup_language === 2}<span class="badge">HTML</span>{/if}
+        {#if tasks[1] > 0}
+          <span class="task-meta" class:done={tasks[0] === tasks[1]}>
+            <span class="bar"><span class="fill" style="width:{Math.round((tasks[0] / tasks[1]) * 100)}%"></span></span>
+            {t('list.tasks', { done: tasks[0], total: tasks[1] })}
+          </span>
+        {/if}
       </div>
       <!-- 内容已由 DOMPurify 净化 -->
       <div class="content" onclick={onContentClick}>{@html html}</div>
@@ -248,6 +256,33 @@
     border-radius: 4px;
     padding: 1px 6px;
     margin-left: 6px;
+  }
+  .task-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .task-meta .bar {
+    width: 60px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--hover);
+    overflow: hidden;
+  }
+  .task-meta .fill {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
+  .task-meta.done {
+    color: var(--success);
+  }
+  .task-meta.done .fill {
+    background: var(--success);
   }
   .content {
     padding: 20px 36px 80px;

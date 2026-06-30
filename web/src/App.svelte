@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { slide } from 'svelte/transition'
-  import { api, IS_DEMO, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
+  import { api, IS_DEMO, FOLDER_DND_TYPE, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
+  import { draggingFolder } from './lib/dnd.svelte'
   import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
   import Button from './lib/Button.svelte'
   import ThemePicker from './lib/ThemePicker.svelte'
@@ -197,6 +198,58 @@
     }
   }
 
+  // 拖拽：把笔记本移到另一个笔记本下（parentId 空=移到顶层）。后端防环。
+  async function moveFolder(folderId: string, parentId: string) {
+    try {
+      await api.moveFolder(folderId, parentId)
+      folders = await api.folders()
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  // 新建笔记本（顶层）：名称走浏览器 prompt（带本地化默认名），建好后选中
+  async function handleNewFolder() {
+    const name = (prompt(t('notebook.namePrompt'), t('notebook.defaultName')) ?? '').trim()
+    if (!name) return
+    try {
+      const f = await api.createFolder({ parent_id: '', title: name })
+      folders = await api.folders()
+      selectFolder(f.id, f.title)
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  // 新建待办：与新建笔记同路径，仅 is_todo=true
+  async function handleNewTodo() {
+    const parent = searchMode ? '' : selectedFolderId ?? ''
+    try {
+      const n = await api.createNote({ parent_id: parent, title: t('note.newTodoTitle'), body: '', is_todo: true })
+      editOnOpenId = n.id
+      detail = n
+      selectedNoteId = n.id
+      saveLastNoteId(n.id)
+      await refreshList()
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  // 「移到顶层」根放置区（仅拖拽笔记本时显示）
+  let rootDropOver = $state(false)
+  function onRootDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types.includes(FOLDER_DND_TYPE)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    rootDropOver = true
+  }
+  function onRootDrop(e: DragEvent) {
+    rootDropOver = false
+    const id = e.dataTransfer?.getData(FOLDER_DND_TYPE)
+    if (id) moveFolder(id, '')
+  }
+
   async function handleNew() {
     const parent = searchMode ? '' : selectedFolderId ?? ''
     try {
@@ -280,12 +333,31 @@
 
   <div class="panes">
     <aside class="sidebar">
-      <div class="pane-title">{t('pane.notebooks')}</div>
+      <div class="pane-title">
+        <span>{t('pane.notebooks')}</span>
+        {#if !IS_DEMO}
+          <Button variant="ghost" iconOnly icon="folder-plus" label={t('pane.newNotebook')} onclick={handleNewFolder} />
+        {/if}
+      </div>
+      {#if !IS_DEMO && draggingFolder()}
+        <div
+          class="root-drop"
+          class:over={rootDropOver}
+          role="presentation"
+          transition:slide={{ duration: 150 }}
+          ondragover={onRootDragOver}
+          ondragleave={() => (rootDropOver = false)}
+          ondrop={onRootDrop}
+        >
+          {t('tree.moveToTop')}
+        </div>
+      {/if}
       <FolderTree
         {folders}
         selectedId={searchMode ? null : selectedFolderId}
         onSelect={(id) => selectFolder(id)}
         onMoveNote={IS_DEMO ? undefined : moveNote}
+        onMoveFolder={IS_DEMO ? undefined : moveFolder}
       />
     </aside>
 
@@ -293,7 +365,10 @@
       <div class="pane-title">
         <span>{listTitle}</span>
         {#if !IS_DEMO}
-          <Button variant="ghost" iconOnly icon="plus" label={t('pane.newNote')} onclick={handleNew} />
+          <span class="title-actions">
+            <Button variant="ghost" iconOnly icon="check-square" label={t('pane.newTodo')} onclick={handleNewTodo} />
+            <Button variant="ghost" iconOnly icon="plus" label={t('pane.newNote')} onclick={handleNew} />
+          </span>
         {/if}
       </div>
       <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} canDrag={!IS_DEMO} />
@@ -430,5 +505,25 @@
   .reader {
     overflow-y: auto;
     background: var(--bg);
+  }
+  .title-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .root-drop {
+    margin: 6px 8px;
+    padding: 9px;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-dim);
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+  .root-drop.over {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
   }
 </style>

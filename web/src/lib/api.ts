@@ -1,8 +1,9 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
 import { t } from './i18n.svelte'
 
-// 笔记拖拽（移动到其它笔记本）用的 dataTransfer MIME；NoteList 设、FolderTree 读。
+// 拖拽（移动）用的 dataTransfer MIME：笔记 / 笔记本各一种，放置目标据此区分。
 export const NOTE_DND_TYPE = 'application/x-jasper-note-id'
+export const FOLDER_DND_TYPE = 'application/x-jasper-folder-id'
 
 export interface FolderNode {
   id: string
@@ -18,6 +19,14 @@ export interface NoteSummary {
   parent_id: string
   is_todo: boolean
   todo_completed: boolean
+  task_done: number // 正文任务清单已完成数
+  task_total: number // 正文任务清单总数（0 = 无任务清单）
+}
+
+export interface FolderRef {
+  id: string
+  title: string
+  parent_id: string
 }
 
 export interface NoteDetail {
@@ -120,12 +129,30 @@ export function parseResourceId(url: string): string | null {
   return m ? m[1] : null
 }
 
+// 统计 markdown 任务清单（GFM checkbox）完成/总数 [done, total]。与 core::library::count_tasks 同义，
+// 供编辑时按当前正文实时显示进度（列表项的计数由后端给）。
+export function taskProgress(body: string): [number, number] {
+  let done = 0
+  let total = 0
+  for (const line of (body || '').split('\n')) {
+    const m = /^\s*[-*+] \[([ xX])\](?:\s|$)/.exec(line)
+    if (!m) continue
+    total++
+    if (m[1] !== ' ') done++
+  }
+  return [done, total]
+}
+
 const httpApi = {
   status: () => getJson<StatusResp>('/api/status'),
   getConfig: () => getJson<SourceConfig>('/api/config'),
   saveConfig: (data: ApplyConfigReq) => sendJson<ConfigResult>('/api/config', 'PUT', data),
 
   folders: () => getJson<FolderNode[]>('/api/folders'),
+  createFolder: (data: { parent_id: string; title: string }) =>
+    sendJson<FolderRef>('/api/folders', 'POST', data),
+  moveFolder: (id: string, parentId: string) =>
+    sendJson<FolderRef>(`/api/folders/${id}/move`, 'PUT', { parent_id: parentId }),
   notes: (folderId: string) =>
     getJson<NoteSummary[]>(`/api/notes?folder=${encodeURIComponent(folderId)}`),
   note: (id: string) => getJson<NoteDetail>(`/api/notes/${id}`),
@@ -138,7 +165,7 @@ const httpApi = {
   // 移动笔记到另一个笔记本（改 parent_id）
   moveNote: (id: string, parentId: string) =>
     sendJson<NoteDetail>(`/api/notes/${id}/move`, 'PUT', { parent_id: parentId }),
-  createNote: (data: { parent_id: string; title?: string; body?: string }) =>
+  createNote: (data: { parent_id: string; title?: string; body?: string; is_todo?: boolean }) =>
     sendJson<NoteDetail>('/api/notes', 'POST', data),
   deleteNote: async (id: string) => {
     const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })

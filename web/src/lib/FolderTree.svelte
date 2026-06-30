@@ -1,7 +1,8 @@
 <script lang="ts">
   import { slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
-  import { NOTE_DND_TYPE, type FolderNode } from './api'
+  import { NOTE_DND_TYPE, FOLDER_DND_TYPE, type FolderNode } from './api'
+  import { startFolderDrag, endFolderDrag, draggingFolder } from './dnd.svelte'
   import { t } from './i18n.svelte'
   import Icon from './Icon.svelte'
   import Self from './FolderTree.svelte'
@@ -11,12 +12,14 @@
     selectedId,
     onSelect,
     onMoveNote,
+    onMoveFolder,
     depth = 0,
   }: {
     folders: FolderNode[]
     selectedId: string | null
     onSelect: (id: string) => void
     onMoveNote?: (noteId: string, folderId: string) => void
+    onMoveFolder?: (folderId: string, parentId: string) => void
     depth?: number
   } = $props()
 
@@ -26,11 +29,25 @@
   // 拖拽放置高亮的笔记本 id（本实例内；每个递归实例各自维护）
   let dropId = $state<string | null>(null)
 
-  function isNoteDrag(e: DragEvent): boolean {
-    return !!onMoveNote && !!e.dataTransfer && e.dataTransfer.types.includes(NOTE_DND_TYPE)
+  // 拖拽类型：笔记 / 笔记本 / 不可放置
+  function dragKind(e: DragEvent): 'note' | 'folder' | null {
+    const types = e.dataTransfer?.types
+    if (!types) return null
+    if (onMoveNote && types.includes(NOTE_DND_TYPE)) return 'note'
+    if (onMoveFolder && types.includes(FOLDER_DND_TYPE)) return 'folder'
+    return null
+  }
+  // 笔记本拖拽时禁止落到自身或其后代（防环），由 dnd 共享态提供 forbidden 集合
+  function canDropOn(id: string, kind: 'note' | 'folder'): boolean {
+    if (kind === 'folder') {
+      const d = draggingFolder()
+      if (d && d.forbidden.has(id)) return false
+    }
+    return true
   }
   function onRowDragOver(e: DragEvent, id: string) {
-    if (!isNoteDrag(e)) return
+    const kind = dragKind(e)
+    if (!kind || !canDropOn(id, kind)) return
     e.preventDefault() // 允许放置
     e.dataTransfer!.dropEffect = 'move'
     dropId = id
@@ -42,11 +59,31 @@
     if (dropId === id) dropId = null
   }
   function onRowDrop(e: DragEvent, id: string) {
-    if (!isNoteDrag(e)) return
-    e.preventDefault()
-    const noteId = e.dataTransfer!.getData(NOTE_DND_TYPE)
+    const kind = dragKind(e)
     dropId = null
-    if (noteId) onMoveNote!(noteId, id)
+    if (!kind || !canDropOn(id, kind)) return
+    e.preventDefault()
+    if (kind === 'note') {
+      const noteId = e.dataTransfer!.getData(NOTE_DND_TYPE)
+      if (noteId) onMoveNote!(noteId, id)
+    } else {
+      const folderId = e.dataTransfer!.getData(FOLDER_DND_TYPE)
+      if (folderId && folderId !== id) onMoveFolder!(folderId, id)
+    }
+  }
+
+  // 拖拽笔记本：开始时算好「自身+全部后代」id 集合（用于防环），存入 dnd 共享态
+  function collectSubtreeIds(node: FolderNode, into: Set<string>) {
+    into.add(node.id)
+    for (const c of node.children) collectSubtreeIds(c, into)
+  }
+  function onFolderDragStart(e: DragEvent, f: FolderNode) {
+    if (!onMoveFolder || !e.dataTransfer) return
+    const forbidden = new Set<string>()
+    collectSubtreeIds(f, forbidden)
+    e.dataTransfer.setData(FOLDER_DND_TYPE, f.id)
+    e.dataTransfer.effectAllowed = 'move'
+    startFolderDrag(f.id, forbidden)
   }
 </script>
 
@@ -81,7 +118,13 @@
           <span class="caret spacer"></span>
         {/if}
 
-        <button class="folder" onclick={() => onSelect(f.id)}>
+        <button
+          class="folder"
+          draggable={!!onMoveFolder}
+          ondragstart={onMoveFolder ? (e) => onFolderDragStart(e, f) : undefined}
+          ondragend={onMoveFolder ? endFolderDrag : undefined}
+          onclick={() => onSelect(f.id)}
+        >
           <span class="ic"><Icon name={f.children.length ? 'folder' : 'file'} size={14} /></span>
           <span class="name">{f.title || t('common.unnamed')}</span>
           {#if f.note_count > 0}<span class="count">{f.note_count}</span>{/if}
@@ -90,7 +133,7 @@
 
       {#if f.children.length && expanded[f.id]}
         <div class="subtree" transition:slide={{ duration: 180, easing: cubicOut }}>
-          <Self folders={f.children} {selectedId} {onSelect} {onMoveNote} depth={depth + 1} />
+          <Self folders={f.children} {selectedId} {onSelect} {onMoveNote} {onMoveFolder} depth={depth + 1} />
         </div>
       {/if}
     </li>

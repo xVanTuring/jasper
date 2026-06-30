@@ -52,7 +52,21 @@
             {n.title || t('common.untitled')}
           </span>
         </div>
-        <div class="date">{fmtDate(n.updated_time)}</div>
+        <div class="meta">
+          <span class="date">{fmtDate(n.updated_time)}</span>
+          {#if n.task_total > 0}
+            <span
+              class="tasks"
+              class:done={n.task_done === n.task_total}
+              title={t('list.tasks', { done: n.task_done, total: n.task_total })}
+            >
+              <span class="bar">
+                <span class="fill" style="width:{Math.round((n.task_done / n.task_total) * 100)}%"></span>
+              </span>
+              {n.task_done}/{n.task_total}
+            </span>
+          {/if}
+        </div>
       </button>
     </li>
   {/each}
@@ -116,10 +130,45 @@
     text-decoration: line-through;
     color: var(--text-dim);
   }
+  .meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 3px;
+  }
   .date {
     font-size: 11px;
     color: var(--text-dim);
-    margin-top: 2px;
+  }
+  .tasks {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .tasks .bar {
+    width: 34px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--hover);
+    overflow: hidden;
+  }
+  .tasks .fill {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+    transition: width 0.2s ease;
+  }
+  .tasks.done {
+    color: var(--success);
+  }
+  .tasks.done .fill {
+    background: var(--success);
   }
   .todo {
     margin: 0;

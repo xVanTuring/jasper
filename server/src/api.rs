@@ -6,6 +6,8 @@
 //!   PUT    /api/config           设置/切换数据源（连接并重建索引）
 //! 读：
 //!   GET    /api/folders          笔记本树
+//!   POST   /api/folders          新建笔记本 { parent_id?, title }
+//!   PUT    /api/folders/{id}/move 移动笔记本（改 parent_id；防环）
 //!   GET    /api/notes?folder=ID  笔记列表
 //!   GET    /api/notes/{id}       笔记详情
 //!   GET    /api/resources        资源清单（含引用计数）
@@ -52,7 +54,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/status", get(status))
         .route("/api/config", get(get_config).put(apply_config))
-        .route("/api/folders", get(folders))
+        .route("/api/folders", get(folders).post(create_folder))
+        .route("/api/folders/{id}/move", put(move_folder))
         .route("/api/notes", get(notes_list).post(create_note))
         .route("/api/notes/{id}", get(note_detail).put(update_note).delete(delete_note))
         .route("/api/notes/{id}/move", put(move_note))
@@ -120,6 +123,9 @@ struct NoteSummary {
     parent_id: String,
     is_todo: bool,
     todo_completed: bool,
+    /// 正文内 markdown 任务清单的完成/总数（总数 0 = 无任务清单）。
+    task_done: usize,
+    task_total: usize,
 }
 
 #[derive(Serialize)]
@@ -154,9 +160,33 @@ struct CreateNoteReq {
     title: String,
     #[serde(default)]
     body: String,
+    /// 是否建为待办（is_todo: 1）。
+    #[serde(default)]
+    is_todo: bool,
+}
+
+#[derive(Deserialize)]
+struct CreateFolderReq {
+    #[serde(default)]
+    parent_id: String, // 空 = 根
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct MoveFolderReq {
+    parent_id: String, // 空 = 移到根
+}
+
+#[derive(Serialize)]
+struct FolderRef {
+    id: String,
+    title: String,
+    parent_id: String,
 }
 
 fn summarize(n: &Note) -> NoteSummary {
+    let (task_done, task_total) = crate::library::count_tasks(&n.body);
     NoteSummary {
         id: n.id.clone(),
         title: n.title.clone(),
@@ -164,6 +194,8 @@ fn summarize(n: &Note) -> NoteSummary {
         parent_id: n.parent_id.clone(),
         is_todo: n.is_todo,
         todo_completed: n.todo_completed,
+        task_done,
+        task_total,
     }
 }
 
@@ -595,7 +627,7 @@ async fn create_note(
 ) -> Result<Json<NoteDetail>, StatusCode> {
     let id = serialize::new_id();
     let content =
-        serialize::new_note_md(&id, &req.parent_id, &req.title, &req.body, serialize::now_ms());
+        serialize::new_note_md(&id, &req.parent_id, &req.title, &req.body, req.is_todo, serialize::now_ms());
 
     write_item(&state, format!("{id}.md"), content.clone()).await?;
 
@@ -603,6 +635,72 @@ async fn create_note(
     lib.upsert_note(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let n = lib.note(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(detail_of(n)))
+}
+
+/// POST /api/folders —— 新建笔记本。parent_id 空=根，非空须为已存在笔记本。
+async fn create_folder(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<CreateFolderReq>,
+) -> Result<Json<FolderRef>, StatusCode> {
+    let parent = req.parent_id.trim().to_string();
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err(StatusCode::BAD_REQUEST); // 名称由前端保证非空（带本地化默认名）
+    }
+    if !parent.is_empty() {
+        let lib = state.library.read().unwrap();
+        if !lib.folders.contains_key(&parent) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
+    let id = serialize::new_id();
+    let content = serialize::new_folder_md(&id, &parent, &title, serialize::now_ms());
+    write_item(&state, format!("{id}.md"), content.clone()).await?;
+    let mut lib = state.library.write().unwrap();
+    lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(FolderRef { id, title, parent_id: parent }))
+}
+
+/// PUT /api/folders/{id}/move —— 移动笔记本到新父级。parent_id 空=移到根。
+/// 防环：不能移进自身或自身的后代。笔记本原始 .md 未缓存，故从存储现取。
+async fn move_folder(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<MoveFolderReq>,
+) -> Result<Json<FolderRef>, StatusCode> {
+    let storage = storage_of(&state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let new_parent = req.parent_id.trim().to_string();
+    {
+        let lib = state.library.read().unwrap();
+        if !lib.folders.contains_key(&id) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        if !new_parent.is_empty() && !lib.folders.contains_key(&new_parent) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        if lib.is_self_or_descendant(&id, &new_parent) {
+            return Err(StatusCode::BAD_REQUEST); // 移进自身/后代 → 成环
+        }
+        if let Some(f) = lib.folders.get(&id) {
+            if f.parent_id == new_parent {
+                return Ok(Json(FolderRef { id: id.clone(), title: f.title.clone(), parent_id: new_parent }));
+            }
+        }
+    }
+    let name = format!("{id}.md");
+    let st = storage.clone();
+    let name2 = name.clone();
+    let original = tokio::task::spawn_blocking(move || st.get_item(&name2))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let content = serialize::move_folder_md(&original, &new_parent, serialize::now_ms())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    write_item(&state, name, content.clone()).await?;
+    let mut lib = state.library.write().unwrap();
+    lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let f = lib.folders.get(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(FolderRef { id: id.clone(), title: f.title.clone(), parent_id: f.parent_id.clone() }))
 }
 
 async fn delete_note(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> StatusCode {
