@@ -1,7 +1,9 @@
 services:
   joplin-lite:
+    # 本地构建（默认）。也可改用 GHCR 预构建镜像：注释掉 build，换成下面的 image。
     build: .
     image: joplin-lite
+    # image: ghcr.io/<owner>/joplin-lite:latest   # 用发布到 GHCR 的镜像，无需本地构建
     container_name: joplin-lite
     ports:
       - "27583:27583"

@@ -69,13 +69,35 @@ cd web && pnpm dev        # or hot-reload dev server on :5173 (proxies /api)
 
 Then open **http://127.0.0.1:27583/**. On first run the wizard lets you pick *existing library* / *new library* × *local* / *WebDAV*.
 
+### Single binary
+
+The frontend can be **embedded into the executable** (via [rust-embed](https://crates.io/crates/rust-embed)) so the whole app ships as one self-contained file — no separate `web/dist` at runtime:
+
+```bash
+cd web && pnpm build                                   # build web/dist first
+cd server && cargo build --release --features embed     # → server/target/release/joplin-lite (~5 MB)
+```
+
+Copy that single binary anywhere and run it. The `embed` feature is opt-in; without it the backend serves `web/dist` from disk as before (so plain `cargo run` still works without building the frontend).
+
 ### Docker
 
 ```bash
 docker compose up --build   # then open http://localhost:27583/
 ```
 
-The config directory is a mounted volume so your data-source settings and cache persist.
+The image is a single embedded binary on `debian-slim` (frontend baked in). The config directory is a mounted volume so your data-source settings and cache persist.
+
+#### Pre-built image from GHCR
+
+Pushed images are published to the GitHub Container Registry by [`.github/workflows/docker.yml`](.github/workflows/docker.yml):
+
+```bash
+docker run -p 27583:27583 -v joplin-config:/config \
+  ghcr.io/<owner>/joplin-lite:latest      # then open http://localhost:27583/
+```
+
+`main` builds tag `latest` (+ `sha-…`); version tags (`v1.2.3`) get semver tags.
 
 ### Try it with demo content
 

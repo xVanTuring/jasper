@@ -12,13 +12,16 @@
 //!   JOPLIN_LITE_HOST          监听地址（默认 127.0.0.1；局域网/容器设 0.0.0.0）
 //!   JOPLIN_LITE_PORT          端口（默认 27583）
 //!   JOPLIN_LITE_CONFIG_DIR    配置库目录（默认平台配置目录；容器里挂卷）
-//!   JOPLIN_LITE_WEB_DIR       前端静态目录（默认相对源码；容器里指向打包路径）
+//!   JOPLIN_LITE_WEB_DIR       前端静态目录覆盖（设了就从该磁盘目录托管，可热替换前端）；
+//!                             不设时：embed 构建用内嵌资源，否则用源码旁 ../web/dist
 
 mod api;
 mod cache;
 mod config;
 mod indexer;
 mod storage;
+#[cfg(feature = "embed")]
+mod web_assets;
 
 // 纯逻辑（数据模型/解析/序列化/索引）来自 joplin-core；以 crate 路径重导出，
 // 让既有的 crate::{model,parser,serialize,library} 引用保持不变。
@@ -111,28 +114,49 @@ async fn main() -> Result<()> {
         cache: cache_store,
     });
 
-    // 托管前端构建产物（web/dist），SPA 回退到 index.html。开发期前端跑 Vite 即可。
-    // 路径可用 JOPLIN_LITE_WEB_DIR 覆盖（Docker 等场景下编译期路径不存在）。
-    let web_dist = std::env::var("JOPLIN_LITE_WEB_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/dist"));
-    let index = web_dist.join("index.html");
-    let serve_dir = ServeDir::new(&web_dist).not_found_service(ServeFile::new(&index));
-
-    let app = api::router(state).fallback_service(serve_dir);
+    // 托管前端：SPA 回退到 index.html。开发期前端跑 Vite 即可。
+    let app = attach_web(api::router(state));
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     println!("\n  ➜  浏览器打开: http://{}/", display_host(&host, &port));
     println!("  ➜  API 根:     http://{addr}/api/folders\n");
-    if !web_dist.exists() {
-        println!("（提示：前端尚未构建，web/dist 不存在；可先访问 /api/* 验证后端）\n");
-    }
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+// 给路由挂上前端静态服务（fallback）：
+//   1. 设了 JOPLIN_LITE_WEB_DIR → 从该磁盘目录托管（两种构建都支持，便于热替换前端）；
+//   2. 否则 embed 构建 → 内嵌资源（单文件，运行时不依赖磁盘）；
+//   3. 否则 → 源码旁 ../web/dist（开发/源码构建默认，Docker 等编译期路径不存在时用 1 覆盖）。
+fn attach_web(router: axum::Router) -> axum::Router {
+    if let Some(dir) = std::env::var("JOPLIN_LITE_WEB_DIR").ok().map(PathBuf::from) {
+        if !dir.exists() {
+            println!("（提示：JOPLIN_LITE_WEB_DIR={} 不存在）", dir.display());
+        }
+        return serve_disk(router, dir);
+    }
+    #[cfg(feature = "embed")]
+    {
+        router.fallback(web_assets::handler)
+    }
+    #[cfg(not(feature = "embed"))]
+    {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/dist");
+        if !dir.exists() {
+            println!("（提示：前端尚未构建，web/dist 不存在；可先访问 /api/* 验证后端）");
+        }
+        serve_disk(router, dir)
+    }
+}
+
+fn serve_disk(router: axum::Router, dir: PathBuf) -> axum::Router {
+    let index = dir.join("index.html");
+    let serve = ServeDir::new(&dir).not_found_service(ServeFile::new(&index));
+    router.fallback_service(serve)
 }
 
 fn display_host(host: &str, port: &str) -> String {

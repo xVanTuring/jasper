@@ -22,6 +22,13 @@ rayon = "1"
 getrandom = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5"
+# 单文件打包：把 web/dist 编译进二进制（仅 `--features embed` 时生效）
+rust-embed = { version = "8", optional = true, features = ["mime-guess"] }
+
+[features]
+# 开启后 web/dist 在编译期内嵌进二进制，运行时不再依赖磁盘上的前端目录。
+# 需在构建前先 `cd web && pnpm build`。默认关闭，开发/源码构建行为不变。
+embed = ["dep:rust-embed"]
 
 [profile.release]
 opt-level = "z"
