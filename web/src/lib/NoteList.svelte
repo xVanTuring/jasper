@@ -2,18 +2,27 @@
   import { fly } from 'svelte/transition'
   import { flip } from 'svelte/animate'
   import { cubicOut } from 'svelte/easing'
-  import type { NoteSummary } from './api'
+  import { NOTE_DND_TYPE, type NoteSummary } from './api'
   import { t } from './i18n.svelte'
 
   let {
     notes,
     selectedId,
     onSelect,
+    canDrag = false,
   }: {
     notes: NoteSummary[]
     selectedId: string | null
     onSelect: (id: string) => void
+    canDrag?: boolean
   } = $props()
+
+  // 拖拽载荷用自定义 MIME（NOTE_DND_TYPE，见 api.ts），FolderTree 据此识别为“笔记拖拽”。
+  function onDragStart(e: DragEvent, id: string) {
+    if (!e.dataTransfer) return
+    e.dataTransfer.setData(NOTE_DND_TYPE, id)
+    e.dataTransfer.effectAllowed = 'move'
+  }
 
   function fmtDate(ms: number): string {
     if (!ms) return ''
@@ -28,7 +37,13 @@
       in:fly|global={{ y: 6, duration: 220, delay: Math.min(i * 18, 260), easing: cubicOut }}
       animate:flip={{ duration: 220, easing: cubicOut }}
     >
-      <button class="note" class:active={n.id === selectedId} onclick={() => onSelect(n.id)}>
+      <button
+        class="note"
+        class:active={n.id === selectedId}
+        draggable={canDrag}
+        ondragstart={canDrag ? (e) => onDragStart(e, n.id) : undefined}
+        onclick={() => onSelect(n.id)}
+      >
         <div class="line1">
           {#if n.is_todo}
             <input class="todo" type="checkbox" checked={n.todo_completed} disabled />

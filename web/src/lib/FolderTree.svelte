@@ -1,7 +1,7 @@
 <script lang="ts">
   import { slide } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
-  import type { FolderNode } from './api'
+  import { NOTE_DND_TYPE, type FolderNode } from './api'
   import { t } from './i18n.svelte'
   import Icon from './Icon.svelte'
   import Self from './FolderTree.svelte'
@@ -10,16 +10,44 @@
     folders,
     selectedId,
     onSelect,
+    onMoveNote,
     depth = 0,
   }: {
     folders: FolderNode[]
     selectedId: string | null
     onSelect: (id: string) => void
+    onMoveNote?: (noteId: string, folderId: string) => void
     depth?: number
   } = $props()
 
   // 默认折叠：只有展开过的笔记本 expanded[id] 为 true
   let expanded = $state<Record<string, boolean>>({})
+
+  // 拖拽放置高亮的笔记本 id（本实例内；每个递归实例各自维护）
+  let dropId = $state<string | null>(null)
+
+  function isNoteDrag(e: DragEvent): boolean {
+    return !!onMoveNote && !!e.dataTransfer && e.dataTransfer.types.includes(NOTE_DND_TYPE)
+  }
+  function onRowDragOver(e: DragEvent, id: string) {
+    if (!isNoteDrag(e)) return
+    e.preventDefault() // 允许放置
+    e.dataTransfer!.dropEffect = 'move'
+    dropId = id
+  }
+  function onRowDragLeave(e: DragEvent, id: string) {
+    // 移到行内子元素（caret/folder 按钮）不算离开，避免高亮闪烁
+    const related = e.relatedTarget as Node | null
+    if (related && (e.currentTarget as HTMLElement).contains(related)) return
+    if (dropId === id) dropId = null
+  }
+  function onRowDrop(e: DragEvent, id: string) {
+    if (!isNoteDrag(e)) return
+    e.preventDefault()
+    const noteId = e.dataTransfer!.getData(NOTE_DND_TYPE)
+    dropId = null
+    if (noteId) onMoveNote!(noteId, id)
+  }
 </script>
 
 <ul class="tree">
@@ -28,7 +56,12 @@
       <div
         class="row"
         class:active={f.id === selectedId}
+        class:drop-target={dropId === f.id}
         style="padding-left: {depth * 14 + 6}px"
+        role="presentation"
+        ondragover={(e) => onRowDragOver(e, f.id)}
+        ondragleave={(e) => onRowDragLeave(e, f.id)}
+        ondrop={(e) => onRowDrop(e, f.id)}
       >
         {#if f.children.length}
           <button
@@ -57,7 +90,7 @@
 
       {#if f.children.length && expanded[f.id]}
         <div class="subtree" transition:slide={{ duration: 180, easing: cubicOut }}>
-          <Self folders={f.children} {selectedId} {onSelect} depth={depth + 1} />
+          <Self folders={f.children} {selectedId} {onSelect} {onMoveNote} depth={depth + 1} />
         </div>
       {/if}
     </li>
@@ -101,6 +134,11 @@
   }
   .row.active::before {
     height: 62%;
+  }
+  /* 拖拽笔记悬停其上的放置目标：内描边 + 强调底色（不改变布局） */
+  .row.drop-target {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
   .caret {
     width: 18px;

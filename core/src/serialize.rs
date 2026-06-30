@@ -68,6 +68,49 @@ pub fn update_note_md(original: &str, new_title: &str, new_body: &str, now: i64)
     Ok(format!("{new_title}\n\n{new_body}\n\n{}", new_meta.join("\n")))
 }
 
+/// 把现有笔记移动到新笔记本：只改 `parent_id` 并刷新更新时间，
+/// 标题/正文/其余元数据逐字保留（与 Joplin diff 最小、双向兼容）。
+pub fn move_note_md(original: &str, new_parent_id: &str, now: i64) -> Result<String> {
+    let lines: Vec<&str> = original.split('\n').collect();
+
+    // 自底向上找正文与元数据之间的分隔空行（与解析/更新逻辑一致）
+    let mut sep = None;
+    let mut i = lines.len();
+    while i > 0 {
+        i -= 1;
+        let t = lines[i].trim();
+        if t.is_empty() {
+            sep = Some(i);
+            break;
+        }
+        if !t.contains(':') {
+            break;
+        }
+    }
+    let sep = sep.ok_or_else(|| anyhow!("无法定位元数据块"))?;
+
+    let iso = format_iso(now);
+    let new_meta: Vec<String> = lines[sep + 1..]
+        .iter()
+        .map(|l| {
+            let key = l.trim_start();
+            if key.starts_with("parent_id:") {
+                format!("parent_id: {new_parent_id}")
+            } else if key.starts_with("updated_time:") {
+                format!("updated_time: {iso}")
+            } else if key.starts_with("user_updated_time:") {
+                format!("user_updated_time: {iso}")
+            } else {
+                (*l).to_string()
+            }
+        })
+        .collect();
+
+    // 标题/正文段（含其内部空行）逐字保留，仅替换元数据块
+    let head = lines[..sep].join("\n");
+    Ok(format!("{head}\n\n{}", new_meta.join("\n")))
+}
+
 /// 生成一篇新笔记的 `.md` 内容（字段顺序对齐真实 Joplin 笔记）。
 pub fn new_note_md(id: &str, parent_id: &str, title: &str, body: &str, now: i64) -> String {
     let iso = format_iso(now);
@@ -200,6 +243,22 @@ mod tests {
         assert_eq!(raw.prop("id"), Some("a1b2c3d4e5f60718293a4b5c6d7e8f90"));
         // created_time 不变，updated_time 已刷新
         assert_eq!(note.created_time, 1_704_067_200_000); // 2024-01-01
+        assert_eq!(note.updated_time, 1_700_000_000_000);
+    }
+
+    #[test]
+    fn move_changes_parent_keeps_rest() {
+        let out = move_note_md(SAMPLE, "ffffffffffffffffffffffffffffffff", 1_700_000_000_000).unwrap();
+        let raw = parser::parse_item(&out).unwrap();
+        let note = parser::to_note(&raw).unwrap();
+        // parent 改了，标题/正文/其余元数据保留
+        assert_eq!(note.parent_id, "ffffffffffffffffffffffffffffffff");
+        assert_eq!(note.title, "原标题");
+        assert_eq!(note.body, "原正文第一行\n\n原正文第二行");
+        assert_eq!(raw.prop("source_url"), Some("https://x.com"));
+        assert_eq!(raw.prop("id"), Some("a1b2c3d4e5f60718293a4b5c6d7e8f90"));
+        // created_time 不变，updated_time 已刷新
+        assert_eq!(note.created_time, 1_704_067_200_000);
         assert_eq!(note.updated_time, 1_700_000_000_000);
     }
 

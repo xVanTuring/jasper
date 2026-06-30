@@ -185,6 +185,18 @@
     }
   }
 
+  // 拖拽：把笔记移动到另一个笔记本（改 parent_id）
+  async function moveNote(noteId: string, targetFolderId: string) {
+    try {
+      const d = await api.moveNote(noteId, targetFolderId)
+      if (selectedNoteId === noteId) detail = d // 当前打开的就是它 → 同步详情
+      folders = await api.folders() // 源/目标笔记本篇数变化
+      await refreshList() // 移走的笔记从当前列表消失（剩余项 FLIP 平滑补位）
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
   async function handleNew() {
     const parent = searchMode ? '' : selectedFolderId ?? ''
     try {
@@ -273,6 +285,7 @@
         {folders}
         selectedId={searchMode ? null : selectedFolderId}
         onSelect={(id) => selectFolder(id)}
+        onMoveNote={IS_DEMO ? undefined : moveNote}
       />
     </aside>
 
@@ -283,7 +296,7 @@
           <Button variant="ghost" iconOnly icon="plus" label={t('pane.newNote')} onclick={handleNew} />
         {/if}
       </div>
-      <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} />
+      <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} canDrag={!IS_DEMO} />
     </section>
 
     <main class="reader">

@@ -14,6 +14,7 @@
 //! 写：
 //!   POST   /api/notes            新建笔记
 //!   PUT    /api/notes/{id}       更新笔记
+//!   PUT    /api/notes/{id}/move  移动笔记到另一笔记本（改 parent_id）
 //!   DELETE /api/notes/{id}       删除笔记
 //!   POST   /api/resources        上传资源（二进制为体），写 .resource/<id> + <id>.md
 //!   PUT    /api/resources/{id}   重命名资源
@@ -29,7 +30,7 @@ use axum::{
     extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/folders", get(folders))
         .route("/api/notes", get(notes_list).post(create_note))
         .route("/api/notes/{id}", get(note_detail).put(update_note).delete(delete_note))
+        .route("/api/notes/{id}/move", put(move_note))
         .route("/api/resources", get(list_resources).post(upload_resource))
         .route("/api/resources/{id}", get(resource).put(rename_resource).delete(delete_resource))
         .route("/api/search", get(search))
@@ -138,6 +140,11 @@ struct NoteDetail {
 struct UpdateNoteReq {
     title: String,
     body: String,
+}
+
+#[derive(Deserialize)]
+struct MoveNoteReq {
+    parent_id: String,
 }
 
 #[derive(Deserialize)]
@@ -541,6 +548,37 @@ async fn update_note(
         lib.note_raw(&id).map(|s| s.to_string()).ok_or(StatusCode::NOT_FOUND)?
     };
     let content = serialize::update_note_md(&original, &req.title, &req.body, serialize::now_ms())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    write_item(&state, format!("{id}.md"), content.clone()).await?;
+
+    let mut lib = state.library.write().unwrap();
+    lib.upsert_note(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let n = lib.note(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(detail_of(n)))
+}
+
+/// PUT /api/notes/{id}/move —— 把笔记移动到另一个笔记本（改 parent_id）。
+/// 目标须为已存在的笔记本；已在目标则直接返回，不写回。
+async fn move_note(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<MoveNoteReq>,
+) -> Result<Json<NoteDetail>, StatusCode> {
+    let new_parent = req.parent_id.trim().to_string();
+    let original = {
+        let lib = state.library.read().unwrap();
+        // 目标必须是已存在的笔记本，避免把笔记移到不存在的父级而“消失”
+        if !lib.folders.contains_key(&new_parent) {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let note = lib.note(&id).ok_or(StatusCode::NOT_FOUND)?;
+        if note.parent_id == new_parent {
+            return Ok(Json(detail_of(note))); // 无变化，免写回
+        }
+        lib.note_raw(&id).map(|s| s.to_string()).ok_or(StatusCode::NOT_FOUND)?
+    };
+    let content = serialize::move_note_md(&original, &new_parent, serialize::now_ms())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     write_item(&state, format!("{id}.md"), content.clone()).await?;

@@ -1,6 +1,9 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
 import { t } from './i18n.svelte'
 
+// 笔记拖拽（移动到其它笔记本）用的 dataTransfer MIME；NoteList 设、FolderTree 读。
+export const NOTE_DND_TYPE = 'application/x-jasper-note-id'
+
 export interface FolderNode {
   id: string
   title: string
@@ -132,6 +135,9 @@ const httpApi = {
   // 写入
   updateNote: (id: string, data: { title: string; body: string }) =>
     sendJson<NoteDetail>(`/api/notes/${id}`, 'PUT', data),
+  // 移动笔记到另一个笔记本（改 parent_id）
+  moveNote: (id: string, parentId: string) =>
+    sendJson<NoteDetail>(`/api/notes/${id}/move`, 'PUT', { parent_id: parentId }),
   createNote: (data: { parent_id: string; title?: string; body?: string }) =>
     sendJson<NoteDetail>('/api/notes', 'POST', data),
   deleteNote: async (id: string) => {
