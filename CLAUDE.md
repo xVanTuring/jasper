@@ -139,7 +139,7 @@ GET    /api/search?q=...      标题/正文全文搜索
 - Rust：tab 缩进、单引号、避免 `any`、注释用 `//`；网络/磁盘 IO 在 axum handler 里走 `spawn_blocking`；`ConfigStore`(rusqlite) 用 `Mutex` 包裹。
 - 前端：Svelte 5 **runes**（`$state/$props/$derived/$effect`），事件用 `onclick=` 不是 `on:click`；`NoteView` 按笔记 id 以 `{#key}` 重挂载（先取详情再切 id）。
 - **多语言**：自建轻量 i18n（无第三方包）。新增/改文案要**同时**写 `messages.ts` 的 `zh` 和 `en`（漏键编译报错）。组件里用 `t('key', {插值})`；模板内调用 `t()` 会读 `i18n.svelte.ts` 的 rune→切换语言即时重渲染。纯 `.ts`（如 api.ts）里调 `t()` 取当时语言即可。顶栏「中/EN」按钮切换，localStorage 持久化。
-- **所见即所得编辑器**：`NoteView` 编辑态有两套引擎——富文本(`WysiwygEditor`=Milkdown/Crepe) 与源码(`Editor`=CodeMirror)，工具栏一键切换、`localStorage('joplin-lite.editor')` 记忆、默认富文本；**HTML 笔记(markup_language=2)强制源码**。Crepe 整包（含 ProseMirror/remark/Vue 组件层）在 `WysiwygEditor` 里 `import()` 懒加载，不进首屏。
+- **所见即所得编辑器**：`NoteView` 编辑态有两套引擎——富文本(`WysiwygEditor`=Milkdown/Crepe) 与源码(`Editor`=CodeMirror)，工具栏一键切换、`localStorage('joplin-lite.editor')` 记忆、**默认源码**（富文本需手动开启）；**HTML 笔记(markup_language=2)强制源码**。Crepe 整包（含 ProseMirror/remark/Vue 组件层）在 `WysiwygEditor` 里 `import()` 懒加载，不进首屏。
   - **数据安全**：富文本会**整篇重排** markdown 写回；故 `WysiwygEditor` 有 `ready` 闸门——`create()` 完成前不回调 `onChange`，**仅打开/切到富文本不会触发自动保存**（已用 puppeteer 断言 0 写回）。源码模式是无损兜底。
   - **资源图片**：`:/id` 始终保留在 markdown 模型里——靠 ImageBlock 的 `proxyDomURL`（仅渲染时 `:/id`→`/api/resources/id`）与 `onUpload`（上传后返回 `:/id`）。`parseResourceId()` 在 `api.ts`。
   - **已知保真损失**：Crepe 图片块用 alt 槽存缩放比例，编辑保存后 `![说明](:/id)` 的 alt 会被改成比例值（如 `![1.00]`）；`:/id` 与正文无损，仅图片说明文字会变。介意就切源码模式。
