@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { fly } from 'svelte/transition'
+  import { flip } from 'svelte/animate'
+  import { cubicOut } from 'svelte/easing'
   import type { NoteSummary } from './api'
   import { t } from './i18n.svelte'
 
@@ -20,8 +23,11 @@
 </script>
 
 <ul class="list">
-  {#each notes as n (n.id)}
-    <li>
+  {#each notes as n, i (n.id)}
+    <li
+      in:fly|global={{ y: 6, duration: 220, delay: Math.min(i * 18, 260), easing: cubicOut }}
+      animate:flip={{ duration: 220, easing: cubicOut }}
+    >
       <button class="note" class:active={n.id === selectedId} onclick={() => onSelect(n.id)}>
         <div class="line1">
           {#if n.is_todo}
@@ -47,6 +53,7 @@
     padding: 0;
   }
   .note {
+    position: relative;
     width: 100%;
     display: block;
     text-align: left;
@@ -56,9 +63,25 @@
     padding: 9px 12px;
     cursor: pointer;
     color: var(--text);
+    transition: background 0.13s ease;
+  }
+  .note::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 0;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+    transform: translateY(-50%);
+    transition: height 0.18s ease;
   }
   .note.active {
     background: var(--accent-soft);
+  }
+  .note.active::before {
+    height: 64%;
   }
   .note:hover:not(.active) {
     background: var(--hover);

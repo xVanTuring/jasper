@@ -58,6 +58,11 @@
     cursor: pointer;
     padding: 5px 10px;
     white-space: nowrap;
+    transition: background 0.13s ease, color 0.13s ease, border-color 0.13s ease,
+      transform 0.08s ease, filter 0.13s ease;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.95);
   }
   .btn:disabled {
     opacity: 0.5;

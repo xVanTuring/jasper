@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { fade, scale } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
   import { api } from './api'
   import { t } from './i18n.svelte'
   import Button from './Button.svelte'
@@ -67,8 +69,8 @@
   }
 </script>
 
-<div class="overlay" class:setup={mode === 'setup'}>
-  <div class="card">
+<div class="overlay" class:setup={mode === 'setup'} transition:fade={{ duration: 150 }}>
+  <div class="card" transition:scale={{ duration: 190, start: 0.96, opacity: 0, easing: cubicOut }}>
     <header>
       <h2>{mode === 'setup' ? t('settings.welcomeTitle') : t('settings.title')}</h2>
       {#if mode === 'settings'}
@@ -198,6 +200,10 @@
     color: var(--text);
     cursor: pointer;
     font-size: 13px;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .seg button:active {
+    transform: scale(0.98);
   }
   .seg button.on {
     border-color: var(--accent);

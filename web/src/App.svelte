@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { slide } from 'svelte/transition'
   import { api, IS_DEMO, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
   import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
   import Button from './lib/Button.svelte'
@@ -212,7 +213,7 @@
   </header>
 
   {#if IS_DEMO && showDemoBanner}
-    <div class="demo-banner">
+    <div class="demo-banner" transition:slide={{ duration: 200 }}>
       <span class="msg">
         {@html t('demo.banner')}
         <span class="dim">{t('demo.bannerDim')}</span>
@@ -222,7 +223,7 @@
   {/if}
 
   {#if error}
-    <div class="error">{error}</div>
+    <div class="error" transition:slide={{ duration: 200 }}>{error}</div>
   {/if}
 
   <div class="panes">
@@ -301,6 +302,12 @@
     background: var(--bg);
     color: var(--text);
     font-size: 13px;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .search:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
   }
   .topbar-actions {
     margin-left: auto;

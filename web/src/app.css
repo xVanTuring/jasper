@@ -58,6 +58,20 @@
 * {
   box-sizing: border-box;
 }
+
+/* 尊重系统“减少动态效果”：压扁所有过渡/动画（含 Svelte 生成的 CSS 过渡，
+   它们走 animation 属性，故此处一并覆盖）。无障碍/晕动症友好。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 html,
 body {
   margin: 0;

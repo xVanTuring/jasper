@@ -1,5 +1,7 @@
 <script lang="ts">
   // 主题选择器：调色板按钮 + 下拉菜单，列出内置(auto/light/dark) + 自定义主题。
+  import { scale } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
   import Icon from './Icon.svelte'
   import { t } from './i18n.svelte'
   import { getTheme, setTheme, themeIds, customThemeName, type ThemeSetting } from './theme.svelte'
@@ -34,7 +36,7 @@
 
   {#if open}
     <div class="backdrop" role="presentation" onclick={() => (open = false)}></div>
-    <ul class="menu" role="menu">
+    <ul class="menu" role="menu" transition:scale={{ duration: 140, start: 0.92, opacity: 0, easing: cubicOut }}>
       {#each themeIds() as id (id)}
         <li role="none">
           <button
@@ -80,6 +82,7 @@
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
+    transform-origin: top right;
     z-index: 51;
     min-width: 160px;
     margin: 0;

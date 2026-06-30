@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { slide } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
   import type { FolderNode } from './api'
   import { t } from './i18n.svelte'
   import Icon from './Icon.svelte'
@@ -54,7 +56,9 @@
       </div>
 
       {#if f.children.length && expanded[f.id]}
-        <Self folders={f.children} {selectedId} {onSelect} depth={depth + 1} />
+        <div class="subtree" transition:slide={{ duration: 180, easing: cubicOut }}>
+          <Self folders={f.children} {selectedId} {onSelect} depth={depth + 1} />
+        </div>
       {/if}
     </li>
   {/each}
@@ -67,20 +71,36 @@
     padding: 0;
   }
   .row {
+    position: relative;
     display: flex;
     align-items: center;
     height: 30px;
     margin: 1px 4px;
     border-radius: 7px;
     cursor: pointer;
-    transition: background 0.08s;
+    transition: background 0.13s ease;
     overflow: hidden;
+  }
+  .row::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 3px;
+    height: 0;
+    background: var(--accent);
+    border-radius: 0 2px 2px 0;
+    transform: translateY(-50%);
+    transition: height 0.18s ease;
   }
   .row:hover {
     background: var(--hover);
   }
   .row.active {
     background: var(--accent-soft);
+  }
+  .row.active::before {
+    height: 62%;
   }
   .caret {
     width: 18px;

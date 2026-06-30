@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import { fade } from 'svelte/transition'
   import type { NoteDetail } from './api'
   import { api } from './api'
   import { t } from './i18n.svelte'
@@ -124,7 +125,7 @@
 </script>
 
 {#if detail}
-  <article class="note-view">
+  <article class="note-view" in:fade={{ duration: 160 }}>
     <div class="toolbar">
       <div class="left">
         {#if editMode}
@@ -202,6 +203,7 @@
   .save-state {
     font-size: 12px;
     color: var(--text-dim);
+    transition: color 0.2s ease;
   }
   .save-state.saved {
     color: var(--success);

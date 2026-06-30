@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { fade, fly, scale } from 'svelte/transition'
+  import { cubicOut } from 'svelte/easing'
   import { api, type ResourceInfo } from './api'
   import { t } from './i18n.svelte'
   import Button from './Button.svelte'
@@ -119,8 +121,13 @@
 <svelte:window onkeydown={(e) => e.key === 'Escape' && onClose()} />
 
 <!-- 点击遮罩空白处关闭（仅当点中遮罩本身，不含卡片内部） -->
-<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && onClose()}>
-  <div class="card">
+<div
+  class="overlay"
+  role="presentation"
+  transition:fade={{ duration: 150 }}
+  onclick={(e) => e.target === e.currentTarget && onClose()}
+>
+  <div class="card" transition:scale={{ duration: 180, start: 0.96, opacity: 0, easing: cubicOut }}>
     <header>
       <h2>{t('res.title')}</h2>
       <Button variant="ghost" iconOnly icon="close" label={t('common.close')} onclick={onClose} />
@@ -148,8 +155,12 @@
       <div class="empty">{t('res.empty')}</div>
     {:else}
       <ul class="list">
-        {#each items as r (r.id)}
-          <li class="row" class:orphan={r.used_by === 0}>
+        {#each items as r, i (r.id)}
+          <li
+            class="row"
+            class:orphan={r.used_by === 0}
+            in:fly={{ y: 6, duration: 220, delay: Math.min(i * 16, 220), easing: cubicOut }}
+          >
             <a class="thumb" href={api.resourceUrl(r.id)} target="_blank" rel="noopener" title={t('res.openNewTab')}>
               {#if isImage(r.mime)}
                 <img src={api.resourceUrl(r.id)} alt={r.title} loading="lazy" />
