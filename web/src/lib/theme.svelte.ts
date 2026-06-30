@@ -18,7 +18,7 @@ export const CUSTOM_THEMES: CustomTheme[] = [
 ]
 
 const BUILTINS = ['auto', 'light', 'dark']
-const STORE_KEY = 'joplin-lite.theme'
+const STORE_KEY = 'jasper.theme'
 
 function isValid(s: string | null): s is ThemeSetting {
 	return !!s && (BUILTINS.includes(s) || CUSTOM_THEMES.some((t) => t.id === s))

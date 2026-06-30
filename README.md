@@ -1,12 +1,15 @@
-# Joplin Web
+# Jasper
 
 **English** · [中文](README.zh-CN.md)
 
-[![Deploy WASM demo to Pages](https://github.com/xVanTuring/joplin-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/joplin-web/actions/workflows/pages.yml)
+[![Deploy WASM demo to Pages](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml)
 
-> 🌐 **Live demo (runs entirely in your browser via WASM, no server):** https://xvanturing.github.io/joplin-web/
+> 🌐 **Live demo (runs entirely in your browser via WASM, no server):** https://xvanturing.github.io/jasper-web/
 
 A lightweight, **read-write** [Joplin](https://joplinapp.org/)-compatible client: a local **Rust (axum) server + browser SPA** — no Electron, Tauri, or WebView. It reads and writes your existing Joplin sync library directly, so edits are picked up by Joplin on its next sync.
+
+> [!NOTE]
+> **Not affiliated with Joplin.** Jasper is an independent, unofficial project that is merely *compatible* with the open [Joplin](https://joplinapp.org/) sync format. It is **not** produced, sponsored, endorsed by, or otherwise legally affiliated with Joplin or its authors. "Joplin" is a trademark of its respective owner and is used here only nominatively, to describe data-format compatibility.
 
 ![Reading view](docs/screenshots/01-reading.png)
 
@@ -76,7 +79,7 @@ The frontend can be **embedded into the executable** (via [rust-embed](https://c
 
 ```bash
 cd web && pnpm build                                   # build web/dist first
-cd server && cargo build --release --features embed     # → server/target/release/joplin-lite (~5 MB)
+cd server && cargo build --release --features embed     # → server/target/release/jasper (~5 MB)
 ```
 
 Copy that single binary anywhere and run it. The `embed` feature is opt-in; without it the backend serves `web/dist` from disk as before (so plain `cargo run` still works without building the frontend).
@@ -94,8 +97,8 @@ The image is a single embedded binary on `debian-slim` (frontend baked in). The 
 Pushed images are published to the GitHub Container Registry by [`.github/workflows/docker.yml`](.github/workflows/docker.yml):
 
 ```bash
-docker run -p 27583:27583 -v joplin-config:/config \
-  ghcr.io/<owner>/joplin-lite:latest      # then open http://localhost:27583/
+docker run -p 27583:27583 -v jasper-config:/config \
+  ghcr.io/<owner>/jasper:latest      # then open http://localhost:27583/
 ```
 
 `main` builds tag `latest` (+ `sha-…`); version tags (`v1.2.3`) get semver tags.
@@ -105,13 +108,13 @@ docker run -p 27583:27583 -v joplin-config:/config \
 `docs/gen-demo-library.py` generates a small sample library (the one in these screenshots):
 
 ```bash
-python3 docs/gen-demo-library.py /tmp/joplin-demo
-cd server && cargo run -- /tmp/joplin-demo
+python3 docs/gen-demo-library.py /tmp/jasper-demo
+cd server && cargo run -- /tmp/jasper-demo
 ```
 
 ### Browser-only demo (WASM, no server)
 
-The core (model / parser / serializer / index) is a dependency-light `joplin-core` crate that also compiles to WebAssembly. With a bundled sample library it powers a **read-only, server-less preview** that runs entirely in the browser tab — handy for a static demo (e.g. GitHub Pages).
+The core (model / parser / serializer / index) is a dependency-light `jasper-core` crate that also compiles to WebAssembly. With a bundled sample library it powers a **read-only, server-less preview** that runs entirely in the browser tab — handy for a static demo (e.g. GitHub Pages).
 
 ```bash
 # needs: rustup target add wasm32-unknown-unknown + wasm-pack

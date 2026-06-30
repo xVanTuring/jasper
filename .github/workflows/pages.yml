@@ -1,5 +1,5 @@
 # 把浏览器 WASM demo（无 server）部署到 GitHub Pages。
-# 构建：joplin-core → wasm（wasm-pack）+ VITE_DEMO=1 的静态站点；base 自动取仓库名（项目页子路径）。
+# 构建：jasper-core → wasm（wasm-pack）+ VITE_DEMO=1 的静态站点；base 自动取仓库名（项目页子路径）。
 name: Deploy WASM demo to Pages
 
 on:

@@ -75,7 +75,7 @@ export interface ResourceInfo {
   used_by: number // 引用该资源的笔记数（0 = 孤儿）
 }
 
-// 「demo 模式」：构建时 VITE_DEMO=1，则只读查询走浏览器内的 WASM（joplin-core 编译产物），
+// 「demo 模式」：构建时 VITE_DEMO=1，则只读查询走浏览器内的 WASM（jasper-core 编译产物），
 // 不需要任何后端 server——用于纯静态演示站点。
 const DEMO = import.meta.env.VITE_DEMO === '1'
 /// 是否为浏览器内 WASM 演示构建（只读）。供 UI 提示/禁用写入用。
@@ -85,7 +85,7 @@ let _demo: Promise<{ folders(): string; notes(f: string): string; note(id: strin
 function wasmDemo() {
   if (!_demo) {
     _demo = (async () => {
-      const mod = await import('../wasm-pkg/joplin_wasm.js')
+      const mod = await import('../wasm-pkg/jasper_wasm.js')
       await mod.default() // 加载并初始化 .wasm
       return new mod.Demo()
     })()

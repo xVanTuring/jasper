@@ -4,7 +4,7 @@
 
 import { messages, type Locale, type MsgKey } from './messages'
 
-const STORE_KEY = 'joplin-lite.locale'
+const STORE_KEY = 'jasper.locale'
 
 function detect(): Locale {
 	try {

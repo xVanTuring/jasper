@@ -1,5 +1,5 @@
 [package]
-name = "joplin-core"
+name = "jasper-core"
 version = "0.1.0"
 edition = "2021"
 description = "Joplin sync-format core: model, parser, serializer, in-memory index (no IO; portable to WASM)"

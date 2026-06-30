@@ -1,7 +1,7 @@
 //! 数据源配置：持久化到本地 SQLite（key-value），并据此构造存储后端。
 //!
-//! 配置库位置：平台配置目录下 `joplin-lite/config.db`
-//! （macOS: ~/Library/Application Support/joplin-lite/config.db）。
+//! 配置库位置：平台配置目录下 `jasper/config.db`
+//! （macOS: ~/Library/Application Support/jasper/config.db）。
 
 use crate::storage::local::LocalStorage;
 use crate::storage::webdav::WebDavStorage;
@@ -106,11 +106,11 @@ pub fn build_storage(cfg: &SourceConfig) -> Result<Arc<dyn StorageBackend>> {
 /// 配置/缓存库所在目录（config.db、cache.db 同处）。
 /// 允许通过环境变量覆盖（便于测试 / 便携部署 / 容器挂卷）。
 pub fn config_base_dir() -> Result<PathBuf> {
-    if let Ok(dir) = std::env::var("JOPLIN_LITE_CONFIG_DIR") {
+    if let Ok(dir) = std::env::var("JASPER_CONFIG_DIR") {
         return Ok(PathBuf::from(dir));
     }
     let base = dirs::config_dir().context("无法定位配置目录")?;
-    Ok(base.join("joplin-lite"))
+    Ok(base.join("jasper"))
 }
 
 fn config_db_path() -> Result<PathBuf> {

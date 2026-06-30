@@ -8,7 +8,7 @@
   import Editor from './Editor.svelte'
   import WysiwygEditor from './WysiwygEditor.svelte'
 
-  const ENGINE_KEY = 'joplin-lite.editor'
+  const ENGINE_KEY = 'jasper.editor'
   // 默认源码模式（无损、所见非所得关闭）；只有用户显式开过富文本才记为 'wysiwyg'。
   function loadEngine(): 'wysiwyg' | 'source' {
     try {

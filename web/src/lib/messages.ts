@@ -38,7 +38,7 @@ const zh = {
 	'demo.bannerDim': '编辑、图片资源、WebDAV / 本地读写为完整版（本地 server）能力。',
 
 	// 设置 / 首次向导
-	'settings.welcomeTitle': '欢迎使用 joplin-lite',
+	'settings.welcomeTitle': '欢迎使用 Jasper',
 	'settings.title': '设置',
 	'settings.firstHint': '首次使用，请选择笔记库。',
 	'settings.useExisting': '使用现有笔记库',
@@ -136,7 +136,7 @@ const en: typeof zh = {
 	'demo.bannerDim':
 		'Editing, image resources, and WebDAV / local read-write are full-version (local server) features.',
 
-	'settings.welcomeTitle': 'Welcome to joplin-lite',
+	'settings.welcomeTitle': 'Welcome to Jasper',
 	'settings.title': 'Settings',
 	'settings.firstHint': 'First run — pick a note library.',
 	'settings.useExisting': 'Use existing library',

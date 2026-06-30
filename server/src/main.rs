@@ -1,18 +1,18 @@
-//! joplin-lite —— 轻量只读 Joplin 客户端（本地 HTTP 服务 + 浏览器 UI）
+//! jasper —— 轻量只读 Joplin 客户端（本地 HTTP 服务 + 浏览器 UI）
 //!
 //! 启动后扫描本地数据目录 → 内存索引 → 提供 HTTP API + 托管前端 SPA。
 //!
-//! 用法：joplin-lite [数据源]   （可选，首次也可在浏览器里完成配置）
+//! 用法：jasper [数据源]   （可选，首次也可在浏览器里完成配置）
 //!   数据源可以是本地目录路径，或 http(s):// 开头的 WebDAV 地址。
-//! 配置持久化在平台配置目录 joplin-lite/config.db；命令行参数仅用于首次引导。
+//! 配置持久化在平台配置目录 jasper/config.db；命令行参数仅用于首次引导。
 //! 环境变量：
-//!   JOPLIN_LITE_SOURCE        引导用数据源（仅当尚无保存配置时生效）
-//!   JOPLIN_LITE_WEBDAV_USER   引导用 WebDAV 用户名
-//!   JOPLIN_LITE_WEBDAV_PASS   引导用 WebDAV 密码
-//!   JOPLIN_LITE_HOST          监听地址（默认 127.0.0.1；局域网/容器设 0.0.0.0）
-//!   JOPLIN_LITE_PORT          端口（默认 27583）
-//!   JOPLIN_LITE_CONFIG_DIR    配置库目录（默认平台配置目录；容器里挂卷）
-//!   JOPLIN_LITE_WEB_DIR       前端静态目录覆盖（设了就从该磁盘目录托管，可热替换前端）；
+//!   JASPER_SOURCE        引导用数据源（仅当尚无保存配置时生效）
+//!   JASPER_WEBDAV_USER   引导用 WebDAV 用户名
+//!   JASPER_WEBDAV_PASS   引导用 WebDAV 密码
+//!   JASPER_HOST          监听地址（默认 127.0.0.1；局域网/容器设 0.0.0.0）
+//!   JASPER_PORT          端口（默认 27583）
+//!   JASPER_CONFIG_DIR    配置库目录（默认平台配置目录；容器里挂卷）
+//!   JASPER_WEB_DIR       前端静态目录覆盖（设了就从该磁盘目录托管，可热替换前端）；
 //!                             不设时：embed 构建用内嵌资源，否则用源码旁 ../web/dist
 
 mod api;
@@ -23,9 +23,9 @@ mod storage;
 #[cfg(feature = "embed")]
 mod web_assets;
 
-// 纯逻辑（数据模型/解析/序列化/索引）来自 joplin-core；以 crate 路径重导出，
+// 纯逻辑（数据模型/解析/序列化/索引）来自 jasper-core；以 crate 路径重导出，
 // 让既有的 crate::{model,parser,serialize,library} 引用保持不变。
-pub use joplin_core::{library, model, parser, serialize};
+pub use jasper_core::{library, model, parser, serialize};
 
 use anyhow::Result;
 use api::AppState;
@@ -40,13 +40,13 @@ use tower_http::services::{ServeDir, ServeFile};
 fn bootstrap_config() -> Option<SourceConfig> {
     let src = std::env::args()
         .nth(1)
-        .or_else(|| std::env::var("JOPLIN_LITE_SOURCE").ok())?;
+        .or_else(|| std::env::var("JASPER_SOURCE").ok())?;
     if src.starts_with("http://") || src.starts_with("https://") {
         Some(SourceConfig {
             source_type: "webdav".to_string(),
             webdav_url: src,
-            webdav_user: std::env::var("JOPLIN_LITE_WEBDAV_USER").unwrap_or_default(),
-            webdav_pass: std::env::var("JOPLIN_LITE_WEBDAV_PASS").unwrap_or_default(),
+            webdav_user: std::env::var("JASPER_WEBDAV_USER").unwrap_or_default(),
+            webdav_pass: std::env::var("JASPER_WEBDAV_PASS").unwrap_or_default(),
             ..Default::default()
         })
     } else {
@@ -60,10 +60,10 @@ fn bootstrap_config() -> Option<SourceConfig> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let host = std::env::var("JOPLIN_LITE_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-    let port = std::env::var("JOPLIN_LITE_PORT").unwrap_or_else(|_| "27583".to_string());
+    let host = std::env::var("JASPER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let port = std::env::var("JASPER_PORT").unwrap_or_else(|_| "27583".to_string());
 
-    println!("joplin-lite 启动中…");
+    println!("jasper 启动中…");
 
     let config_store = ConfigStore::open()?;
     // 增量缓存库；打开失败则退化为内存缓存（等同禁用缓存，不影响功能）。
@@ -129,13 +129,13 @@ async fn main() -> Result<()> {
 }
 
 // 给路由挂上前端静态服务（fallback）：
-//   1. 设了 JOPLIN_LITE_WEB_DIR → 从该磁盘目录托管（两种构建都支持，便于热替换前端）；
+//   1. 设了 JASPER_WEB_DIR → 从该磁盘目录托管（两种构建都支持，便于热替换前端）；
 //   2. 否则 embed 构建 → 内嵌资源（单文件，运行时不依赖磁盘）；
 //   3. 否则 → 源码旁 ../web/dist（开发/源码构建默认，Docker 等编译期路径不存在时用 1 覆盖）。
 fn attach_web(router: axum::Router) -> axum::Router {
-    if let Some(dir) = std::env::var("JOPLIN_LITE_WEB_DIR").ok().map(PathBuf::from) {
+    if let Some(dir) = std::env::var("JASPER_WEB_DIR").ok().map(PathBuf::from) {
         if !dir.exists() {
-            println!("（提示：JOPLIN_LITE_WEB_DIR={} 不存在）", dir.display());
+            println!("（提示：JASPER_WEB_DIR={} 不存在）", dir.display());
         }
         return serve_disk(router, dir);
     }

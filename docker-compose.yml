@@ -1,19 +1,19 @@
 services:
-  joplin-lite:
+  jasper:
     # 本地构建（默认）。也可改用 GHCR 预构建镜像：注释掉 build，换成下面的 image。
     build: .
-    image: joplin-lite
-    # image: ghcr.io/<owner>/joplin-lite:latest   # 用发布到 GHCR 的镜像，无需本地构建
-    container_name: joplin-lite
+    image: jasper
+    # image: ghcr.io/<owner>/jasper:latest   # 用发布到 GHCR 的镜像，无需本地构建
+    container_name: jasper
     ports:
       - "27583:27583"
     volumes:
       # 配置（数据源设置 / config.db）持久化
-      - joplin-lite-config:/config
+      - jasper-config:/config
       # 若数据源选「本地文件夹」，把宿主机的 Joplin 同步目录挂进来，
       # 然后在设置里把路径填成容器内路径（如 /data）：
       # - /宿主机/路径/JoplinData:/data
     restart: unless-stopped
 
 volumes:
-  joplin-lite-config:
+  jasper-config:

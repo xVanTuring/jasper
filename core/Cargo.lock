@@ -130,7 +130,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "joplin-core"
+name = "jasper-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",

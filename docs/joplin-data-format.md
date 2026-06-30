@@ -1,6 +1,6 @@
 # Joplin 数据格式规范（v3.6.15）
 
-> 本文是 **joplin-lite**（只读客户端）的实现依据，逆向自 Joplin v3.6.15 源码
+> 本文是 **jasper**（只读客户端）的实现依据，逆向自 Joplin v3.6.15 源码
 > （`joplin/packages/lib` 与 `joplin/packages/renderer`）。所有结论均附 `file:line` 引用。
 > 范围限定为**只读 + 明文（不支持 E2EE）+ 本地文件夹 / WebDAV** 两种数据源。
 
@@ -260,7 +260,7 @@ PROPFIND 请求体（`WebDavApi.ts:272-296`）：
 ### 8.3 增量同步（`file-api.ts:477-653` `basicDelta`）
 Joplin 用通用算法：列出全部文件的 `updated_time(mtime)`，与上次记录对比得出 新增/修改/删除。**没有服务端 delta 接口**，本质是"全量列目录 + 时间戳比对"。
 
-> **joplin-lite 策略**：首次全量拉取并解析 → 写入本地 SQLite（记录 `id` + `updated_time`）；之后启动先读 SQLite 秒开，后台再列目录比对 `updated_time`，只重新 GET 变更/新增的条目，删除本地缺失的。
+> **jasper 策略**：首次全量拉取并解析 → 写入本地 SQLite（记录 `id` + `updated_time`）；之后启动先读 SQLite 秒开，后台再列目录比对 `updated_time`，只重新 GET 变更/新增的条目，删除本地缺失的。
 
 ---
 
@@ -268,7 +268,7 @@ Joplin 用通用算法：列出全部文件的 `updated_time(mtime)`，与上次
 
 - 是否启用：`info.json` 的 `e2ee.value`；以及每个条目的 `encryption_applied` 字段（1=已加密）。
 - 加密条目的 `unserialize` 后只有少量明文字段（`id` `parent_id` `updated_time` `type_` 等）+ `encryption_cipher_text`，正文是密文（`models/BaseItem.ts:514-571`）。
-- **joplin-lite 行为**：检测到 `encryption_applied=1` 的条目 → 标记为"🔒 加密，暂不支持"，跳过渲染，不报错。（用户已确认数据为明文，此为兜底。）
+- **jasper 行为**：检测到 `encryption_applied=1` 的条目 → 标记为"🔒 加密，暂不支持"，跳过渲染，不报错。（用户已确认数据为明文，此为兜底。）
 
 ---
 

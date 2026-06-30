@@ -8,4 +8,4 @@ permissions: none # 默认无权限，逐用户授权
 users:
   - username: joplin
     password: joplin
-    permissions: CRUD # 增/读/改/删，joplin-lite 读写都需要
+    permissions: CRUD # 增/读/改/删，jasper 读写都需要

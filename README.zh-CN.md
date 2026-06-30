@@ -1,12 +1,15 @@
-# Joplin Web
+# Jasper
 
 [English](README.md) · **中文**
 
-[![Deploy WASM demo to Pages](https://github.com/xVanTuring/joplin-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/joplin-web/actions/workflows/pages.yml)
+[![Deploy WASM demo to Pages](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml)
 
-> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://xvanturing.github.io/joplin-web/
+> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://xvanturing.github.io/jasper-web/
 
 一个轻量、**可读可写**的 [Joplin](https://joplinapp.org/) 兼容客户端：**本地 Rust (axum) 服务 + 浏览器 SPA**，不依赖 Electron / Tauri / WebView。直接读写你已有的 Joplin 同步库，改动会被 Joplin 下次同步自动拾取。
+
+> [!NOTE]
+> **与 Joplin 无关联声明。** Jasper 是一个独立的、非官方的项目，仅与开放的 [Joplin](https://joplinapp.org/) 同步格式**兼容**；本项目与 Joplin 及其作者**没有任何**制作、赞助、背书或法律上的关联。“Joplin” 为其各自所有者的商标，此处仅作指代性使用，用以说明数据格式上的兼容性。
 
 ![阅读视图](docs/screenshots/01-reading.png)
 
@@ -76,7 +79,7 @@ cd web && pnpm dev        # 或开发热更新(:5173，/api 代理到后端)
 
 ```bash
 cd web && pnpm build                                  # 先构建出 web/dist
-cd server && cargo build --release --features embed    # → server/target/release/joplin-lite（约 5 MB）
+cd server && cargo build --release --features embed    # → server/target/release/jasper（约 5 MB）
 ```
 
 把这个文件拷到任意位置直接运行即可。`embed` 是可选 feature；不带它时后端照旧从磁盘 `web/dist` 托管（所以不构建前端也能直接 `cargo run`）。
@@ -94,8 +97,8 @@ docker compose up --build   # 然后访问 http://localhost:27583/
 推送会由 [`.github/workflows/docker.yml`](.github/workflows/docker.yml) 构建并发布到 GitHub Container Registry：
 
 ```bash
-docker run -p 27583:27583 -v joplin-config:/config \
-  ghcr.io/<owner>/joplin-lite:latest      # 然后访问 http://localhost:27583/
+docker run -p 27583:27583 -v jasper-config:/config \
+  ghcr.io/<owner>/jasper:latest      # 然后访问 http://localhost:27583/
 ```
 
 `main` 构建 `latest`（+ `sha-…`）；版本 tag（`v1.2.3`）打语义化版本标签。
@@ -105,13 +108,13 @@ docker run -p 27583:27583 -v joplin-config:/config \
 `docs/gen-demo-library.py` 会生成一个小型示例库（即这些截图所用）：
 
 ```bash
-python3 docs/gen-demo-library.py /tmp/joplin-demo
-cd server && cargo run -- /tmp/joplin-demo
+python3 docs/gen-demo-library.py /tmp/jasper-demo
+cd server && cargo run -- /tmp/jasper-demo
 ```
 
 ### 浏览器 demo（WASM，无 server）
 
-核心逻辑（数据模型 / 解析 / 序列化 / 索引）抽成了依赖很轻的 `joplin-core` crate，它也能编译到 WebAssembly。配上内置的演示库，就能做一个**只读、零服务器**的预览——整页跑在浏览器标签里，适合做静态演示站（如 GitHub Pages）。
+核心逻辑（数据模型 / 解析 / 序列化 / 索引）抽成了依赖很轻的 `jasper-core` crate，它也能编译到 WebAssembly。配上内置的演示库，就能做一个**只读、零服务器**的预览——整页跑在浏览器标签里，适合做静态演示站（如 GitHub Pages）。
 
 ```bash
 # 需先装：rustup target add wasm32-unknown-unknown + wasm-pack

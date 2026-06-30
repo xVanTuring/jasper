@@ -1,4 +1,4 @@
-# 开发联调用 WebDAV 服务端，仅供本地测试 joplin-lite 的 WebDAV 读写。
+# 开发联调用 WebDAV 服务端，仅供本地测试 jasper 的 WebDAV 读写。
 # 不是生产组件，正式打包见 docker-compose.yml。
 #
 # 用 hacdias/webdav（Go 实现，原生多架构 arm64/amd64；无需 Apache/htpasswd，明文密码即可）。
@@ -6,25 +6,25 @@
 #
 # 用法：
 #   docker compose -f docker-compose.dev.yml up -d           # 启动 WebDAV（宿主端口 8081）
-#   # 让 joplin-lite 指向它（账号 joplin / 密码 joplin）：
-#   JOPLIN_LITE_SOURCE=http://127.0.0.1:8081/ \
-#   JOPLIN_LITE_WEBDAV_USER=joplin JOPLIN_LITE_WEBDAV_PASS=joplin \
+#   # 让 jasper 指向它（账号 joplin / 密码 joplin）：
+#   JASPER_SOURCE=http://127.0.0.1:8081/ \
+#   JASPER_WEBDAV_USER=joplin JASPER_WEBDAV_PASS=joplin \
 #   cargo run --manifest-path server/Cargo.toml
 #   docker compose -f docker-compose.dev.yml down -v          # 停止并清空数据卷
 #
-# 数据存放在命名卷 joplin_webdav_data，挂到容器 /data；条目文件平铺其下，
+# 数据存放在命名卷 jasper_webdav_data，挂到容器 /data；条目文件平铺其下，
 # 与 Joplin 同步根目录结构一致（<id>.md + .resource/）。配置见 dev/webdav.yml。
 services:
   webdav:
     image: hacdias/webdav:v5.12.0
-    container_name: joplin-webdav-dev
+    container_name: jasper-webdav-dev
     command: ["-c", "/etc/webdav/config.yaml"] # 显式指定（自动发现在该镜像里不可靠）
     ports:
       - "8081:6065"
     volumes:
       - ./dev/webdav.yml:/etc/webdav/config.yaml:ro
-      - joplin_webdav_data:/data
+      - jasper_webdav_data:/data
     restart: unless-stopped
 
 volumes:
-  joplin_webdav_data:
+  jasper_webdav_data:

@@ -1,4 +1,4 @@
-# joplin-lite —— 多阶段构建：前端(node) + 后端(rust) → 精简运行镜像
+# jasper —— 多阶段构建：前端(node) + 后端(rust) → 精简运行镜像
 
 # ---- 1) 构建前端 (web/dist) ----
 FROM node:20-slim AS webbuild
@@ -32,13 +32,13 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=rustbuild /build/server/target/release/joplin-lite /app/joplin-lite
+COPY --from=rustbuild /build/server/target/release/jasper /app/jasper
 
-ENV JOPLIN_LITE_HOST=0.0.0.0 \
-    JOPLIN_LITE_PORT=27583 \
-    JOPLIN_LITE_CONFIG_DIR=/config
+ENV JASPER_HOST=0.0.0.0 \
+    JASPER_PORT=27583 \
+    JASPER_CONFIG_DIR=/config
 
 # 配置库（数据源设置）持久化到该卷
 VOLUME ["/config"]
 EXPOSE 27583
-CMD ["/app/joplin-lite"]
+CMD ["/app/jasper"]

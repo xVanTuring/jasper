@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # 生成一个演示用 Joplin 同步库（笔记本 + 富文本笔记 + 一张 SVG 资源），用于试用 / 截图。
 # 用法：
-#   python3 docs/gen-demo-library.py /tmp/joplin-demo
-#   cd server && cargo run -- /tmp/joplin-demo
+#   python3 docs/gen-demo-library.py /tmp/jasper-demo
+#   cd server && cargo run -- /tmp/jasper-demo
 import os, sys
 
 if len(sys.argv) < 2:
@@ -29,7 +29,7 @@ def note(nid, parent, title, body, t):
         f"id: {nid}", f"parent_id: {parent}", f"created_time: {t}", f"updated_time: {t}",
         "is_conflict: 0", "latitude: 0.00000000", "longitude: 0.00000000", "altitude: 0.0000",
         "author: ", "source_url: ", "is_todo: 0", "todo_due: 0", "todo_completed: 0",
-        "source: joplin-web", "source_application: net.cozic.joplin-web", "application_data: ",
+        "source: jasper-web", "source_application: net.cozic.jasper-web", "application_data: ",
         "order: 0", f"user_created_time: {t}", f"user_updated_time: {t}",
         "encryption_cipher_text: ", "encryption_applied: 0", "markup_language: 1",
         "is_shared: 0", "share_id: ", "conflict_original_id: ", "master_key_id: ",
@@ -70,7 +70,7 @@ svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="700" height="300" viewBo
   </defs>
   <rect width="700" height="300" rx="18" fill="#0f1117"/>
   <rect x="0" y="0" width="700" height="6" fill="url(#bar)"/>
-  <text x="36" y="56" fill="#e8eaf0" font-size="24" font-weight="700">Joplin Web · 架构</text>
+  <text x="36" y="56" fill="#e8eaf0" font-size="24" font-weight="700">Jasper · 架构</text>
   <text x="36" y="84" fill="#8b90a0" font-size="14">本地 Rust 服务 + 浏览器 SPA，无 Electron</text>
   <g>
     <rect x="36"  y="120" width="180" height="110" rx="12" fill="#1a1d28" stroke="#7c4dff" stroke-width="1.5"/>
@@ -105,7 +105,7 @@ write(f"{F_WORK}.md", folder(F_WORK, "工作 · Work", "", "2026-06-11T09:00:00.
 write(f"{F_PERS}.md", folder(F_PERS, "个人 · Personal", "", "2026-06-12T09:00:00.000Z"))
 
 # ---- 笔记 ----
-showcase = f"""Joplin Web 是一个**轻量、可读可写**的 Joplin 兼容客户端。下面展示渲染能力。
+showcase = f"""Jasper 是一个**轻量、可读可写**的 Joplin 兼容客户端。下面展示渲染能力。
 
 ![架构图](:/{RES_ID})
 
@@ -119,7 +119,7 @@ showcase = f"""Joplin Web 是一个**轻量、可读可写**的 Joplin 兼容客
 ### 代码高亮
 ```rust
 fn main() {{
-    let greeting = "你好, Joplin Web";
+    let greeting = "你好, Jasper";
     println!("{{greeting}}");
 }}
 ```

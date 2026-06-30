@@ -1,4 +1,4 @@
-# joplin-lite 插件规范 v0.1（草案）
+# jasper 插件规范 v0.1（草案）
 
 > 状态：**草案，征求确认**。这是给「插件作者」和「宿主实现」照着做的**契约**；方案/路线见 [plugin-design.md](./plugin-design.md)。
 > 规范用词遵循 RFC 2119：**MUST/必须**、**SHOULD/应当**、**MAY/可以**。
@@ -8,11 +8,11 @@
 
 ## 0. 范围与术语
 
-- **宿主（host）**：joplin-lite 本体（server + web）。
+- **宿主（host）**：jasper 本体（server + web）。
 - **插件（plugin）**：一个 zip 包，向宿主贡献以下一种或多种：**主题**、**后端逻辑（wasm）**、**前端贡献**、**设置**。
 - **后端模块**：插件里的 `*.wasm`，用 Rust 编译，跑在宿主的 **wasmi** 沙箱里。
 - **能力（capability）**：插件访问宿主资源的授权项，**默认全部拒绝**。
-- 时间戳一律 **Unix 毫秒**（i64）。字段命名一律 **snake_case**（与现有 HTTP API、joplin-core 一致）。
+- 时间戳一律 **Unix 毫秒**（i64）。字段命名一律 **snake_case**（与现有 HTTP API、jasper-core 一致）。
 
 ---
 
@@ -189,7 +189,7 @@ joplin.host_call(ptr: u32, len: u32) -> u64
 - `code` 取值（约定）：`forbidden`(能力不足) / `not_found` / `invalid` / `internal` / `unsupported`。
 - 插件返回非法 JSON、越界指针、或超资源上限：宿主 MUST 视该调用失败（`internal`），不得使整库崩溃。
 
-> **SDK**：`plugin-sdk`（Rust）封装上述 ABI，作者只写 `#[on_before_save] fn(note: Note) -> Result<Note>` 之类；共享 `joplin-core` 的 `Note/Folder` 类型，serde 直接序列化。
+> **SDK**：`plugin-sdk`（Rust）封装上述 ABI，作者只写 `#[on_before_save] fn(note: Note) -> Result<Note>` 之类；共享 `jasper-core` 的 `Note/Folder` 类型，serde 直接序列化。
 
 ### 6.5 方法清单
 
@@ -441,7 +441,7 @@ hooks = ["before-save"]
 ```rust
 // 用 plugin-sdk（伪代码）：作者只写业务，ABI/JSON 由 SDK 处理
 use joplin_plugin_sdk::*;
-use joplin_core::model::Note;
+use jasper_core::model::Note;
 
 #[on_before_save]
 fn before_save(mut note: Note) -> Result<Note, String> {

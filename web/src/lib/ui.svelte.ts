@@ -3,7 +3,7 @@
 
 export type ButtonDisplay = 'both' | 'icon' | 'text'
 
-const STORE_KEY = 'joplin-lite.btn-display'
+const STORE_KEY = 'jasper.btn-display'
 
 function load(): ButtonDisplay {
 	try {

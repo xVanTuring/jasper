@@ -1,5 +1,5 @@
 //! 从存储后端构建内存索引：负责拉取（rayon 并行）与增量缓存协调，
-//! 拿到原始内容后交给 `joplin_core::library::Library::from_contents` 做纯解析/索引。
+//! 拿到原始内容后交给 `jasper_core::library::Library::from_contents` 做纯解析/索引。
 //!
 //! 之所以放在 server 而非 core：这里依赖 storage(IO)、cache(SQLite)、rayon(线程)，
 //! 都是不可移植到 WASM 的部分；core 只保留纯计算。

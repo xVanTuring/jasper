@@ -188,7 +188,7 @@
 
 <div class="app">
   <header class="topbar">
-    <div class="brand">Joplin Web</div>
+    <div class="brand">Jasper</div>
     <input
       class="search"
       type="search"

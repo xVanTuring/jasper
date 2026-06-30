@@ -1,10 +1,10 @@
-//! 浏览器 WASM demo：把 joplin-core 编进浏览器，配内置演示库，
+//! 浏览器 WASM demo：把 jasper-core 编进浏览器，配内置演示库，
 //! 暴露与后端 /api 同形的只读查询（返回 JSON 字符串，前端 JSON.parse）。
 //!
 //! 这不是完整后端——只覆盖 demo 需要的读路径（笔记本树 / 笔记列表 / 详情 / 搜索）。
 
-use joplin_core::library::Library;
-use joplin_core::model::{MarkupLanguage, Note};
+use jasper_core::library::Library;
+use jasper_core::model::{MarkupLanguage, Note};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
