@@ -1,11 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, IS_DEMO, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
+  import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
   import FolderTree from './lib/FolderTree.svelte'
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
   import Settings from './lib/Settings.svelte'
   import ResourcePanel from './lib/ResourcePanel.svelte'
+
+  // 让 <html lang> 跟随当前语言（影响断词/无障碍等）
+  $effect(() => {
+    document.documentElement.lang = getLocale()
+  })
 
   let folders = $state<FolderNode[]>([])
   let selectedFolderId = $state<string | null>(null)
@@ -61,7 +67,7 @@
         listTitle = ''
       }
     } catch (e) {
-      error = `加载失败：${e}`
+      error = t('app.loadFailed', { err: `${e}` })
     }
   }
 
@@ -140,7 +146,7 @@
   async function handleNew() {
     const parent = searchMode ? '' : selectedFolderId ?? ''
     try {
-      const n = await api.createNote({ parent_id: parent, title: '新笔记', body: '' })
+      const n = await api.createNote({ parent_id: parent, title: t('note.newNote'), body: '' })
       editOnOpenId = n.id
       detail = n
       selectedNoteId = n.id
@@ -169,7 +175,7 @@
       try {
         notes = await api.search(q)
         searchMode = true
-        listTitle = `搜索：${q}`
+        listTitle = t('list.searchPrefix', { q })
       } catch (e) {
         error = `${e}`
       }
@@ -183,24 +189,26 @@
     <input
       class="search"
       type="search"
-      placeholder="搜索笔记…"
+      placeholder={t('topbar.search')}
       bind:value={query}
       oninput={onSearchInput}
     />
+    <button class="lang" onclick={toggleLocale} title={t('common.langTitle')}>
+      {getLocale() === 'zh' ? '中' : 'EN'}
+    </button>
     {#if !IS_DEMO}
-      <button class="gear" onclick={() => (showResources = true)} title="资源管理">🖼</button>
-      <button class="gear" onclick={() => (showSettings = true)} title="设置">⚙</button>
+      <button class="gear" onclick={() => (showResources = true)} title={t('topbar.resources')}>🖼</button>
+      <button class="gear" onclick={() => (showSettings = true)} title={t('topbar.settings')}>⚙</button>
     {/if}
   </header>
 
   {#if IS_DEMO && showDemoBanner}
     <div class="demo-banner">
       <span>
-        🌐 <b>演示预览</b> · 全程在浏览器内由 Rust&nbsp;→&nbsp;WASM 运行，<b>无后端</b>。
-        可浏览笔记本/笔记、Markdown 渲染（代码 · 表格 · 公式 · 任务清单）、全文搜索。
-        <span class="dim">编辑、图片资源、WebDAV / 本地读写为完整版（本地 server）能力。</span>
+        {@html t('demo.banner')}
+        <span class="dim">{t('demo.bannerDim')}</span>
       </span>
-      <button class="bx" onclick={() => (showDemoBanner = false)} aria-label="关闭">✕</button>
+      <button class="bx" onclick={() => (showDemoBanner = false)} aria-label={t('common.close')}>✕</button>
     </div>
   {/if}
 
@@ -210,7 +218,7 @@
 
   <div class="panes">
     <aside class="sidebar">
-      <div class="pane-title">笔记本</div>
+      <div class="pane-title">{t('pane.notebooks')}</div>
       <FolderTree
         {folders}
         selectedId={searchMode ? null : selectedFolderId}
@@ -222,7 +230,7 @@
       <div class="pane-title">
         <span>{listTitle}</span>
         {#if !IS_DEMO}
-          <button class="new-btn" onclick={handleNew} title="在当前笔记本新建笔记">＋</button>
+          <button class="new-btn" onclick={handleNew} title={t('pane.newNote')}>＋</button>
         {/if}
       </div>
       <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} />
@@ -285,8 +293,24 @@
     color: var(--text);
     font-size: 13px;
   }
-  .gear {
+  .lang {
     margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 30px;
+    height: 26px;
+    cursor: pointer;
+    color: var(--text-dim);
+    padding: 0 8px;
+  }
+  .lang:hover {
+    background: var(--hover);
+    color: var(--text);
+  }
+  .gear {
     background: none;
     border: none;
     font-size: 18px;

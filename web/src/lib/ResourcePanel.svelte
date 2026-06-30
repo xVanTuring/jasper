@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, type ResourceInfo } from './api'
+  import { t } from './i18n.svelte'
 
   let {
     onClose,
@@ -75,8 +76,8 @@
   async function removeOne(r: ResourceInfo) {
     const warn =
       r.used_by > 0
-        ? `资源「${r.title}」被 ${r.used_by} 篇笔记引用，删除后这些笔记的图片/附件会失效。仍要删除？`
-        : `删除未被引用的资源「${r.title}」？`
+        ? t('res.confirmDeleteUsed', { title: r.title, n: r.used_by })
+        : t('res.confirmDeleteUnused', { title: r.title })
     if (!confirm(warn)) return
     working = true
     try {
@@ -99,7 +100,7 @@
   async function cleanupOrphans() {
     const orphans = items.filter((r) => r.used_by === 0)
     if (!orphans.length) return
-    if (!confirm(`将删除 ${orphans.length} 个未被任何笔记引用的资源，无法撤销。继续？`)) return
+    if (!confirm(t('res.confirmCleanup', { n: orphans.length }))) return
     working = true
     try {
       for (const r of orphans) await api.deleteResource(r.id)
@@ -119,31 +120,31 @@
 <div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && onClose()}>
   <div class="card">
     <header>
-      <h2>资源管理</h2>
-      <button class="x" onclick={onClose} aria-label="关闭">✕</button>
+      <h2>{t('res.title')}</h2>
+      <button class="x" onclick={onClose} aria-label={t('common.close')}>✕</button>
     </header>
 
     <div class="bar">
       <span class="stat">
-        {items.length} 个资源 · {fmtSize(totalSize)}
-        {#if orphanCount > 0}· <span class="orphan-stat">{orphanCount} 个孤儿</span>{/if}
+        {t('res.count', { n: items.length })} · {fmtSize(totalSize)}
+        {#if orphanCount > 0}· <span class="orphan-stat">{t('res.orphans', { n: orphanCount })}</span>{/if}
       </span>
       <button class="cleanup" onclick={cleanupOrphans} disabled={working || orphanCount === 0}>
-        🧹 清理孤儿 ({orphanCount})
+        {t('res.cleanup', { n: orphanCount })}
       </button>
     </div>
 
     {#if error}<div class="error">⚠️ {error}</div>{/if}
 
     {#if loading}
-      <div class="empty">加载中…</div>
+      <div class="empty">{t('common.loading')}</div>
     {:else if items.length === 0}
-      <div class="empty">还没有资源。在编辑笔记时粘贴/拖拽图片或用「📎 附件」上传。</div>
+      <div class="empty">{t('res.empty')}</div>
     {:else}
       <ul class="list">
         {#each items as r (r.id)}
           <li class="row" class:orphan={r.used_by === 0}>
-            <a class="thumb" href={api.resourceUrl(r.id)} target="_blank" rel="noopener" title="在新标签打开">
+            <a class="thumb" href={api.resourceUrl(r.id)} target="_blank" rel="noopener" title={t('res.openNewTab')}>
               {#if isImage(r.mime)}
                 <img src={api.resourceUrl(r.id)} alt={r.title} loading="lazy" />
               {:else}
@@ -167,27 +168,27 @@
                   use:focusInput
                 />
               {:else}
-                <div class="title" title={r.title}>{r.title || '(无标题)'}</div>
+                <div class="title" title={r.title}>{r.title || t('common.untitled')}</div>
               {/if}
               <div class="meta">
-                <span>{r.mime || '未知类型'}</span>
+                <span>{r.mime || t('res.unknownType')}</span>
                 <span>·</span>
                 <span>{fmtSize(r.size)}</span>
                 <span>·</span>
                 {#if r.used_by > 0}
-                  <span class="used">被 {r.used_by} 篇引用</span>
+                  <span class="used">{t('res.usedBy', { n: r.used_by })}</span>
                 {:else}
-                  <span class="badge">未被引用</span>
+                  <span class="badge">{t('res.unused')}</span>
                 {/if}
               </div>
             </div>
             <div class="actions">
               {#if editingId === r.id}
-                <button class="mini" onclick={() => saveRename(r)} disabled={working}>保存</button>
-                <button class="mini" onclick={cancelRename}>取消</button>
+                <button class="mini" onclick={() => saveRename(r)} disabled={working}>{t('common.save')}</button>
+                <button class="mini" onclick={cancelRename}>{t('common.cancel')}</button>
               {:else}
-                <button class="mini" onclick={() => startRename(r)} disabled={working} title="重命名">✎</button>
-                <button class="mini danger" onclick={() => removeOne(r)} disabled={working} title="删除">🗑</button>
+                <button class="mini" onclick={() => startRename(r)} disabled={working} title={t('common.rename')}>✎</button>
+                <button class="mini danger" onclick={() => removeOne(r)} disabled={working} title={t('common.delete')}>🗑</button>
               {/if}
             </div>
           </li>

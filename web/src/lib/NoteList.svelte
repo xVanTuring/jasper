@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { NoteSummary } from './api'
+  import { t } from './i18n.svelte'
 
   let {
     notes,
@@ -27,7 +28,7 @@
             <input class="todo" type="checkbox" checked={n.todo_completed} disabled />
           {/if}
           <span class="title" class:done={n.is_todo && n.todo_completed}>
-            {n.title || '(无标题)'}
+            {n.title || t('common.untitled')}
           </span>
         </div>
         <div class="date">{fmtDate(n.updated_time)}</div>
@@ -35,7 +36,7 @@
     </li>
   {/each}
   {#if notes.length === 0}
-    <li class="empty">没有笔记</li>
+    <li class="empty">{t('list.empty')}</li>
   {/if}
 </ul>
 

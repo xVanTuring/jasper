@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api } from './api'
+  import { t } from './i18n.svelte'
 
   let {
     mode,
@@ -54,7 +55,7 @@
       if (res.ok) {
         onDone()
       } else {
-        error = res.error || '连接失败'
+        error = res.error || t('settings.connectFailed')
       }
     } catch (e) {
       error = `${e}`
@@ -67,62 +68,60 @@
 <div class="overlay" class:setup={mode === 'setup'}>
   <div class="card">
     <header>
-      <h2>{mode === 'setup' ? '欢迎使用 joplin-lite' : '设置'}</h2>
+      <h2>{mode === 'setup' ? t('settings.welcomeTitle') : t('settings.title')}</h2>
       {#if mode === 'settings'}
-        <button class="x" onclick={() => onClose?.()} aria-label="关闭">✕</button>
+        <button class="x" onclick={() => onClose?.()} aria-label={t('common.close')}>✕</button>
       {/if}
     </header>
 
     {#if mode === 'setup'}
-      <p class="hint">首次使用，请选择笔记库。</p>
+      <p class="hint">{t('settings.firstHint')}</p>
     {/if}
 
     <!-- 现有 / 新建 -->
     <div class="seg">
       <button class:on={libMode === 'existing'} onclick={() => (libMode = 'existing')}>
-        使用现有笔记库
+        {t('settings.useExisting')}
       </button>
       <button class:on={libMode === 'new'} onclick={() => (libMode = 'new')}>
-        新建笔记库
+        {t('settings.createNew')}
       </button>
     </div>
     <p class="sub">
-      {libMode === 'existing'
-        ? '连接到已有的 Joplin 同步目录 / WebDAV，读取并编辑已有笔记。'
-        : '在指定位置创建一个空的新库（会写入 info.json）。'}
+      {libMode === 'existing' ? t('settings.existingDesc') : t('settings.newDesc')}
     </p>
 
     <!-- 本地 / WebDAV -->
     <div class="seg">
       <button class:on={sourceType === 'local'} onclick={() => (sourceType = 'local')}>
-        📁 本地文件夹
+        {t('settings.local')}
       </button>
       <button class:on={sourceType === 'webdav'} onclick={() => (sourceType = 'webdav')}>
-        ☁️ WebDAV
+        {t('settings.webdav')}
       </button>
     </div>
 
     {#if sourceType === 'local'}
       <label>
-        文件夹路径
+        {t('settings.folderPath')}
         <input
           type="text"
           bind:value={localPath}
-          placeholder={libMode === 'new' ? '/Users/你/新笔记库' : '/Users/你/Joplin同步目录'}
+          placeholder={libMode === 'new' ? t('settings.localPhNew') : t('settings.localPhExisting')}
         />
       </label>
-      <p class="tip">服务运行在本机，请填写该机器上的绝对路径。</p>
+      <p class="tip">{t('settings.localTip')}</p>
     {:else}
       <label>
-        WebDAV 地址
-        <input type="text" bind:value={webdavUrl} placeholder="https://host/remote.php/dav/files/用户/Joplin" />
+        {t('settings.webdavUrl')}
+        <input type="text" bind:value={webdavUrl} placeholder={t('settings.webdavUrlPh')} />
       </label>
       <label>
-        用户名
+        {t('settings.username')}
         <input type="text" bind:value={webdavUser} autocomplete="username" />
       </label>
       <label>
-        密码
+        {t('settings.password')}
         <input type="password" bind:value={webdavPass} autocomplete="current-password" />
       </label>
     {/if}
@@ -133,7 +132,7 @@
 
     <div class="actions">
       <button class="primary" onclick={submit} disabled={submitting}>
-        {submitting ? '连接中…' : libMode === 'new' ? '创建并连接' : '连接'}
+        {submitting ? t('settings.connecting') : libMode === 'new' ? t('settings.createConnect') : t('settings.connect')}
       </button>
     </div>
   </div>

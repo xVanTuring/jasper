@@ -1,4 +1,5 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
+import { t } from './i18n.svelte'
 
 export interface FolderNode {
   id: string
@@ -137,7 +138,7 @@ const httpApi = {
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
       body: file,
     })
-    if (!res.ok) throw new Error(`上传失败 -> ${res.status}`)
+    if (!res.ok) throw new Error(`${t('api.uploadFailed')} -> ${res.status}`)
     return res.json() as Promise<ResourceUpload>
   },
 
@@ -147,7 +148,7 @@ const httpApi = {
     sendJson<ResourceInfo>(`/api/resources/${id}`, 'PUT', { title }),
   deleteResource: async (id: string) => {
     const res = await fetch(`/api/resources/${id}`, { method: 'DELETE' })
-    if (!res.ok) throw new Error(`删除资源 -> ${res.status}`)
+    if (!res.ok) throw new Error(`${t('api.deleteResFailed')} -> ${res.status}`)
   },
 }
 

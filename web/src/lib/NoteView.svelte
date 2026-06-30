@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte'
   import type { NoteDetail } from './api'
   import { api } from './api'
+  import { t } from './i18n.svelte'
   import { renderNote } from './render'
   import Editor from './Editor.svelte'
 
@@ -64,7 +65,7 @@
 
   async function remove() {
     if (!detail) return
-    if (!confirm(`确定删除「${title || '无标题'}」？`)) return
+    if (!confirm(t('note.confirmDelete', { title: title || t('common.untitled') }))) return
     try {
       await api.deleteNote(detail.id)
       onDeleted()
@@ -102,16 +103,16 @@
       <div class="left">
         {#if editMode}
           <span class="save-state {saveState}">
-            {saveState === 'saving' ? '保存中…' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '保存失败' : ''}
+            {saveState === 'saving' ? t('note.saving') : saveState === 'saved' ? t('note.saved') : saveState === 'error' ? t('note.saveFailed') : ''}
           </span>
         {/if}
       </div>
       <div class="right">
         {#if !readOnly}
           <button class="btn" onclick={() => (editMode = !editMode)}>
-            {editMode ? '👁 阅读' : '✏️ 编辑'}
+            {editMode ? t('note.read') : t('note.edit')}
           </button>
-          <button class="btn danger" onclick={remove}>🗑 删除</button>
+          <button class="btn danger" onclick={remove}>{t('note.delete')}</button>
         {/if}
       </div>
     </div>
@@ -121,17 +122,17 @@
         class="title-input"
         bind:value={title}
         oninput={scheduleSave}
-        placeholder="标题"
+        placeholder={t('note.titlePlaceholder')}
       />
       <div class="editor-wrap">
         <Editor value={body} onChange={onBodyChange} />
       </div>
     {:else}
-      <h1 class="note-title">{title || '(无标题)'}</h1>
+      <h1 class="note-title">{title || t('common.untitled')}</h1>
       <div class="meta">
-        更新于 {fmtDateTime(detail.updated_time)}
+        {t('note.updatedAt', { time: fmtDateTime(detail.updated_time) })}
         {#if detail.source_url}
-          · <a href={detail.source_url} target="_blank" rel="noopener noreferrer">来源</a>
+          · <a href={detail.source_url} target="_blank" rel="noopener noreferrer">{t('note.source')}</a>
         {/if}
         {#if detail.markup_language === 2}<span class="badge">HTML</span>{/if}
       </div>
@@ -140,7 +141,7 @@
     {/if}
   </article>
 {:else}
-  <div class="placeholder">选择一篇笔记查看</div>
+  <div class="placeholder">{t('note.placeholder')}</div>
 {/if}
 
 <style>

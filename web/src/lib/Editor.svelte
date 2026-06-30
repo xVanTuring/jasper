@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { api } from './api'
+  import { t } from './i18n.svelte'
 
   let {
     value,
@@ -44,7 +45,7 @@
         const r = await api.uploadResource(file, nameOf(file))
         insertAtCursor(r.markdown + '\n')
       } catch (e) {
-        uploadErr = (e as Error).message || '上传失败'
+        uploadErr = (e as Error).message || t('editor.uploadFailed')
       } finally {
         uploading--
       }
@@ -119,9 +120,9 @@
 
 <div class="editor-col">
   <div class="ed-toolbar">
-    <button class="attach" onclick={pickFile} disabled={uploading > 0}>📎 附件</button>
-    <span class="hint">可直接粘贴或拖拽图片</span>
-    {#if uploading > 0}<span class="up">上传中… ({uploading})</span>{/if}
+    <button class="attach" onclick={pickFile} disabled={uploading > 0}>{t('editor.attach')}</button>
+    <span class="hint">{t('editor.hint')}</span>
+    {#if uploading > 0}<span class="up">{t('editor.uploading', { n: uploading })}</span>{/if}
     {#if uploadErr}<span class="err">{uploadErr}</span>{/if}
     <input type="file" multiple bind:this={fileInput} onchange={onPick} hidden />
   </div>

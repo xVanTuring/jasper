@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FolderNode } from './api'
+  import { t } from './i18n.svelte'
   import Self from './FolderTree.svelte'
 
   let {
@@ -34,7 +35,7 @@
               e.stopPropagation()
               expanded[f.id] = !expanded[f.id]
             }}
-            aria-label="展开/折叠"
+            aria-label={t('tree.toggle')}
           >
             <svg viewBox="0 0 10 10" width="9" height="9" aria-hidden="true">
               <path d="M3.5 1.5 L7.5 5 L3.5 8.5 Z" fill="currentColor" />
@@ -46,7 +47,7 @@
 
         <button class="folder" onclick={() => onSelect(f.id)}>
           <span class="ic">{f.children.length ? '🗂' : '📄'}</span>
-          <span class="name">{f.title || '(未命名)'}</span>
+          <span class="name">{f.title || t('common.unnamed')}</span>
           {#if f.note_count > 0}<span class="count">{f.note_count}</span>{/if}
         </button>
       </div>
