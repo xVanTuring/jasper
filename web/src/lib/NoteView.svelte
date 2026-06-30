@@ -5,6 +5,16 @@
   import { t } from './i18n.svelte'
   import { renderNote } from './render'
   import Editor from './Editor.svelte'
+  import WysiwygEditor from './WysiwygEditor.svelte'
+
+  const ENGINE_KEY = 'joplin-lite.editor'
+  function loadEngine(): 'wysiwyg' | 'source' {
+    try {
+      return localStorage.getItem(ENGINE_KEY) === 'source' ? 'source' : 'wysiwyg'
+    } catch {
+      return 'wysiwyg'
+    }
+  }
 
   let {
     detail,
@@ -26,6 +36,20 @@
   let editMode = $state(initialEdit)
   let title = $state(detail?.title ?? '')
   let body = $state(detail?.body ?? '')
+
+  // 编辑引擎：富文本(Crepe) / 源码(CodeMirror)，记忆在 localStorage。
+  // HTML 笔记（markup_language=2）不走 markdown 富文本，强制源码。
+  let isMarkdown = $derived(detail?.markup_language !== 2)
+  let editorEngine = $state<'wysiwyg' | 'source'>(loadEngine())
+  let engine = $derived(isMarkdown ? editorEngine : 'source')
+  function toggleEngine() {
+    editorEngine = editorEngine === 'wysiwyg' ? 'source' : 'wysiwyg'
+    try {
+      localStorage.setItem(ENGINE_KEY, editorEngine)
+    } catch {
+      /* 忽略 */
+    }
+  }
 
   let dirty = false
   let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
@@ -109,6 +133,11 @@
       </div>
       <div class="right">
         {#if !readOnly}
+          {#if editMode && isMarkdown}
+            <button class="btn" onclick={toggleEngine} title={engine === 'wysiwyg' ? t('note.toSource') : t('note.toRich')}>
+              {engine === 'wysiwyg' ? t('note.toSource') : t('note.toRich')}
+            </button>
+          {/if}
           <button class="btn" onclick={() => (editMode = !editMode)}>
             {editMode ? t('note.read') : t('note.edit')}
           </button>
@@ -125,7 +154,11 @@
         placeholder={t('note.titlePlaceholder')}
       />
       <div class="editor-wrap">
-        <Editor value={body} onChange={onBodyChange} />
+        {#if engine === 'wysiwyg'}
+          <WysiwygEditor value={body} onChange={onBodyChange} />
+        {:else}
+          <Editor value={body} onChange={onBodyChange} />
+        {/if}
       </div>
     {:else}
       <h1 class="note-title">{title || t('common.untitled')}</h1>

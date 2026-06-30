@@ -25,8 +25,9 @@ A lightweight, **read-write** [Joplin](https://joplinapp.org/)-compatible client
 - Create a brand-new library, or connect to an existing one — chosen in a first-run setup wizard. Switch data source at any time from ⚙.
 
 ### ✍️ Editing
-- CodeMirror 6 editor with Markdown highlighting, lazy-loaded so it never bloats first paint.
-- **Autosave** while you type; create / update / delete notes.
+- **Two editor modes, one click apart** (like Joplin): a **WYSIWYG** rich editor (Milkdown / Crepe) and a **Markdown source** editor (CodeMirror 6). Default is WYSIWYG; your choice is remembered. Both are lazy-loaded — neither bloats first paint.
+- **Autosave** while you type; create / update / delete notes. Opening or switching to WYSIWYG never auto-saves on its own — only your edits do.
+- Source mode preserves bytes exactly; WYSIWYG reformats the whole note's Markdown on save (an inherent round-trip trade-off) but keeps Joplin `:/id` resource links intact. HTML notes always use source mode.
 - Write-back preserves every metadata field verbatim and only refreshes the timestamps — minimal diff, friendly to Joplin's conflict handling.
 
 ### 🎨 Rich Markdown rendering

@@ -109,6 +109,14 @@ async function sendJson<T>(url: string, method: string, body: unknown): Promise<
   return res.json() as Promise<T>
 }
 
+// Joplin 内部资源/笔记链接 `:/<32hex>` 或 `joplin://<32hex>` → 解析出 id（无则 null）。
+// 与 render.ts 的改写逻辑同源，供富文本编辑器把 :/id 映射成可显示 URL。
+const RESOURCE_LINK = /^(?:joplin:\/\/|:\/)([0-9a-zA-Z]{32})(?:[#?].*)?$/
+export function parseResourceId(url: string): string | null {
+  const m = RESOURCE_LINK.exec((url || '').trim())
+  return m ? m[1] : null
+}
+
 const httpApi = {
   status: () => getJson<StatusResp>('/api/status'),
   getConfig: () => getJson<SourceConfig>('/api/config'),

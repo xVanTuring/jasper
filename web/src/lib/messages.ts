@@ -62,6 +62,8 @@ const zh = {
 	'note.read': '👁 阅读',
 	'note.edit': '✏️ 编辑',
 	'note.delete': '🗑 删除',
+	'note.toSource': '⌨ 源码',
+	'note.toRich': '✦ 富文本',
 	'note.titlePlaceholder': '标题',
 	'note.updatedAt': '更新于 {time}',
 	'note.source': '来源',
@@ -73,6 +75,7 @@ const zh = {
 	'editor.hint': '可直接粘贴或拖拽图片',
 	'editor.uploading': '上传中…（{n}）',
 	'editor.uploadFailed': '上传失败',
+	'editor.wysiwygFailed': '富文本编辑器加载失败',
 
 	// 笔记本树
 	'tree.toggle': '展开/折叠',
@@ -152,6 +155,8 @@ const en: typeof zh = {
 	'note.read': '👁 Read',
 	'note.edit': '✏️ Edit',
 	'note.delete': '🗑 Delete',
+	'note.toSource': '⌨ Source',
+	'note.toRich': '✦ Rich text',
 	'note.titlePlaceholder': 'Title',
 	'note.updatedAt': 'Updated {time}',
 	'note.source': 'Source',
@@ -162,6 +167,7 @@ const en: typeof zh = {
 	'editor.hint': 'Paste or drag images directly',
 	'editor.uploading': 'Uploading… ({n})',
 	'editor.uploadFailed': 'Upload failed',
+	'editor.wysiwygFailed': 'Failed to load the rich-text editor',
 
 	'tree.toggle': 'Expand/collapse',
 
