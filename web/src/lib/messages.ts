@@ -15,6 +15,11 @@ const zh = {
 	'common.untitled': '(无标题)',
 	'common.unnamed': '(未命名)',
 	'common.langTitle': '切换语言 / Switch language',
+	'common.themeTitle': '主题：{mode}（点击切换）',
+	'theme.auto': '跟随系统',
+	'theme.light': '浅色',
+	'theme.dark': '深色',
+	'theme.pick': '主题：{mode}',
 
 	// 顶栏 / 三栏
 	'topbar.search': '搜索笔记…',
@@ -29,7 +34,7 @@ const zh = {
 
 	// 演示横幅（main 段含 <b> 标记，用 {@html} 渲染）
 	'demo.banner':
-		'🌐 <b>演示预览</b> · 全程在浏览器内由 Rust&nbsp;→&nbsp;WASM 运行，<b>无后端</b>。可浏览笔记本/笔记、Markdown 渲染（代码 · 表格 · 公式 · 任务清单）、全文搜索。',
+		'<b>演示预览</b> · 全程在浏览器内由 Rust&nbsp;→&nbsp;WASM 运行，<b>无后端</b>。可浏览笔记本/笔记、Markdown 渲染（代码 · 表格 · 公式 · 任务清单）、全文搜索。',
 	'demo.bannerDim': '编辑、图片资源、WebDAV / 本地读写为完整版（本地 server）能力。',
 
 	// 设置 / 首次向导
@@ -40,8 +45,8 @@ const zh = {
 	'settings.createNew': '新建笔记库',
 	'settings.existingDesc': '连接到已有的 Joplin 同步目录 / WebDAV，读取并编辑已有笔记。',
 	'settings.newDesc': '在指定位置创建一个空的新库（会写入 info.json）。',
-	'settings.local': '📁 本地文件夹',
-	'settings.webdav': '☁️ WebDAV',
+	'settings.local': '本地文件夹',
+	'settings.webdav': 'WebDAV',
 	'settings.folderPath': '文件夹路径',
 	'settings.localPhNew': '/Users/你/新笔记库',
 	'settings.localPhExisting': '/Users/你/Joplin同步目录',
@@ -59,11 +64,11 @@ const zh = {
 	'note.saving': '保存中…',
 	'note.saved': '已保存',
 	'note.saveFailed': '保存失败',
-	'note.read': '👁 阅读',
-	'note.edit': '✏️ 编辑',
-	'note.delete': '🗑 删除',
-	'note.toSource': '⌨ 源码',
-	'note.toRich': '✦ 富文本',
+	'note.read': '阅读',
+	'note.edit': '编辑',
+	'note.delete': '删除',
+	'note.toSource': '源码',
+	'note.toRich': '富文本',
 	'note.titlePlaceholder': '标题',
 	'note.updatedAt': '更新于 {time}',
 	'note.source': '来源',
@@ -71,7 +76,7 @@ const zh = {
 	'note.placeholder': '选择一篇笔记查看',
 
 	// 编辑器
-	'editor.attach': '📎 附件',
+	'editor.attach': '附件',
 	'editor.hint': '可直接粘贴或拖拽图片',
 	'editor.uploading': '上传中…（{n}）',
 	'editor.uploadFailed': '上传失败',
@@ -84,8 +89,8 @@ const zh = {
 	'res.title': '资源管理',
 	'res.count': '{n} 个资源',
 	'res.orphans': '{n} 个孤儿',
-	'res.cleanup': '🧹 清理孤儿（{n}）',
-	'res.empty': '还没有资源。在编辑笔记时粘贴/拖拽图片或用「📎 附件」上传。',
+	'res.cleanup': '清理孤儿（{n}）',
+	'res.empty': '还没有资源。在编辑笔记时粘贴/拖拽图片或用「附件」上传。',
 	'res.openNewTab': '在新标签打开',
 	'res.unknownType': '未知类型',
 	'res.usedBy': '被 {n} 篇引用',
@@ -110,6 +115,11 @@ const en: typeof zh = {
 	'common.untitled': '(Untitled)',
 	'common.unnamed': '(Unnamed)',
 	'common.langTitle': '切换语言 / Switch language',
+	'common.themeTitle': 'Theme: {mode}',
+	'theme.auto': 'Auto',
+	'theme.light': 'Light',
+	'theme.dark': 'Dark',
+	'theme.pick': 'Theme: {mode}',
 
 	'topbar.search': 'Search notes…',
 	'topbar.resources': 'Resources',
@@ -122,7 +132,7 @@ const en: typeof zh = {
 	'note.newNote': 'New note',
 
 	'demo.banner':
-		'🌐 <b>Demo preview</b> · Runs entirely in your browser via Rust&nbsp;→&nbsp;WASM, <b>no backend</b>. Browse notebooks/notes, Markdown rendering (code · tables · math · task lists), and full-text search.',
+		'<b>Demo preview</b> · Runs entirely in your browser via Rust&nbsp;→&nbsp;WASM, <b>no backend</b>. Browse notebooks/notes, Markdown rendering (code · tables · math · task lists), and full-text search.',
 	'demo.bannerDim':
 		'Editing, image resources, and WebDAV / local read-write are full-version (local server) features.',
 
@@ -134,8 +144,8 @@ const en: typeof zh = {
 	'settings.existingDesc':
 		'Connect to an existing Joplin sync directory / WebDAV to read and edit existing notes.',
 	'settings.newDesc': 'Create an empty new library at the chosen location (writes info.json).',
-	'settings.local': '📁 Local folder',
-	'settings.webdav': '☁️ WebDAV',
+	'settings.local': 'Local folder',
+	'settings.webdav': 'WebDAV',
 	'settings.folderPath': 'Folder path',
 	'settings.localPhNew': '/Users/you/new-library',
 	'settings.localPhExisting': '/Users/you/Joplin-sync-dir',
@@ -152,18 +162,18 @@ const en: typeof zh = {
 	'note.saving': 'Saving…',
 	'note.saved': 'Saved',
 	'note.saveFailed': 'Save failed',
-	'note.read': '👁 Read',
-	'note.edit': '✏️ Edit',
-	'note.delete': '🗑 Delete',
-	'note.toSource': '⌨ Source',
-	'note.toRich': '✦ Rich text',
+	'note.read': 'Read',
+	'note.edit': 'Edit',
+	'note.delete': 'Delete',
+	'note.toSource': 'Source',
+	'note.toRich': 'Rich text',
 	'note.titlePlaceholder': 'Title',
 	'note.updatedAt': 'Updated {time}',
 	'note.source': 'Source',
 	'note.confirmDelete': 'Delete “{title}”?',
 	'note.placeholder': 'Select a note to view',
 
-	'editor.attach': '📎 Attach',
+	'editor.attach': 'Attach',
 	'editor.hint': 'Paste or drag images directly',
 	'editor.uploading': 'Uploading… ({n})',
 	'editor.uploadFailed': 'Upload failed',
@@ -174,8 +184,8 @@ const en: typeof zh = {
 	'res.title': 'Resources',
 	'res.count': '{n} resources',
 	'res.orphans': '{n} orphan(s)',
-	'res.cleanup': '🧹 Clean orphans ({n})',
-	'res.empty': 'No resources yet. Paste/drag images while editing, or use “📎 Attach”.',
+	'res.cleanup': 'Clean orphans ({n})',
+	'res.empty': 'No resources yet. Paste/drag images while editing, or use “Attach”.',
 	'res.openNewTab': 'Open in new tab',
 	'res.unknownType': 'Unknown type',
 	'res.usedBy': 'Used by {n}',

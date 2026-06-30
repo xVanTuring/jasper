@@ -5,6 +5,17 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Joplin Web</title>
+    <!-- 首屏即定主题，避免深色用户看到浅色闪烁（FOUC）。与 theme.svelte.ts 同键。 -->
+    <script>
+      try {
+        var t = localStorage.getItem('joplin-lite.theme') || 'auto'
+        if (t === 'auto')
+          t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        document.documentElement.setAttribute('data-theme', t)
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'light')
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

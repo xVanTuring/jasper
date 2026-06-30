@@ -84,7 +84,7 @@
   }
   .wys-err {
     padding: 10px 16px;
-    color: #c0392b;
+    color: var(--danger);
     font-size: 13px;
   }
   /* 把 Crepe 主题色映射到 app 调色板（随明暗自动切换）。

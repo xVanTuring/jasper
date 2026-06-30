@@ -4,6 +4,7 @@
   import { api } from './api'
   import { t } from './i18n.svelte'
   import { renderNote } from './render'
+  import Button from './Button.svelte'
   import Editor from './Editor.svelte'
   import WysiwygEditor from './WysiwygEditor.svelte'
 
@@ -135,14 +136,20 @@
       <div class="right">
         {#if !readOnly}
           {#if editMode && isMarkdown}
-            <button class="btn" onclick={toggleEngine} title={engine === 'wysiwyg' ? t('note.toSource') : t('note.toRich')}>
-              {engine === 'wysiwyg' ? t('note.toSource') : t('note.toRich')}
-            </button>
+            <Button
+              variant="default"
+              icon={engine === 'wysiwyg' ? 'code' : 'rich'}
+              label={engine === 'wysiwyg' ? t('note.toSource') : t('note.toRich')}
+              onclick={toggleEngine}
+            />
           {/if}
-          <button class="btn" onclick={() => (editMode = !editMode)}>
-            {editMode ? t('note.read') : t('note.edit')}
-          </button>
-          <button class="btn danger" onclick={remove}>{t('note.delete')}</button>
+          <Button
+            variant="default"
+            icon={editMode ? 'eye' : 'edit'}
+            label={editMode ? t('note.read') : t('note.edit')}
+            onclick={() => (editMode = !editMode)}
+          />
+          <Button variant="danger" icon="trash" label={t('note.delete')} onclick={remove} />
         {/if}
       </div>
     </div>
@@ -197,28 +204,15 @@
     color: var(--text-dim);
   }
   .save-state.saved {
-    color: #2e7d32;
+    color: var(--success);
   }
   .save-state.error {
-    color: #c0392b;
+    color: var(--danger);
   }
-  .btn {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-size: 12px;
-    color: var(--text);
-    cursor: pointer;
-    margin-left: 6px;
-  }
-  .btn:hover {
-    background: var(--hover);
-  }
-  .btn.danger:hover {
-    background: #c0392b;
-    color: #fff;
-    border-color: #c0392b;
+  .right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .title-input {
     border: none;

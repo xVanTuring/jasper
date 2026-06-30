@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FolderNode } from './api'
   import { t } from './i18n.svelte'
+  import Icon from './Icon.svelte'
   import Self from './FolderTree.svelte'
 
   let {
@@ -46,7 +47,7 @@
         {/if}
 
         <button class="folder" onclick={() => onSelect(f.id)}>
-          <span class="ic">{f.children.length ? '🗂' : '📄'}</span>
+          <span class="ic"><Icon name={f.children.length ? 'folder' : 'file'} size={14} /></span>
           <span class="name">{f.title || t('common.unnamed')}</span>
           {#if f.note_count > 0}<span class="count">{f.note_count}</span>{/if}
         </button>

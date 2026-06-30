@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import { api, IS_DEMO, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
   import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
+  import Button from './lib/Button.svelte'
+  import ThemePicker from './lib/ThemePicker.svelte'
   import FolderTree from './lib/FolderTree.svelte'
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
@@ -12,6 +14,7 @@
   $effect(() => {
     document.documentElement.lang = getLocale()
   })
+
 
   let folders = $state<FolderNode[]>([])
   let selectedFolderId = $state<string | null>(null)
@@ -193,22 +196,28 @@
       bind:value={query}
       oninput={onSearchInput}
     />
-    <button class="lang" onclick={toggleLocale} title={t('common.langTitle')}>
-      {getLocale() === 'zh' ? '中' : 'EN'}
-    </button>
-    {#if !IS_DEMO}
-      <button class="gear" onclick={() => (showResources = true)} title={t('topbar.resources')}>🖼</button>
-      <button class="gear" onclick={() => (showSettings = true)} title={t('topbar.settings')}>⚙</button>
-    {/if}
+    <div class="topbar-actions">
+      <Button
+        variant="default"
+        label={getLocale() === 'zh' ? '中' : 'EN'}
+        title={t('common.langTitle')}
+        onclick={toggleLocale}
+      />
+      <ThemePicker />
+      {#if !IS_DEMO}
+        <Button variant="ghost" iconOnly icon="image" label={t('topbar.resources')} onclick={() => (showResources = true)} />
+        <Button variant="ghost" iconOnly icon="settings" label={t('topbar.settings')} onclick={() => (showSettings = true)} />
+      {/if}
+    </div>
   </header>
 
   {#if IS_DEMO && showDemoBanner}
     <div class="demo-banner">
-      <span>
+      <span class="msg">
         {@html t('demo.banner')}
         <span class="dim">{t('demo.bannerDim')}</span>
       </span>
-      <button class="bx" onclick={() => (showDemoBanner = false)} aria-label={t('common.close')}>✕</button>
+      <Button variant="ghost" iconOnly icon="close" label={t('common.close')} onclick={() => (showDemoBanner = false)} />
     </div>
   {/if}
 
@@ -230,7 +239,7 @@
       <div class="pane-title">
         <span>{listTitle}</span>
         {#if !IS_DEMO}
-          <button class="new-btn" onclick={handleNew} title={t('pane.newNote')}>＋</button>
+          <Button variant="ghost" iconOnly icon="plus" label={t('pane.newNote')} onclick={handleNew} />
         {/if}
       </div>
       <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} />
@@ -293,39 +302,15 @@
     color: var(--text);
     font-size: 13px;
   }
-  .lang {
+  .topbar-actions {
     margin-left: auto;
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
-    min-width: 30px;
-    height: 26px;
-    cursor: pointer;
-    color: var(--text-dim);
-    padding: 0 8px;
-  }
-  .lang:hover {
-    background: var(--hover);
-    color: var(--text);
-  }
-  .gear {
-    background: none;
-    border: none;
-    font-size: 18px;
-    cursor: pointer;
-    color: var(--text-dim);
-    padding: 4px 8px;
-    border-radius: 6px;
-  }
-  .gear:hover {
-    background: var(--hover);
-    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .error {
-    background: #c0392b;
-    color: #fff;
+    background: var(--danger);
+    color: var(--on-accent);
     padding: 6px 14px;
     font-size: 13px;
   }
@@ -344,17 +329,8 @@
   .demo-banner .dim {
     color: var(--text-dim);
   }
-  .demo-banner .bx {
-    margin-left: auto;
-    background: none;
-    border: none;
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 13px;
-    flex: 0 0 auto;
-  }
-  .demo-banner .bx:hover {
-    color: var(--text);
+  .demo-banner .msg {
+    flex: 1;
   }
   .panes {
     display: grid;
@@ -390,19 +366,6 @@
     font-weight: 600;
     color: var(--text-dim);
     border-bottom: 1px solid var(--border);
-  }
-  .new-btn {
-    background: none;
-    border: none;
-    color: var(--accent);
-    font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 2px 8px;
-    border-radius: 6px;
-  }
-  .new-btn:hover {
-    background: var(--accent-soft);
   }
   .reader {
     overflow-y: auto;

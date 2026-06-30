@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import { api } from './api'
   import { t } from './i18n.svelte'
+  import Button from './Button.svelte'
+  import Icon from './Icon.svelte'
 
   let {
     mode,
@@ -70,7 +72,7 @@
     <header>
       <h2>{mode === 'setup' ? t('settings.welcomeTitle') : t('settings.title')}</h2>
       {#if mode === 'settings'}
-        <button class="x" onclick={() => onClose?.()} aria-label={t('common.close')}>✕</button>
+        <Button variant="ghost" iconOnly icon="close" label={t('common.close')} onclick={() => onClose?.()} />
       {/if}
     </header>
 
@@ -94,10 +96,10 @@
     <!-- 本地 / WebDAV -->
     <div class="seg">
       <button class:on={sourceType === 'local'} onclick={() => (sourceType = 'local')}>
-        {t('settings.local')}
+        <Icon name="folder" size={14} /> {t('settings.local')}
       </button>
       <button class:on={sourceType === 'webdav'} onclick={() => (sourceType = 'webdav')}>
-        {t('settings.webdav')}
+        <Icon name="cloud" size={14} /> {t('settings.webdav')}
       </button>
     </div>
 
@@ -127,13 +129,16 @@
     {/if}
 
     {#if error}
-      <div class="error">⚠️ {error}</div>
+      <div class="error"><Icon name="alert" size={14} /> {error}</div>
     {/if}
 
     <div class="actions">
-      <button class="primary" onclick={submit} disabled={submitting}>
-        {submitting ? t('settings.connecting') : libMode === 'new' ? t('settings.createConnect') : t('settings.connect')}
-      </button>
+      <Button
+        variant="primary"
+        label={submitting ? t('settings.connecting') : libMode === 'new' ? t('settings.createConnect') : t('settings.connect')}
+        onclick={submit}
+        disabled={submitting}
+      />
     </div>
   </div>
 </div>
@@ -142,7 +147,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--overlay);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -158,7 +163,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 22px 24px 24px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-modal);
   }
   header {
     display: flex;
@@ -169,13 +174,6 @@
   h2 {
     margin: 0;
     font-size: 18px;
-  }
-  .x {
-    background: none;
-    border: none;
-    font-size: 16px;
-    color: var(--text-dim);
-    cursor: pointer;
   }
   .hint {
     color: var(--text-dim);
@@ -189,6 +187,10 @@
   }
   .seg button {
     flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
     padding: 9px;
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -234,8 +236,8 @@
   .error {
     margin-top: 14px;
     padding: 8px 10px;
-    background: rgba(192, 57, 43, 0.12);
-    color: #c0392b;
+    background: var(--danger-soft);
+    color: var(--danger);
     border-radius: 7px;
     font-size: 12px;
     word-break: break-all;
@@ -244,18 +246,5 @@
     margin-top: 20px;
     display: flex;
     justify-content: flex-end;
-  }
-  .primary {
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 9px 20px;
-    font-size: 14px;
-    cursor: pointer;
-  }
-  .primary:disabled {
-    opacity: 0.6;
-    cursor: default;
   }
 </style>

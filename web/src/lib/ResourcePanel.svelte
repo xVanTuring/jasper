@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import { api, type ResourceInfo } from './api'
   import { t } from './i18n.svelte'
+  import Button from './Button.svelte'
+  import Icon from './Icon.svelte'
 
   let {
     onClose,
@@ -121,7 +123,7 @@
   <div class="card">
     <header>
       <h2>{t('res.title')}</h2>
-      <button class="x" onclick={onClose} aria-label={t('common.close')}>✕</button>
+      <Button variant="ghost" iconOnly icon="close" label={t('common.close')} onclick={onClose} />
     </header>
 
     <div class="bar">
@@ -129,12 +131,16 @@
         {t('res.count', { n: items.length })} · {fmtSize(totalSize)}
         {#if orphanCount > 0}· <span class="orphan-stat">{t('res.orphans', { n: orphanCount })}</span>{/if}
       </span>
-      <button class="cleanup" onclick={cleanupOrphans} disabled={working || orphanCount === 0}>
-        {t('res.cleanup', { n: orphanCount })}
-      </button>
+      <Button
+        variant="default"
+        icon="clean"
+        label={t('res.cleanup', { n: orphanCount })}
+        onclick={cleanupOrphans}
+        disabled={working || orphanCount === 0}
+      />
     </div>
 
-    {#if error}<div class="error">⚠️ {error}</div>{/if}
+    {#if error}<div class="error"><Icon name="alert" size={14} /> {error}</div>{/if}
 
     {#if loading}
       <div class="empty">{t('common.loading')}</div>
@@ -184,11 +190,11 @@
             </div>
             <div class="actions">
               {#if editingId === r.id}
-                <button class="mini" onclick={() => saveRename(r)} disabled={working}>{t('common.save')}</button>
-                <button class="mini" onclick={cancelRename}>{t('common.cancel')}</button>
+                <Button variant="default" label={t('common.save')} onclick={() => saveRename(r)} disabled={working} />
+                <Button variant="default" label={t('common.cancel')} onclick={cancelRename} />
               {:else}
-                <button class="mini" onclick={() => startRename(r)} disabled={working} title={t('common.rename')}>✎</button>
-                <button class="mini danger" onclick={() => removeOne(r)} disabled={working} title={t('common.delete')}>🗑</button>
+                <Button variant="default" iconOnly icon="edit" label={t('common.rename')} onclick={() => startRename(r)} disabled={working} />
+                <Button variant="danger" iconOnly icon="trash" label={t('common.delete')} onclick={() => removeOne(r)} disabled={working} />
               {/if}
             </div>
           </li>
@@ -202,7 +208,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.4);
+    background: var(--overlay);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -218,7 +224,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 18px 20px 16px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+    box-shadow: var(--shadow-modal);
   }
   header {
     display: flex;
@@ -228,13 +234,6 @@
   h2 {
     margin: 0;
     font-size: 18px;
-  }
-  .x {
-    background: none;
-    border: none;
-    font-size: 16px;
-    color: var(--text-dim);
-    cursor: pointer;
   }
   .bar {
     display: flex;
@@ -247,29 +246,13 @@
     color: var(--text-dim);
   }
   .orphan-stat {
-    color: #c0392b;
-  }
-  .cleanup {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 5px 10px;
-    font-size: 12px;
-    color: var(--text);
-    cursor: pointer;
-  }
-  .cleanup:hover:not(:disabled) {
-    background: var(--hover);
-  }
-  .cleanup:disabled {
-    opacity: 0.45;
-    cursor: default;
+    color: var(--danger);
   }
   .error {
     margin: 8px 0;
     padding: 8px 10px;
-    background: rgba(192, 57, 43, 0.12);
-    color: #c0392b;
+    background: var(--danger-soft);
+    color: var(--danger);
     border-radius: 7px;
     font-size: 12px;
     word-break: break-all;
@@ -294,7 +277,7 @@
     border-bottom: 1px solid var(--border);
   }
   .row.orphan {
-    background: rgba(192, 57, 43, 0.05);
+    background: var(--danger-soft-weak);
   }
   .thumb {
     flex: 0 0 auto;
@@ -352,32 +335,11 @@
     color: var(--text-dim);
   }
   .badge {
-    color: #c0392b;
+    color: var(--danger);
   }
   .actions {
     flex: 0 0 auto;
     display: flex;
     gap: 4px;
-  }
-  .mini {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 3px 8px;
-    font-size: 12px;
-    color: var(--text);
-    cursor: pointer;
-  }
-  .mini:hover:not(:disabled) {
-    background: var(--hover);
-  }
-  .mini.danger:hover:not(:disabled) {
-    background: #c0392b;
-    color: #fff;
-    border-color: #c0392b;
-  }
-  .mini:disabled {
-    opacity: 0.45;
-    cursor: default;
   }
 </style>

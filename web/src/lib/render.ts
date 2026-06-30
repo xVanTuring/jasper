@@ -24,12 +24,12 @@ import { api, type NoteDetail } from './api'
 import 'highlight.js/styles/github-dark.css'
 import 'katex/dist/katex.min.css'
 
-const md = new MarkdownIt({
+const md: MarkdownIt = new MarkdownIt({
   html: true, // Joplin 始终允许 HTML
   linkify: true,
   typographer: true,
   breaks: false,
-  highlight(str, lang) {
+  highlight(str: string, lang: string): string {
     if (lang && hljs.getLanguage(lang)) {
       try {
         return '<pre class="hljs"><code>' + hljs.highlight(str, { language: lang }).value + '</code></pre>'

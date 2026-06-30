@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte'
   import { api } from './api'
   import { t } from './i18n.svelte'
+  import { resolvedTheme } from './theme.svelte'
+  import Button from './Button.svelte'
 
   let {
     value,
@@ -67,7 +69,7 @@
       import('@codemirror/lang-markdown'),
       import('@codemirror/theme-one-dark'),
     ])
-    const dark = matchMedia('(prefers-color-scheme: dark)').matches
+    const dark = resolvedTheme() === 'dark'
     view = new EditorView({
       doc: value,
       parent: host,
@@ -120,7 +122,7 @@
 
 <div class="editor-col">
   <div class="ed-toolbar">
-    <button class="attach" onclick={pickFile} disabled={uploading > 0}>{t('editor.attach')}</button>
+    <Button variant="default" icon="attach" label={t('editor.attach')} onclick={pickFile} disabled={uploading > 0} />
     <span class="hint">{t('editor.hint')}</span>
     {#if uploading > 0}<span class="up">{t('editor.uploading', { n: uploading })}</span>{/if}
     {#if uploadErr}<span class="err">{uploadErr}</span>{/if}
@@ -142,22 +144,6 @@
     padding: 4px 2px 8px;
     flex: 0 0 auto;
   }
-  .attach {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 3px 10px;
-    font-size: 12px;
-    color: var(--text);
-    cursor: pointer;
-  }
-  .attach:hover:not(:disabled) {
-    background: var(--hover);
-  }
-  .attach:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .hint {
     font-size: 12px;
     color: var(--text-dim);
@@ -168,7 +154,7 @@
   }
   .err {
     font-size: 12px;
-    color: #c0392b;
+    color: var(--danger);
   }
   .cm-host {
     flex: 1;

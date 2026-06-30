@@ -1,4 +1,16 @@
+/* 主题令牌分两层（见 docs/plugin-design.md §5.1）：
+   ① 基础调色板 --palette-*：原始色，不随主题变；
+   ② 语义令牌 --bg/--text/...：界面引用这一层，主题/插件只覆盖这一层。
+   主题切换走 <html data-theme="light|dark">（由 index.html 内联脚本 + theme.svelte.ts 设置）。 */
 :root {
+  /* ① 基础调色板 */
+  --palette-purple: #8a3ffc;
+  --palette-purple-light: #b388ff;
+  --palette-red: #c0392b;
+  --palette-green: #2e7d32;
+  --palette-white: #ffffff;
+
+  /* ② 语义令牌（默认 = 浅色） */
   --bg: #ffffff;
   --bg-bar: #f7f7f8;
   --bg-side: #fafafa;
@@ -6,9 +18,20 @@
   --text-dim: #8a8f98;
   --border: #e4e6ea;
   --hover: #f0f1f3;
-  --accent: #8a3ffc;
+  --accent: var(--palette-purple);
   --accent-soft: rgba(138, 63, 252, 0.12);
   --code-bg: #f4f4f6;
+
+  /* 状态色 / 反白文字 / 遮罩 / 弹层阴影 / 代码块（原先散落各组件，统一收编为令牌） */
+  --danger: var(--palette-red);
+  --danger-soft: rgba(192, 57, 43, 0.12);
+  --danger-soft-weak: rgba(192, 57, 43, 0.05);
+  --success: var(--palette-green);
+  --on-accent: var(--palette-white);
+  --overlay: rgba(0, 0, 0, 0.4);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.25);
+  --code-block-bg: #0d1117;
+  --code-block-text: #c9d1d9;
 
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC',
     'Microsoft YaHei', sans-serif;
@@ -18,19 +41,18 @@
   text-rendering: optimizeLegibility;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1e1e22;
-    --bg-bar: #26262b;
-    --bg-side: #232328;
-    --text: #e3e3e6;
-    --text-dim: #8a8f98;
-    --border: #34343a;
-    --hover: #2c2c32;
-    --accent: #b388ff;
-    --accent-soft: rgba(179, 136, 255, 0.18);
-    --code-bg: #2a2a30;
-  }
+/* 深色：只覆盖需要翻转的语义令牌；状态色/遮罩/代码块沿用默认即可。 */
+:root[data-theme='dark'] {
+  --bg: #1e1e22;
+  --bg-bar: #26262b;
+  --bg-side: #232328;
+  --text: #e3e3e6;
+  --text-dim: #8a8f98;
+  --border: #34343a;
+  --hover: #2c2c32;
+  --accent: var(--palette-purple-light);
+  --accent-soft: rgba(179, 136, 255, 0.18);
+  --code-bg: #2a2a30;
 }
 
 * {
@@ -98,9 +120,9 @@ body {
   font-family: 'SF Mono', Menlo, Consolas, monospace;
 }
 .content pre {
-  /* 始终深色背景，配 github-dark 语法配色，浅色模式下也清晰 */
-  background: #0d1117;
-  color: #c9d1d9;
+  /* 默认深色背景，配 github-dark 语法配色，浅色模式下也清晰；主题可覆盖 --code-block-* */
+  background: var(--code-block-bg);
+  color: var(--code-block-text);
   padding: 14px 16px;
   border-radius: 8px;
   overflow-x: auto;
