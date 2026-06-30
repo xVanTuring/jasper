@@ -39,6 +39,8 @@ web/           Svelte 5 (runes) + Vite + TS 前端
       FolderTree.svelte / NoteList.svelte / NoteView.svelte
       Editor.svelte    CodeMirror6 懒加载编辑器
       Settings.svelte  首次配置向导 / 设置页
+      messages.ts      中/英文案字典（zh 基准；`const en: typeof zh` 强制不漏键）
+      i18n.svelte.ts   rune 存当前语言 + t() 取词/插值（localStorage 持久化 + 浏览器自动选）
     shims.d.ts         无类型 markdown-it 插件的最小声明
 docs/joplin-data-format.md   逆向出的 Joplin 数据格式规范（解析层依据）
 Dockerfile / docker-compose.yml / .dockerignore
@@ -135,6 +137,7 @@ GET    /api/search?q=...      标题/正文全文搜索
 
 - Rust：tab 缩进、单引号、避免 `any`、注释用 `//`；网络/磁盘 IO 在 axum handler 里走 `spawn_blocking`；`ConfigStore`(rusqlite) 用 `Mutex` 包裹。
 - 前端：Svelte 5 **runes**（`$state/$props/$derived/$effect`），事件用 `onclick=` 不是 `on:click`；`NoteView` 按笔记 id 以 `{#key}` 重挂载（先取详情再切 id）。
+- **多语言**：自建轻量 i18n（无第三方包）。新增/改文案要**同时**写 `messages.ts` 的 `zh` 和 `en`（漏键编译报错）。组件里用 `t('key', {插值})`；模板内调用 `t()` 会读 `i18n.svelte.ts` 的 rune→切换语言即时重渲染。纯 `.ts`（如 api.ts）里调 `t()` 取当时语言即可。顶栏「中/EN」按钮切换，localStorage 持久化。
 - **依赖哲学：少造轮子但也别堆包**（用户偏好），渲染优先用成熟 markdown-it 插件。
 - markdown-it 插件存在 CJS/ESM 默认导出差异，`render.ts` 用 `P()` 助手统一（否则 `md.use()` 抛 `e.apply is not a function`，白屏）。
 - 代码高亮固定用 **github-dark** 主题 + 深色代码块背景（浅色模式也清晰）。
