@@ -1,24 +1,32 @@
-# 开发联调用 WebDAV 服务端，仅供本地测试 jasper 的 WebDAV 读写。
-# 不是生产组件，正式打包见 docker-compose.yml。
+# 开发联调用 WebDAV 服务端，仅供本地测试 jasper 的 WebDAV 读写。不是生产组件，正式打包见 docker-compose.yml。
+# A WebDAV server for local dev — only to test jasper's WebDAV read/write. Not a
+# production component; for real packaging see docker-compose.yml.
 #
 # 用 hacdias/webdav（Go 实现，原生多架构 arm64/amd64；无需 Apache/htpasswd，明文密码即可）。
 # 注意：该镜像不会自动发现挂进来的配置，必须用下面的 command 显式 -c 指定。
+# Uses hacdias/webdav (Go, native multi-arch arm64/amd64; no Apache/htpasswd,
+# plaintext passwords are fine). Note: this image does not auto-discover the
+# mounted config — you must point at it explicitly via the `-c` command below.
 #
-# 用法：
-#   docker compose -f docker-compose.dev.yml up -d           # 启动 WebDAV（宿主端口 8081）
-#   # 让 jasper 指向它（账号 joplin / 密码 joplin）：
+# 用法 / Usage:
+#   docker compose -f docker-compose.dev.yml up -d           # 启动 WebDAV（宿主端口 8081） / start WebDAV (host port 8081)
+#   # 让 jasper 指向它（账号 joplin / 密码 joplin）： / point jasper at it (user joplin / pass joplin):
 #   JASPER_SOURCE=http://127.0.0.1:8081/ \
 #   JASPER_WEBDAV_USER=joplin JASPER_WEBDAV_PASS=joplin \
 #   cargo run --manifest-path server/Cargo.toml
-#   docker compose -f docker-compose.dev.yml down -v          # 停止并清空数据卷
+#   docker compose -f docker-compose.dev.yml down -v          # 停止并清空数据卷 / stop and wipe the data volume
 #
 # 数据存放在命名卷 jasper_webdav_data，挂到容器 /data；条目文件平铺其下，
 # 与 Joplin 同步根目录结构一致（<id>.md + .resource/）。配置见 dev/webdav.yml。
+# Data lives in the named volume jasper_webdav_data, mounted at /data; item files
+# sit flat under it, matching the Joplin sync root layout (<id>.md + .resource/).
+# Config is in dev/webdav.yml.
 services:
   webdav:
     image: hacdias/webdav:v5.12.0
     container_name: jasper-webdav-dev
-    command: ["-c", "/etc/webdav/config.yaml"] # 显式指定（自动发现在该镜像里不可靠）
+    # 显式指定配置（该镜像的自动发现不可靠） / point at config explicitly (auto-discovery is unreliable here)
+    command: ["-c", "/etc/webdav/config.yaml"]
     ports:
       - "8081:6065"
     volumes:

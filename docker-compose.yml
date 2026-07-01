@@ -1,17 +1,19 @@
 services:
   jasper:
-    # 本地构建（默认）。也可改用 GHCR 预构建镜像：注释掉 build，换成下面的 image。
-    build: .
-    image: jasper
-    # image: ghcr.io/<owner>/jasper:latest   # 用发布到 GHCR 的镜像，无需本地构建
+    # 从 GHCR 拉取最新镜像（amd64/arm64 多架构）
+    # Pull the latest image from GHCR (multi-arch: amd64/arm64)
+    image: ghcr.io/xvanturing/jasper:latest
     container_name: jasper
     ports:
       - "27583:27583"
     volumes:
       # 配置（数据源设置 / config.db）持久化
+      # Persist configuration (data-source settings / config.db)
       - jasper-config:/config
       # 若数据源选「本地文件夹」，把宿主机的 Joplin 同步目录挂进来，
       # 然后在设置里把路径填成容器内路径（如 /data）：
+      # If your data source is a "local folder", mount the host's Joplin sync
+      # directory here, then set that container path (e.g. /data) in settings:
       # - /宿主机/路径/JoplinData:/data
     restart: unless-stopped
 
