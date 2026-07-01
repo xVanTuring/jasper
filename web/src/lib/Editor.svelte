@@ -4,13 +4,18 @@
   import { t } from './i18n.svelte'
   import { resolvedTheme } from './theme.svelte'
   import Button from './Button.svelte'
+  import { toggleBlockLines, type BlockKind } from './editor/markdown'
+  import type { EditorHandle } from './editor/types'
 
   let {
     value,
     onChange,
+    onReady,
   }: {
     value: string
     onChange: (v: string) => void
+    // 就绪后回传编辑器句柄，供工具栏命令操作源码（父级持有）
+    onReady?: (h: EditorHandle) => void
   } = $props()
 
   let host: HTMLDivElement
@@ -29,6 +34,73 @@
       selection: { anchor: sel.from + text.length },
     })
     view.focus()
+  }
+
+  // ---------- 工具栏命令的编辑操作（EditorHandle 实现） ----------
+
+  // 对选区所在整行切换块级前缀（标题/引用/列表/待办），逻辑在纯函数 toggleBlockLines。
+  function applyBlock(kind: BlockKind) {
+    if (!view) return
+    const { state } = view
+    const range = state.selection.main
+    const startLine = state.doc.lineAt(range.from)
+    const endLine = state.doc.lineAt(range.to)
+    const src: string[] = []
+    for (let n = startLine.number; n <= endLine.number; n++) src.push(state.doc.line(n).text)
+    view.dispatch({ changes: { from: startLine.from, to: endLine.to, insert: toggleBlockLines(src, kind).join('\n') } })
+    view.focus()
+  }
+
+  // 任意前后缀包裹（无选区则插占位并选中占位，便于直接改写）
+  function wrapAround(before: string, after: string, placeholder = '') {
+    if (!view) return
+    const sel = view.state.selection.main
+    const inner = view.state.sliceDoc(sel.from, sel.to) || placeholder
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to, insert: before + inner + after },
+      selection: { anchor: sel.from + before.length, head: sel.from + before.length + inner.length },
+    })
+    view.focus()
+  }
+
+  // 行内标记（对称）：已被同标记包裹则去除（切换），否则包裹
+  function wrapInline(marker: string, placeholder = '') {
+    if (!view) return
+    const state = view.state
+    const { from, to } = state.selection.main
+    if (to > from) {
+      const b = state.sliceDoc(Math.max(0, from - marker.length), from)
+      const a = state.sliceDoc(to, Math.min(state.doc.length, to + marker.length))
+      if (b === marker && a === marker) {
+        view.dispatch({
+          changes: [
+            { from: from - marker.length, to: from, insert: '' },
+            { from: to, to: to + marker.length, insert: '' },
+          ],
+          selection: { anchor: from - marker.length, head: to - marker.length },
+        })
+        view.focus()
+        return
+      }
+    }
+    wrapAround(marker, marker, placeholder)
+  }
+
+  function makeHandle(): EditorHandle {
+    return {
+      mode: 'source',
+      focus: () => view?.focus(),
+      getValue: () => (view ? view.state.doc.toString() : value),
+      setValue: (md) => {
+        if (!view) return
+        view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: md } })
+        view.focus()
+      },
+      wrapInline,
+      wrapAround,
+      applyBlock,
+      insert: insertAtCursor,
+    }
   }
 
   // 给无名 Blob（如截图粘贴）造一个带扩展名的文件名，便于资源标题/扩展名识别。
@@ -101,6 +173,7 @@
       ],
     })
     view.focus()
+    onReady?.(makeHandle())
   })
 
   function filesFrom(dt: DataTransfer | null): File[] {

@@ -8,6 +8,8 @@
   import Button from './Button.svelte'
   import Editor from './Editor.svelte'
   import WysiwygEditor from './WysiwygEditor.svelte'
+  import EditorToolbar from './EditorToolbar.svelte'
+  import type { EditorHandle } from './editor/types'
 
   const ENGINE_KEY = 'jasper.editor'
   // 默认源码模式（无损、所见非所得关闭）；只有用户显式开过富文本才记为 'wysiwyg'。
@@ -39,6 +41,8 @@
   let editMode = $state(initialEdit)
   let title = $state(detail?.title ?? '')
   let body = $state(detail?.body ?? '')
+  // 源码编辑器句柄（就绪后由 Editor 回传），供工具栏命令操作当前源码
+  let sourceHandle = $state<EditorHandle | null>(null)
 
   // 编辑引擎：富文本(Crepe) / 源码(CodeMirror)，记忆在 localStorage。
   // HTML 笔记（markup_language=2）不走 markdown 富文本，强制源码。
@@ -130,6 +134,9 @@
   <article class="note-view" in:fade={{ duration: 160 }}>
     <div class="toolbar">
       <div class="left">
+        {#if editMode && !readOnly}
+          <EditorToolbar mode={engine} handle={sourceHandle} />
+        {/if}
         {#if editMode}
           <span class="save-state {saveState}">
             {saveState === 'saving' ? t('note.saving') : saveState === 'saved' ? t('note.saved') : saveState === 'error' ? t('note.saveFailed') : ''}
@@ -168,7 +175,7 @@
         {#if engine === 'wysiwyg'}
           <WysiwygEditor value={body} onChange={onBodyChange} />
         {:else}
-          <Editor value={body} onChange={onBodyChange} />
+          <Editor value={body} onChange={onBodyChange} onReady={(h) => (sourceHandle = h)} />
         {/if}
       </div>
     {:else}
@@ -186,8 +193,11 @@
           </span>
         {/if}
       </div>
-      <!-- 内容已由 DOMPurify 净化 -->
-      <div class="content" onclick={onContentClick}>{@html html}</div>
+      <!-- 滚动容器占满整栏宽 → 滚动条贴窗口右缘；内层 .content 才是阅读宽度 -->
+      <div class="content-scroll">
+        <!-- 内容已由 DOMPurify 净化 -->
+        <div class="content" onclick={onContentClick}>{@html html}</div>
+      </div>
     {/if}
   </article>
 {:else}
@@ -204,7 +214,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
+    gap: 8px;
+    /* 高度/下边框与左两栏 .pane-title(38px) 对齐，三栏顶栏齐平 */
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 8px 0 12px;
     border-bottom: 1px solid var(--border);
     flex: 0 0 auto;
   }
@@ -219,10 +233,19 @@
   .save-state.error {
     color: var(--danger);
   }
+  .left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
   .right {
     display: flex;
     align-items: center;
     gap: 6px;
+    flex: 0 0 auto;
   }
   .title-input {
     border: none;
@@ -284,10 +307,16 @@
   .task-meta.done .fill {
     background: var(--success);
   }
+  /* 全宽滚动容器：滚动条落在整栏（即窗口）右缘 */
+  .content-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  /* 阅读宽度盒：内容左对齐限宽，滚动条不受其 max-width 约束 */
   .content {
     padding: 20px 36px 80px;
     max-width: 820px;
-    overflow-y: auto;
   }
   .placeholder {
     display: flex;
