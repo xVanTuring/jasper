@@ -28,8 +28,10 @@
   onMount(async () => {
     try {
       // 懒加载 Crepe（含 ProseMirror/remark/组件层）+ 主题，单独成 chunk，不进首屏。
-      const [{ Crepe }] = await Promise.all([
+      // imageBlockSchema 来自 Crepe 内部同一份 @milkdown/kit，随 Crepe chunk 走，不额外加重首屏。
+      const [{ Crepe }, { imageBlockSchema }] = await Promise.all([
         import('@milkdown/crepe'),
+        import('@milkdown/kit/component/image-block'),
         import('@milkdown/crepe/theme/common/style.css'),
         import('@milkdown/crepe/theme/classic.css'),
       ])
@@ -60,6 +62,40 @@
           if (ready) onChange(markdown)
         })
       })
+      // 覆盖 Crepe 图片块(image-block)的 markdown 解析/写回：默认实现把 alt 当缩放比例
+      // （写回 ![1.00](:/id)，破坏说明文字）。这里恢复 CommonMark/Joplin 语义——
+      // 解析时 alt→caption（可见可编辑），写回时 caption→alt，且不写 title、不写比例。
+      // 代价：图片缩放比例不再落盘（会话内仍可缩放；Joplin 也无处存放）。
+      // 同名 image-block 后注册者胜出（见 @milkdown/utils $node：按 id 覆盖），故必须在 create() 前 use。
+      crepe.editor.use(
+        imageBlockSchema.extendSchema((prev) => (ctx) => {
+          const base = prev(ctx)
+          return {
+            ...base,
+            parseMarkdown: {
+              match: base.parseMarkdown.match,
+              runner: (state, node, type) => {
+                state.addNode(type, {
+                  src: (node.url as string) ?? '',
+                  caption: (node.alt as string) || (node.title as string) || '',
+                  ratio: 1,
+                })
+              },
+            },
+            toMarkdown: {
+              match: base.toMarkdown.match,
+              runner: (state, node) => {
+                state.openNode('paragraph')
+                state.addNode('image', undefined, undefined, {
+                  url: node.attrs.src,
+                  alt: String(node.attrs.caption ?? ''),
+                })
+                state.closeNode()
+              },
+            },
+          }
+        })
+      )
       await crepe.create()
       ready = true
     } catch (e) {

@@ -146,7 +146,7 @@ GET    /api/search?q=...      标题/正文全文搜索
 - **所见即所得编辑器**：`NoteView` 编辑态有两套引擎——富文本(`WysiwygEditor`=Milkdown/Crepe) 与源码(`Editor`=CodeMirror)，工具栏一键切换、`localStorage('jasper.editor')` 记忆、**默认源码**（富文本需手动开启）；**HTML 笔记(markup_language=2)强制源码**。Crepe 整包（含 ProseMirror/remark/Vue 组件层）在 `WysiwygEditor` 里 `import()` 懒加载，不进首屏。
   - **数据安全**：富文本会**整篇重排** markdown 写回；故 `WysiwygEditor` 有 `ready` 闸门——`create()` 完成前不回调 `onChange`，**仅打开/切到富文本不会触发自动保存**（已用 puppeteer 断言 0 写回）。源码模式是无损兜底。
   - **资源图片**：`:/id` 始终保留在 markdown 模型里——靠 ImageBlock 的 `proxyDomURL`（仅渲染时 `:/id`→`/api/resources/id`）与 `onUpload`（上传后返回 `:/id`）。`parseResourceId()` 在 `api.ts`。
-  - **已知保真损失**：Crepe 图片块用 alt 槽存缩放比例，编辑保存后 `![说明](:/id)` 的 alt 会被改成比例值（如 `![1.00]`）；`:/id` 与正文无损，仅图片说明文字会变。介意就切源码模式。
+  - **图片说明(alt)语义修复**：Crepe 图片块(image-block)默认把 alt 槽当缩放比例（写回 `![1.00](:/id)`，毁掉说明文字）。`WysiwygEditor` 在 `create()` 前用 `imageBlockSchema.extendSchema()` 覆盖其 `parseMarkdown`/`toMarkdown`：解析 alt→caption（可见可编辑），写回 caption→alt，不写 title/不写比例，**恢复 `![说明](:/id)` 原语义**。同名节点后注册者胜出（`@milkdown/utils` `$node` 按 id 覆盖），故必须在 `create()` 前 `crepe.editor.use()`。`imageBlockSchema` 从 `@milkdown/kit/component/image-block`（Crepe 内部同版 kit，7.21.2，随 Crepe chunk 懒加载，不进首屏）。**代价**：图片缩放比例不再落盘（会话内仍可缩放；Joplin 无处存放）。行内图片(非独占段)走 commonmark `image`，本就无损。
 - **依赖哲学：少造轮子但也别堆包**（用户偏好），渲染优先用成熟 markdown-it 插件。
 - markdown-it 插件存在 CJS/ESM 默认导出差异，`render.ts` 用 `P()` 助手统一（否则 `md.use()` 抛 `e.apply is not a function`，白屏）。
 - 代码高亮固定用 **github-dark** 主题 + 深色代码块背景（浅色模式也清晰）。
