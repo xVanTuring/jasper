@@ -157,4 +157,23 @@
     color: var(--accent);
     fill: var(--accent);
   }
+
+  /* 选区悬浮工具栏(bubble)：Crepe 默认把图标色设为 --crepe-color-outline
+     （→ 映射到 --border，极暗），暗背景下几乎不可见。改用 --text-dim 提升对比，
+     悬停变 --text，激活态仍走强调色。再补一圈实心边框，与内容区分层。 */
+  :global(.wys .milkdown .milkdown-toolbar) {
+    border: 1px solid var(--border);
+  }
+  :global(.wys .milkdown .milkdown-toolbar .toolbar-item svg) {
+    color: var(--text-dim);
+    fill: var(--text-dim);
+  }
+  :global(.wys .milkdown .milkdown-toolbar .toolbar-item:hover svg) {
+    color: var(--text);
+    fill: var(--text);
+  }
+  :global(.wys .milkdown .milkdown-toolbar .toolbar-item.active svg) {
+    color: var(--accent);
+    fill: var(--accent);
+  }
 </style>
