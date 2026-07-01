@@ -120,4 +120,41 @@
     outline: none;
     padding: 4px 0 48px;
   }
+
+  /* ---------- 深色/低对比主题下的可读性加强 ----------
+     Crepe 默认把表格边框、分隔线做成 outline 色的 20% 透明（transparent 80%），
+     复选框/列表序号又直接用较暗的 outline 色作字形——暗背景下几乎不可见。
+     这里把这些对比关键的元素拉回与只读渲染视图(.content)一致的实心 --border/
+     --text-dim/--accent，改善所有主题（尤其深色），并保持编辑态与阅读态观感统一。
+     选择器多带一个 .wys → 特异性高于 Crepe 主题默认，稳定覆盖。 */
+
+  /* 表格：实心边框 + 表头底色（原为 20% 透明，几乎看不见） */
+  :global(.wys .milkdown .milkdown-table-block th),
+  :global(.wys .milkdown .milkdown-table-block td) {
+    border-color: var(--border);
+  }
+  :global(.wys .milkdown .milkdown-table-block th) {
+    background: var(--bg-side);
+  }
+
+  /* 分隔线 hr：实心（原为 20% 透明） */
+  :global(.wys .milkdown .ProseMirror hr) {
+    background-color: var(--border);
+  }
+
+  /* 复选框/列表序号字形：outline 太暗，改用 text-dim 提升对比 */
+  :global(.wys .milkdown .milkdown-list-item-block li .label-wrapper) {
+    color: var(--text-dim);
+  }
+  :global(.wys .milkdown .milkdown-list-item-block li .label-wrapper svg) {
+    fill: var(--text-dim);
+  }
+  /* 已勾选的复选框用强调色，一眼可辨已完成 */
+  :global(.wys .milkdown .milkdown-list-item-block li .label-wrapper .checked),
+  :global(
+      .wys .milkdown .milkdown-list-item-block li .label-wrapper .checked svg
+    ) {
+    color: var(--accent);
+    fill: var(--accent);
+  }
 </style>
