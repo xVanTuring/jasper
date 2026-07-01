@@ -125,3 +125,41 @@ pub fn source_key(cfg: &SourceConfig) -> String {
         other => format!("{other}:"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{source_key, SourceConfig};
+
+    #[test]
+    fn source_key_local_trims_path() {
+        let cfg = SourceConfig {
+            source_type: "local".into(),
+            local_path: "  /data/notes  ".into(),
+            ..Default::default()
+        };
+        assert_eq!(source_key(&cfg), "local:/data/notes");
+    }
+
+    #[test]
+    fn source_key_webdav_excludes_password() {
+        let cfg = SourceConfig {
+            source_type: "webdav".into(),
+            webdav_url: " https://dav.example/ ".into(),
+            webdav_user: "joplin".into(),
+            webdav_pass: "secret".into(),
+            ..Default::default()
+        };
+        let key = source_key(&cfg);
+        assert_eq!(key, "webdav:https://dav.example/|joplin");
+        assert!(!key.contains("secret")); // 缓存 key 不含密码
+    }
+
+    #[test]
+    fn source_key_unknown_type() {
+        let cfg = SourceConfig {
+            source_type: "demo".into(),
+            ..Default::default()
+        };
+        assert_eq!(source_key(&cfg), "demo:");
+    }
+}

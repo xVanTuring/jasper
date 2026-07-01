@@ -21,12 +21,41 @@ cd web && pnpm install
 cd web && pnpm build      # produces web/dist, served by the backend at :27583
 cd web && pnpm dev        # or hot-reload dev server on :5173 (proxies /api)
 
-# Tests
-cd server && cargo test   # parser / serialize / webdav unit tests
+# Tests (see the Tests section below for the full suite)
+cd server && cargo test   # Rust unit tests
+cd web && pnpm test       # frontend unit tests (Vitest)
 ```
 
 Then open **http://127.0.0.1:27583/**. On first run the wizard lets you pick
 *existing library* / *new library* × *local* / *WebDAV*.
+
+## Tests
+
+Three layers, all run in CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)):
+
+```bash
+# 1) Rust unit tests — core (parser / serialize / library) + server (config / storage / cache / webdav)
+cd core && cargo test
+cd server && cargo test
+
+# 2) Frontend unit tests (Vitest + jsdom): render, i18n, api helpers,
+#    and the image-block alt round-trip (web/src/lib/milkdown/imageBlockAlt.test.ts)
+cd web && pnpm test
+cd web && pnpm check         # type-check (also covers *.test.ts)
+
+# 3) Full-stack e2e (Playwright): builds the UI + a real Rust backend against a
+#    generated Joplin fixture, then drives a browser end-to-end.
+cd web && pnpm build                 # UI must be built (served via JASPER_WEB_DIR)
+cd server && cargo build             # backend binary the e2e launcher runs
+cd web && pnpm e2e:install           # one-time: download the Chromium browser
+cd web && pnpm e2e
+```
+
+The e2e harness lives in `web/e2e/`: `make-fixture.mjs` writes a tiny Joplin
+library (a notebook, a note with an image, a to-do, a resource), `server.mjs`
+is the Playwright `webServer` launcher (fresh temp data + isolated
+`JASPER_CONFIG_DIR` each run), and the `*.spec.ts` files cover load/search,
+rendering, editing + write-back, and the WYSIWYG image-`alt` regression.
 
 ## Single binary
 
@@ -133,12 +162,40 @@ cd web && pnpm install
 cd web && pnpm build      # 产出 web/dist，由后端在 :27583 托管
 cd web && pnpm dev        # 或开发热更新(:5173，/api 代理到后端)
 
-# 测试
-cd server && cargo test   # parser / serialize / webdav 单元测试
+# 测试（完整套件见下方「测试」一节）
+cd server && cargo test   # Rust 单元测试
+cd web && pnpm test       # 前端单元测试（Vitest）
 ```
 
 然后打开 **http://127.0.0.1:27583/**。首次启动可在向导里选择 *现有库* / *新建库*
 × *本地* / *WebDAV*。
+
+## 测试
+
+三层，全部在 CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）里跑：
+
+```bash
+# 1) Rust 单元测试 —— core（parser / serialize / library）+ server（config / storage / cache / webdav）
+cd core && cargo test
+cd server && cargo test
+
+# 2) 前端单元测试（Vitest + jsdom）：渲染、i18n、api 助手，
+#    以及图片块 alt 往返（web/src/lib/milkdown/imageBlockAlt.test.ts）
+cd web && pnpm test
+cd web && pnpm check         # 类型检查（也覆盖 *.test.ts）
+
+# 3) 全栈 e2e（Playwright）：构建前端 + 真 Rust 后端（指向生成的 Joplin 测试库），
+#    再用浏览器端到端驱动。
+cd web && pnpm build                 # 需先构建前端（经 JASPER_WEB_DIR 托管）
+cd server && cargo build             # e2e 启动器要运行的后端二进制
+cd web && pnpm e2e:install           # 一次性：下载 Chromium 浏览器
+cd web && pnpm e2e
+```
+
+e2e 相关代码在 `web/e2e/`：`make-fixture.mjs` 写出一个最小 Joplin 库（一个笔记本、
+一篇带图笔记、一条待办、一个资源）；`server.mjs` 是 Playwright 的 `webServer`
+启动器（每次重建临时数据 + 隔离的 `JASPER_CONFIG_DIR`）；各 `*.spec.ts` 覆盖
+加载/搜索、渲染、编辑写回，以及富文本图片 `alt` 回归。
 
 ## 单文件打包
 

@@ -53,3 +53,23 @@ pub fn is_item_filename(name: &str) -> bool {
         && name.ends_with(".md")
         && name[..32].chars().all(|c| c.is_ascii_hexdigit())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::is_item_filename;
+
+    #[test]
+    fn accepts_only_32hex_md() {
+        assert!(is_item_filename("0123456789abcdef0123456789abcdef.md"));
+        assert!(is_item_filename("0123456789ABCDEF0123456789ABCDEF.md")); // 大写 hex 也算
+    }
+
+    #[test]
+    fn rejects_wrong_shape() {
+        assert!(!is_item_filename("info.json"));
+        assert!(!is_item_filename("0123456789abcdef.md")); // 太短
+        assert!(!is_item_filename("0123456789abcdef0123456789abcdef.txt")); // 扩展名不对
+        assert!(!is_item_filename("zz23456789abcdef0123456789abcdef.md")); // 非 hex
+        assert!(!is_item_filename("0123456789abcdef0123456789abcdef")); // 无 .md
+    }
+}

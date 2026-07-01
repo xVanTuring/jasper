@@ -153,10 +153,17 @@ GET    /api/search?q=...      标题/正文全文搜索
 - 资源链接 `:/id`（含笔记内嵌的原始 `<img src=":/id">`）在**最终 HTML 上用 DOMParser 统一改写**为 `/api/resources/id`，覆盖 markdown 与 HTML 笔记。
 - CodeMirror 经 `import()` 懒加载，单独成 chunk，不进首屏包。
 
+## 测试
+
+三层，均在 CI（`.github/workflows/ci.yml`：`rust-test` / `web-unit` / `e2e`）跑：
+- **Rust 单元**：`cd core && cargo test`（parser/serialize/library）+ `cd server && cargo test`（config/storage/cache/webdav）。测试写在各 `.rs` 的 `#[cfg(test)] mod tests`。`parser::parses_all_real_data` 读 `JopinData/`，缺失时**自动跳过**（CI 安全）。
+- **前端单元**（`cd web && pnpm test`，Vitest + jsdom）：`src/**/*.test.ts` 与源码同目录。覆盖 `api`(parseResourceId/taskProgress)、`render`(markdown/`:/id`改写/HTML 净化)、`i18n`(t 插值/切换/zh-en 键与占位符对齐)、`milkdown/imageBlockAlt`(图片 alt 往返：纯 runner + 经真实 @milkdown/kit transformer 的 mdast 往返)。`pnpm check` 也会类型检查测试文件。
+- **全栈 e2e**（`cd web && pnpm e2e`，Playwright，真起 Rust 后端）：代码在 `web/e2e/`。`make-fixture.mjs` 生成最小 Joplin 库（字段对齐 `serialize.rs`）；`server.mjs` 是 `webServer` 启动器——每次重建临时数据源 + 隔离 `JASPER_CONFIG_DIR`（**否则会读到开发机指向 JopinData 的已存配置**），起 `server/target/debug/jasper` 且经 `JASPER_WEB_DIR` 托管 `web/dist`；`playwright.config.ts` 里把 `127.0.0.1` 加进 `NO_PROXY`（有代理环境时健康检查才连得上）、`webServer.env` 必须并入 `process.env`。specs 覆盖 加载/搜索/渲染/编辑写回，以及**富文本图片 alt 回归**（改前 `![1.00]`，改后 `![说明]`；断言保存请求体 + 落盘文件）。前置：先 `pnpm build` + `cargo build` + `pnpm e2e:install`（下载 Chromium）。
+
 ## 测试数据
 
 `JopinData/`（用户真实数据，gitignore）：约 340 笔记 / 88 笔记本 / 135 资源 / 3 标签 / 4 note_tag，未加密。
-parser 单测对其做全量解析校验（计数断言）。**写入类测试务必用临时空目录，不要在 JopinData 上做破坏性操作。**
+parser 单测对其做全量解析校验（计数断言）。**写入类测试务必用临时空目录，不要在 JopinData 上做破坏性操作**（e2e 用生成的临时库，绝不碰 JopinData）。
 
 ## 单文件打包（rust-embed 内嵌前端）
 

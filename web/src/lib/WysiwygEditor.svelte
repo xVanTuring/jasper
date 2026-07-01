@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { api, parseResourceId } from './api'
+  import { withImageAltCaption } from './milkdown/imageBlockAlt'
   import { t } from './i18n.svelte'
 
   let {
@@ -62,40 +63,10 @@
           if (ready) onChange(markdown)
         })
       })
-      // 覆盖 Crepe 图片块(image-block)的 markdown 解析/写回：默认实现把 alt 当缩放比例
-      // （写回 ![1.00](:/id)，破坏说明文字）。这里恢复 CommonMark/Joplin 语义——
-      // 解析时 alt→caption（可见可编辑），写回时 caption→alt，且不写 title、不写比例。
-      // 代价：图片缩放比例不再落盘（会话内仍可缩放；Joplin 也无处存放）。
-      // 同名 image-block 后注册者胜出（见 @milkdown/utils $node：按 id 覆盖），故必须在 create() 前 use。
-      crepe.editor.use(
-        imageBlockSchema.extendSchema((prev) => (ctx) => {
-          const base = prev(ctx)
-          return {
-            ...base,
-            parseMarkdown: {
-              match: base.parseMarkdown.match,
-              runner: (state, node, type) => {
-                state.addNode(type, {
-                  src: (node.url as string) ?? '',
-                  caption: (node.alt as string) || (node.title as string) || '',
-                  ratio: 1,
-                })
-              },
-            },
-            toMarkdown: {
-              match: base.toMarkdown.match,
-              runner: (state, node) => {
-                state.openNode('paragraph')
-                state.addNode('image', undefined, undefined, {
-                  url: node.attrs.src,
-                  alt: String(node.attrs.caption ?? ''),
-                })
-                state.closeNode()
-              },
-            },
-          }
-        })
-      )
+      // 覆盖 Crepe 图片块(image-block)的 markdown 解析/写回，恢复 alt(图片说明)语义
+      // （默认实现把 alt 当缩放比例，写回 ![1.00](:/id) 毁掉说明）。见 milkdown/imageBlockAlt.ts。
+      // 同名 image-block 后注册者胜出（@milkdown/utils $node 按 id 覆盖），故必须在 create() 前 use。
+      crepe.editor.use(withImageAltCaption(imageBlockSchema))
       await crepe.create()
       ready = true
     } catch (e) {

@@ -338,4 +338,103 @@ mod tests {
         let refs = scan_resource_refs(":/short :/0123456789abcdef0123456789abcdefEXTRA :/zzzz");
         assert!(refs.is_empty());
     }
+
+    // ---- 下面用 serialize 造 .md 喂 from_contents，做 Library 级集成单测 ----
+    use crate::serialize::{new_folder_md, new_note_md, new_resource_md};
+
+    fn hid(n: u8) -> String {
+        // 造一个确定的 32hex id：把一个字节重复 16 次的十六进制
+        format!("{:02x}", n).repeat(16)
+    }
+
+    #[test]
+    fn builds_tree_counts_and_ordering() {
+        let (root_a, root_b, child) = (hid(0xa0), hid(0xb0), hid(0xc0));
+        let contents = vec![
+            new_folder_md(&root_a, "", "Alpha", 1000),
+            new_folder_md(&root_b, "", "Beta", 2000),
+            new_folder_md(&child, &root_a, "Child", 1500),
+            new_note_md(&hid(1), &root_a, "n1", "body one", false, 100),
+            new_note_md(&hid(2), &root_a, "n2", "body two", false, 200),
+            new_note_md(&hid(3), &child, "n3", "nested", false, 300),
+        ];
+        let (lib, stats) = Library::from_contents(contents);
+        assert_eq!(stats.folders, 3);
+        assert_eq!(stats.notes, 3);
+        assert_eq!(stats.errors, 0);
+
+        // 直属笔记数：root_a 有 2，child 有 1，root_b 有 0
+        assert_eq!(lib.note_count(&root_a), 2);
+        assert_eq!(lib.note_count(&child), 1);
+        assert_eq!(lib.note_count(&root_b), 0);
+
+        // 根下的子笔记本按标题排序：Alpha < Beta
+        let roots = lib.child_folder_ids_sorted("");
+        assert_eq!(roots, vec![root_a.clone(), root_b.clone()]);
+
+        // 笔记按更新时间倒序：n2(200) 在 n1(100) 前
+        let notes = lib.notes_in_folder_sorted(&root_a);
+        assert_eq!(
+            notes.iter().map(|n| n.title.as_str()).collect::<Vec<_>>(),
+            vec!["n2", "n1"]
+        );
+    }
+
+    #[test]
+    fn search_matches_title_and_body_case_insensitively() {
+        let contents = vec![
+            new_note_md(&hid(1), "", "Rust Notes", "hello world", false, 100),
+            new_note_md(&hid(2), "", "Cooking", "about RUST macros", false, 200),
+            new_note_md(&hid(3), "", "Unrelated", "nothing here", false, 300),
+        ];
+        let (lib, _) = Library::from_contents(contents);
+
+        // 命中标题(n1) + 正文(n2)，不区分大小写；按更新时间倒序 → n2 在前
+        let hits = lib.search("rust");
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].title, "Cooking");
+        assert_eq!(hits[1].title, "Rust Notes");
+
+        assert!(lib.search("   ").is_empty()); // 空查询
+        assert!(lib.search("zzz-no-match").is_empty());
+    }
+
+    #[test]
+    fn anti_cycle_self_or_descendant() {
+        // 链：A -> B -> C（C 在 A 子树下），D 是独立根
+        let (a, b, c, d) = (hid(0xa0), hid(0xb0), hid(0xc0), hid(0xd0));
+        let contents = vec![
+            new_folder_md(&a, "", "A", 1),
+            new_folder_md(&b, &a, "B", 2),
+            new_folder_md(&c, &b, "C", 3),
+            new_folder_md(&d, "", "D", 4),
+        ];
+        let (lib, _) = Library::from_contents(contents);
+
+        assert!(lib.is_self_or_descendant(&a, &a)); // 自身
+        assert!(lib.is_self_or_descendant(&a, &c)); // 后代（禁止把 A 移到 C 下）
+        assert!(lib.is_self_or_descendant(&b, &c)); // 直接子
+        assert!(!lib.is_self_or_descendant(&c, &a)); // 祖先不是后代 → 允许
+        assert!(!lib.is_self_or_descendant(&a, &d)); // 无关分支
+    }
+
+    #[test]
+    fn resource_usage_counts_refs_and_orphans() {
+        let (r_used, r_orphan) = (hid(0xe0), hid(0xf0));
+        let contents = vec![
+            new_note_md(&hid(1), "", "n1", &format!("![x](:/{r_used})"), false, 1),
+            new_note_md(&hid(2), "", "n2", &format!("again :/{r_used}"), false, 2),
+            new_note_md(&hid(3), "", "n3", "no images here", false, 3),
+            new_resource_md(&r_used, "used.png", "image/png", "png", 10, 1),
+            new_resource_md(&r_orphan, "orphan.png", "image/png", "png", 10, 1),
+        ];
+        let (lib, stats) = Library::from_contents(contents);
+        assert_eq!(stats.resources, 2);
+
+        let usage = lib.resource_usage();
+        assert_eq!(usage.get(&r_used).copied(), Some(2)); // 被 2 篇引用
+        assert_eq!(usage.get(&r_orphan).copied(), None); // 孤儿：不出现
+        assert!(lib.resource(&r_used).is_some());
+        assert_eq!(lib.resource(&r_used).unwrap().mime, "image/png");
+    }
 }
