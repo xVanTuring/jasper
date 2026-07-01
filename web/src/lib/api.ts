@@ -153,6 +153,8 @@ const httpApi = {
   folders: () => getJson<FolderNode[]>('/api/folders'),
   createFolder: (data: { parent_id: string; title: string }) =>
     sendJson<FolderRef>('/api/folders', 'POST', data),
+  renameFolder: (id: string, title: string) =>
+    sendJson<FolderRef>(`/api/folders/${id}`, 'PUT', { title }),
   moveFolder: (id: string, parentId: string) =>
     sendJson<FolderRef>(`/api/folders/${id}/move`, 'PUT', { parent_id: parentId }),
   notes: (folderId: string) =>

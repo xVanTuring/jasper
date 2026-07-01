@@ -7,6 +7,7 @@
 //! 读：
 //!   GET    /api/folders          笔记本树
 //!   POST   /api/folders          新建笔记本 { parent_id?, title }
+//!   PUT    /api/folders/{id}     重命名笔记本 { title }
 //!   PUT    /api/folders/{id}/move 移动笔记本（改 parent_id；防环）
 //!   GET    /api/notes?folder=ID  笔记列表
 //!   GET    /api/notes/{id}       笔记详情
@@ -59,6 +60,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/status", get(status))
         .route("/api/config", get(get_config).put(apply_config))
         .route("/api/folders", get(folders).post(create_folder))
+        .route("/api/folders/{id}", put(rename_folder))
         .route("/api/folders/{id}/move", put(move_folder))
         .route("/api/notes", get(notes_list).post(create_note))
         .route("/api/notes/{id}", get(note_detail).put(update_note).delete(delete_note))
@@ -205,6 +207,11 @@ struct CreateFolderReq {
 #[derive(Deserialize)]
 struct MoveFolderReq {
     parent_id: String, // 空 = 移到根
+}
+
+#[derive(Deserialize)]
+struct RenameFolderReq {
+    title: String,
 }
 
 #[derive(Serialize)]
@@ -694,6 +701,39 @@ async fn create_folder(
     Ok(Json(FolderRef { id, title, parent_id: parent }))
 }
 
+/// PUT /api/folders/{id} —— 重命名笔记本（只改标题）。笔记本原始 .md 未缓存，故从存储现取。
+async fn rename_folder(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<RenameFolderReq>,
+) -> Result<Json<FolderRef>, StatusCode> {
+    let storage = storage_of(&state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err(StatusCode::BAD_REQUEST); // 名称由前端保证非空
+    }
+    {
+        let lib = state.library.read().unwrap();
+        if !lib.folders.contains_key(&id) {
+            return Err(StatusCode::NOT_FOUND);
+        }
+    }
+    let name = format!("{id}.md");
+    let st = storage.clone();
+    let name2 = name.clone();
+    let original = tokio::task::spawn_blocking(move || st.get_item(&name2))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let content = serialize::rename_folder_md(&original, &title, serialize::now_ms())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    write_item(&state, name, content.clone()).await?;
+    let mut lib = state.library.write().unwrap();
+    lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let f = lib.folders.get(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(FolderRef { id: id.clone(), title: f.title.clone(), parent_id: f.parent_id.clone() }))
+}
+
 /// PUT /api/folders/{id}/move —— 移动笔记本到新父级。parent_id 空=移到根。
 /// 防环：不能移进自身或自身的后代。笔记本原始 .md 未缓存，故从存储现取。
 async fn move_folder(
@@ -787,6 +827,7 @@ mod tests {
         assert_eq!(status_of(state_with_read_only(true), "DELETE", "/api/notes/abc", "").await, StatusCode::FORBIDDEN);
         assert_eq!(status_of(state_with_read_only(true), "PUT", "/api/notes/abc", "{}").await, StatusCode::FORBIDDEN);
         assert_eq!(status_of(state_with_read_only(true), "POST", "/api/folders", "{}").await, StatusCode::FORBIDDEN);
+        assert_eq!(status_of(state_with_read_only(true), "PUT", "/api/folders/abc", "{}").await, StatusCode::FORBIDDEN);
         // 读方法放行（空库 → 200）
         assert_eq!(status_of(state_with_read_only(true), "GET", "/api/folders", "").await, StatusCode::OK);
         // /api/config 豁免（PUT 不应被守卫拦成 403）

@@ -39,6 +39,7 @@ const zh = {
 	'note.newTodoTitle': '新待办',
 	'notebook.namePrompt': '新笔记本名称：',
 	'notebook.defaultName': '新笔记本',
+	'notebook.renamePrompt': '笔记本新名称：',
 
 	// 演示横幅（main 段含 <b> 标记，用 {@html} 渲染）
 	'demo.banner':
@@ -171,6 +172,7 @@ const en: typeof zh = {
 	'note.newTodoTitle': 'New to-do',
 	'notebook.namePrompt': 'New notebook name:',
 	'notebook.defaultName': 'New notebook',
+	'notebook.renamePrompt': 'New notebook name:',
 
 	'demo.banner':
 		'<b>Demo preview</b> · Runs entirely in your browser via Rust&nbsp;→&nbsp;WASM, <b>no backend</b>. Browse notebooks/notes, Markdown rendering (code · tables · math · task lists), and full-text search.',

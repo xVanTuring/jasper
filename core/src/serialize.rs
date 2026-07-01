@@ -211,6 +211,41 @@ pub fn move_folder_md(original: &str, new_parent_id: &str, now: i64) -> Result<S
     Ok(format!("{head}\n\n{}", new_meta.join("\n")))
 }
 
+/// 重命名笔记本：只改标题并刷新更新时间，parent_id 等元数据逐字保留。
+/// 笔记本无正文段（仅 `标题\n\n元数据`），故整段标题以新标题替换、仅重写元数据块。
+pub fn rename_folder_md(original: &str, new_title: &str, now: i64) -> Result<String> {
+    let lines: Vec<&str> = original.split('\n').collect();
+    let mut sep = None;
+    let mut i = lines.len();
+    while i > 0 {
+        i -= 1;
+        let t = lines[i].trim();
+        if t.is_empty() {
+            sep = Some(i);
+            break;
+        }
+        if !t.contains(':') {
+            break;
+        }
+    }
+    let sep = sep.ok_or_else(|| anyhow!("无法定位元数据块"))?;
+    let iso = format_iso(now);
+    let new_meta: Vec<String> = lines[sep + 1..]
+        .iter()
+        .map(|l| {
+            let key = l.trim_start();
+            if key.starts_with("updated_time:") {
+                format!("updated_time: {iso}")
+            } else if key.starts_with("user_updated_time:") {
+                format!("user_updated_time: {iso}")
+            } else {
+                (*l).to_string()
+            }
+        })
+        .collect();
+    Ok(format!("{new_title}\n\n{}", new_meta.join("\n")))
+}
+
 /// 生成一个新资源（type_=4）的元数据 `.md` 内容。
 /// 字段集/顺序/默认值对齐真实 Joplin 资源（含 OCR 字段：ocr_driver_id 默认 1、ocr_status 0）。
 /// 资源条目无正文段，仅 `标题\n\n元数据`。
@@ -367,6 +402,16 @@ mod tests {
         assert_eq!(f.parent_id, "newnewnewnewnewnewnewnewnewnew12");
         assert_eq!(f.title, "本子");
         assert_eq!(f.updated_time, 1_700_000_999_000);
+    }
+
+    #[test]
+    fn rename_folder_changes_title_keeps_parent() {
+        let orig = new_folder_md("abcabcabcabcabcabcabcabcabcabc12", "parentparentparentparentparent12", "旧名字", 1_700_000_000_000);
+        let out = rename_folder_md(&orig, "新名字", 1_700_000_999_000).unwrap();
+        let f = parser::to_folder(&parser::parse_item(&out).unwrap()).unwrap();
+        assert_eq!(f.title, "新名字");
+        assert_eq!(f.parent_id, "parentparentparentparentparent12"); // 父级逐字保留
+        assert_eq!(f.updated_time, 1_700_000_999_000); // 刷新更新时间
     }
 
     #[test]

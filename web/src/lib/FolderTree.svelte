@@ -13,6 +13,7 @@
     onSelect,
     onMoveNote,
     onMoveFolder,
+    onRenameFolder,
     depth = 0,
   }: {
     folders: FolderNode[]
@@ -20,6 +21,7 @@
     onSelect: (id: string) => void
     onMoveNote?: (noteId: string, folderId: string) => void
     onMoveFolder?: (folderId: string, parentId: string) => void
+    onRenameFolder?: (folderId: string, currentTitle: string) => void
     depth?: number
   } = $props()
 
@@ -129,11 +131,25 @@
           <span class="name">{f.title || t('common.unnamed')}</span>
           {#if f.note_count > 0}<span class="count">{f.note_count}</span>{/if}
         </button>
+
+        {#if onRenameFolder}
+          <button
+            class="rename"
+            title={t('common.rename')}
+            aria-label={t('common.rename')}
+            onclick={(e) => {
+              e.stopPropagation()
+              onRenameFolder!(f.id, f.title)
+            }}
+          >
+            <Icon name="edit" size={13} />
+          </button>
+        {/if}
       </div>
 
       {#if f.children.length && expanded[f.id]}
         <div class="subtree" transition:slide={{ duration: 180, easing: cubicOut }}>
-          <Self folders={f.children} {selectedId} {onSelect} {onMoveNote} {onMoveFolder} depth={depth + 1} />
+          <Self folders={f.children} {selectedId} {onSelect} {onMoveNote} {onMoveFolder} {onRenameFolder} depth={depth + 1} />
         </div>
       {/if}
     </li>
@@ -253,5 +269,34 @@
   .row.active .count {
     background: color-mix(in srgb, var(--accent) 20%, transparent);
     color: var(--accent);
+  }
+  /* 重命名按钮：常驻占位（不引发悬停时布局跳动），默认隐藏且不可点，
+     行悬停或键盘聚焦时显现。 */
+  .rename {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    margin-right: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    border-radius: 5px;
+    padding: 0;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+  }
+  .row:hover .rename,
+  .rename:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .rename:hover {
+    background: var(--hover);
+    color: var(--text);
   }
 </style>

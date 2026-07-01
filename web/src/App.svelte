@@ -218,6 +218,19 @@
     }
   }
 
+  // 重命名笔记本：名称走浏览器 prompt（预填当前名）。改完刷新树；若正是当前所选，同步列表标题。
+  async function renameFolder(folderId: string, currentTitle: string) {
+    const name = (prompt(t('notebook.renamePrompt'), currentTitle) ?? '').trim()
+    if (!name || name === currentTitle) return
+    try {
+      await api.renameFolder(folderId, name)
+      folders = await api.folders()
+      if (!searchMode && selectedFolderId === folderId) listTitle = name
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
   // 新建笔记本（顶层）：名称走浏览器 prompt（带本地化默认名），建好后选中
   async function handleNewFolder() {
     const name = (prompt(t('notebook.namePrompt'), t('notebook.defaultName')) ?? '').trim()
@@ -371,6 +384,7 @@
         onSelect={(id) => selectFolder(id)}
         onMoveNote={readOnly ? undefined : moveNote}
         onMoveFolder={readOnly ? undefined : moveFolder}
+        onRenameFolder={readOnly ? undefined : renameFolder}
       />
     </aside>
 
