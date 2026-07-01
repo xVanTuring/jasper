@@ -10,9 +10,11 @@
   let {
     onClose,
     onChanged,
+    readOnly = false,
   }: {
     onClose: () => void
     onChanged?: () => void // 删除/重命名后通知父级刷新（被引用资源变动可能影响当前笔记显示）
+    readOnly?: boolean // 只读模式：仅浏览，隐藏清理/重命名/删除
   } = $props()
 
   let items = $state<ResourceInfo[]>([])
@@ -138,13 +140,15 @@
         {t('res.count', { n: items.length })} · {fmtSize(totalSize)}
         {#if orphanCount > 0}· <span class="orphan-stat">{t('res.orphans', { n: orphanCount })}</span>{/if}
       </span>
-      <Button
-        variant="default"
-        icon="clean"
-        label={t('res.cleanup', { n: orphanCount })}
-        onclick={cleanupOrphans}
-        disabled={working || orphanCount === 0}
-      />
+      {#if !readOnly}
+        <Button
+          variant="default"
+          icon="clean"
+          label={t('res.cleanup', { n: orphanCount })}
+          onclick={cleanupOrphans}
+          disabled={working || orphanCount === 0}
+        />
+      {/if}
     </div>
 
     {#if error}<div class="error"><Icon name="alert" size={14} /> {error}</div>{/if}
@@ -199,15 +203,17 @@
                 {/if}
               </div>
             </div>
-            <div class="actions">
-              {#if editingId === r.id}
-                <Button variant="default" label={t('common.save')} onclick={() => saveRename(r)} disabled={working} />
-                <Button variant="default" label={t('common.cancel')} onclick={cancelRename} />
-              {:else}
-                <Button variant="default" iconOnly icon="edit" label={t('common.rename')} onclick={() => startRename(r)} disabled={working} />
-                <Button variant="danger" iconOnly icon="trash" label={t('common.delete')} onclick={() => removeOne(r)} disabled={working} />
-              {/if}
-            </div>
+            {#if !readOnly}
+              <div class="actions">
+                {#if editingId === r.id}
+                  <Button variant="default" label={t('common.save')} onclick={() => saveRename(r)} disabled={working} />
+                  <Button variant="default" label={t('common.cancel')} onclick={cancelRename} />
+                {:else}
+                  <Button variant="default" iconOnly icon="edit" label={t('common.rename')} onclick={() => startRename(r)} disabled={working} />
+                  <Button variant="danger" iconOnly icon="trash" label={t('common.delete')} onclick={() => removeOne(r)} disabled={working} />
+                {/if}
+              </div>
+            {/if}
           </li>
         {/each}
       </ul>

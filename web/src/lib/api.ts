@@ -48,6 +48,7 @@ export interface SourceConfig {
   webdav_url: string
   webdav_user: string
   webdav_pass: string
+  read_only: boolean // 只读模式：拒绝一切写操作
 }
 
 export interface StatusResp {
@@ -55,6 +56,7 @@ export interface StatusResp {
   source_type: string
   notes: number
   folders: number
+  read_only: boolean // 服务端只读模式是否开启
 }
 
 export interface ConfigResult {
@@ -200,6 +202,7 @@ const demoApi = {
     source_type: 'demo',
     notes: 0,
     folders: 0,
+    read_only: true, // demo 天然只读
   }),
   folders: async (): Promise<FolderNode[]> => JSON.parse((await wasmDemo()).folders()),
   notes: async (folderId: string): Promise<NoteSummary[]> =>

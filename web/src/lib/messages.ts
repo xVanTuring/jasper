@@ -16,6 +16,8 @@ const zh = {
 	'common.unnamed': '(未命名)',
 	'common.langTitle': '切换语言 / Switch language',
 	'common.themeTitle': '主题：{mode}（点击切换）',
+	'common.readOnly': '只读',
+	'common.readOnlyTitle': '只读模式：已禁用一切写操作',
 	'theme.auto': '跟随系统',
 	'theme.light': '浅色',
 	'theme.dark': '深色',
@@ -65,6 +67,8 @@ const zh = {
 	'settings.connecting': '连接中…',
 	'settings.createConnect': '创建并连接',
 	'settings.connect': '连接',
+	'settings.readOnly': '只读模式',
+	'settings.readOnlyDesc': '开启后禁止一切修改（新建/编辑/删除/移动/上传），后端强制拦截，防止意外改动笔记仓库。',
 
 	// 笔记视图
 	'note.saving': '保存中…',
@@ -145,6 +149,8 @@ const en: typeof zh = {
 	'common.unnamed': '(Unnamed)',
 	'common.langTitle': '切换语言 / Switch language',
 	'common.themeTitle': 'Theme: {mode}',
+	'common.readOnly': 'Read-only',
+	'common.readOnlyTitle': 'Read-only mode: all write operations are disabled',
 	'theme.auto': 'Auto',
 	'theme.light': 'Light',
 	'theme.dark': 'Dark',
@@ -193,6 +199,8 @@ const en: typeof zh = {
 	'settings.connecting': 'Connecting…',
 	'settings.createConnect': 'Create & connect',
 	'settings.connect': 'Connect',
+	'settings.readOnly': 'Read-only mode',
+	'settings.readOnlyDesc': 'When on, all changes (create/edit/delete/move/upload) are disabled and enforced by the backend — preventing any accidental writes to your note library.',
 
 	'note.saving': 'Saving…',
 	'note.saved': 'Saved',

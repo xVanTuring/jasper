@@ -34,6 +34,9 @@
   let showSettings = $state(false)
   let showResources = $state(false)
   let showDemoBanner = $state(true)
+  // 服务端只读模式（/api/status 返回）。与编译期 demo 只读合并成统一的写入闸门。
+  let serverReadOnly = $state(false)
+  const readOnly = $derived(IS_DEMO || serverReadOnly)
 
   // 资源被删除/重命名后，刷新当前笔记详情（被引用资源变动可能影响渲染）
   async function onResourcesChanged() {
@@ -70,6 +73,7 @@
     try {
       const s = await api.status()
       configured = s.configured
+      serverReadOnly = s.read_only
       if (configured) await loadFolders()
     } catch (e) {
       error = `${e}`
@@ -118,6 +122,12 @@
     showSettings = false
     query = ''
     searchMode = false
+    // 只读开关可能在设置里被切换 → 重新拉状态刷新写入闸门
+    try {
+      serverReadOnly = (await api.status()).read_only
+    } catch {
+      /* 忽略 */
+    }
     await loadFolders()
   }
 
@@ -295,6 +305,9 @@
 <div class="app">
   <header class="topbar">
     <div class="brand">Jasper</div>
+    {#if readOnly}
+      <span class="ro-badge" title={t('common.readOnlyTitle')}>{t('common.readOnly')}</span>
+    {/if}
     <input
       class="search"
       type="search"
@@ -335,11 +348,11 @@
     <aside class="sidebar">
       <div class="pane-title">
         <span>{t('pane.notebooks')}</span>
-        {#if !IS_DEMO}
+        {#if !readOnly}
           <Button variant="ghost" iconOnly icon="folder-plus" label={t('pane.newNotebook')} onclick={handleNewFolder} />
         {/if}
       </div>
-      {#if !IS_DEMO && draggingFolder()}
+      {#if !readOnly && draggingFolder()}
         <div
           class="root-drop"
           class:over={rootDropOver}
@@ -356,22 +369,22 @@
         {folders}
         selectedId={searchMode ? null : selectedFolderId}
         onSelect={(id) => selectFolder(id)}
-        onMoveNote={IS_DEMO ? undefined : moveNote}
-        onMoveFolder={IS_DEMO ? undefined : moveFolder}
+        onMoveNote={readOnly ? undefined : moveNote}
+        onMoveFolder={readOnly ? undefined : moveFolder}
       />
     </aside>
 
     <section class="notelist">
       <div class="pane-title">
         <span>{listTitle}</span>
-        {#if !IS_DEMO}
+        {#if !readOnly}
           <span class="title-actions">
             <Button variant="ghost" iconOnly icon="check-square" label={t('pane.newTodo')} onclick={handleNewTodo} />
             <Button variant="ghost" iconOnly icon="plus" label={t('pane.newNote')} onclick={handleNew} />
           </span>
         {/if}
       </div>
-      <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} canDrag={!IS_DEMO} />
+      <NoteList {notes} selectedId={selectedNoteId} onSelect={selectNote} canDrag={!readOnly} />
     </section>
 
     <main class="reader">
@@ -382,7 +395,7 @@
           onChanged={refreshList}
           onDeleted={onNoteDeleted}
           initialEdit={detail != null && detail.id === editOnOpenId}
-          readOnly={IS_DEMO}
+          {readOnly}
         />
       {/key}
     </main>
@@ -396,7 +409,7 @@
 {/if}
 
 {#if showResources}
-  <ResourcePanel onClose={() => (showResources = false)} onChanged={onResourcesChanged} />
+  <ResourcePanel {readOnly} onClose={() => (showResources = false)} onChanged={onResourcesChanged} />
 {/if}
 
 <style>
@@ -419,6 +432,21 @@
     font-weight: 600;
     font-size: 14px;
     color: var(--accent);
+  }
+  .ro-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-side);
+    color: var(--text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    flex: 0 0 auto;
+    cursor: default;
   }
   .search {
     flex: 1;

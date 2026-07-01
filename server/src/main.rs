@@ -12,6 +12,7 @@
 //!   JASPER_HOST          监听地址（默认 127.0.0.1；局域网/容器设 0.0.0.0）
 //!   JASPER_PORT          端口（默认 27583）
 //!   JASPER_CONFIG_DIR    配置库目录（默认平台配置目录；容器里挂卷）
+//!   JASPER_READ_ONLY     只读模式引导（truthy=1/true/yes/on；仅当尚无保存配置时生效）
 //!   JASPER_WEB_DIR       前端静态目录覆盖（设了就从该磁盘目录托管，可热替换前端）；
 //!                             不设时：embed 构建用内嵌资源，否则用源码旁 ../web/dist
 
@@ -32,27 +33,38 @@ use api::AppState;
 use config::{ConfigStore, SourceConfig};
 use library::Library;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, RwLock};
 use storage::StorageBackend;
 use tower_http::services::{ServeDir, ServeFile};
+
+// 环境变量真值判断（1/true/yes/on，大小写不敏感）。
+fn env_truthy(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+}
 
 // 首次引导：把命令行/环境变量里的数据源转成配置（仅当配置库里还没有时使用）。
 fn bootstrap_config() -> Option<SourceConfig> {
     let src = std::env::args()
         .nth(1)
         .or_else(|| std::env::var("JASPER_SOURCE").ok())?;
+    let read_only = env_truthy("JASPER_READ_ONLY");
     if src.starts_with("http://") || src.starts_with("https://") {
         Some(SourceConfig {
             source_type: "webdav".to_string(),
             webdav_url: src,
             webdav_user: std::env::var("JASPER_WEBDAV_USER").unwrap_or_default(),
             webdav_pass: std::env::var("JASPER_WEBDAV_PASS").unwrap_or_default(),
+            read_only,
             ..Default::default()
         })
     } else {
         Some(SourceConfig {
             source_type: "local".to_string(),
             local_path: src,
+            read_only,
             ..Default::default()
         })
     }
@@ -107,11 +119,17 @@ async fn main() -> Result<()> {
         println!("尚未配置数据源 —— 请在浏览器中完成首次配置。");
     }
 
+    let read_only = cfg.as_ref().map(|c| c.read_only).unwrap_or(false);
+    if read_only {
+        println!("只读模式已开启：拒绝一切写操作。");
+    }
+
     let state = Arc::new(AppState {
         library: RwLock::new(library),
         storage: RwLock::new(storage_opt),
         config: Mutex::new(config_store),
         cache: cache_store,
+        read_only: AtomicBool::new(read_only),
     });
 
     // 托管前端：SPA 回退到 index.html。开发期前端跑 Vite 即可。

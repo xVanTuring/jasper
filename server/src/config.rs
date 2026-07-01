@@ -24,6 +24,9 @@ pub struct SourceConfig {
     pub webdav_user: String,
     #[serde(default)]
     pub webdav_pass: String,
+    /// 只读模式：开启后拒绝一切写操作（应用级开关，随配置持久化）。
+    #[serde(default)]
+    pub read_only: bool,
 }
 
 pub struct ConfigStore {
@@ -37,6 +40,16 @@ impl ConfigStore {
             std::fs::create_dir_all(parent).ok();
         }
         let conn = Connection::open(&path).with_context(|| format!("打开配置库失败 {path:?}"))?;
+        Self::init(conn)
+    }
+
+    /// 内存库（测试用，不落盘、彼此隔离）。
+    #[cfg(test)]
+    pub fn in_memory() -> Result<Self> {
+        Self::init(Connection::open_in_memory()?)
+    }
+
+    fn init(conn: Connection) -> Result<Self> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
             [],
@@ -60,6 +73,7 @@ impl ConfigStore {
             webdav_url: get("webdav_url").unwrap_or_default(),
             webdav_user: get("webdav_user").unwrap_or_default(),
             webdav_pass: get("webdav_pass").unwrap_or_default(),
+            read_only: get("read_only").map(|v| v == "true" || v == "1").unwrap_or(false),
         })
     }
 
@@ -76,6 +90,7 @@ impl ConfigStore {
         set("webdav_url", &cfg.webdav_url)?;
         set("webdav_user", &cfg.webdav_user)?;
         set("webdav_pass", &cfg.webdav_pass)?;
+        set("read_only", if cfg.read_only { "true" } else { "false" })?;
         Ok(())
     }
 }
@@ -128,7 +143,25 @@ pub fn source_key(cfg: &SourceConfig) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{source_key, SourceConfig};
+    use super::{source_key, ConfigStore, SourceConfig};
+
+    #[test]
+    fn read_only_round_trips() {
+        let store = ConfigStore::in_memory().unwrap();
+        let base = SourceConfig {
+            source_type: "local".into(),
+            local_path: "/notes".into(),
+            ..Default::default()
+        };
+        // 默认（未设）为 false
+        assert!(!base.read_only);
+        // 保存 true → 读回 true
+        store.save(&SourceConfig { read_only: true, ..base.clone() }).unwrap();
+        assert!(store.load().unwrap().read_only);
+        // 覆盖为 false → 读回 false
+        store.save(&SourceConfig { read_only: false, ..base.clone() }).unwrap();
+        assert!(!store.load().unwrap().read_only);
+    }
 
     #[test]
     fn source_key_local_trims_path() {

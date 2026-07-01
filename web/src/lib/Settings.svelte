@@ -23,6 +23,7 @@
   let webdavUrl = $state('')
   let webdavUser = $state('')
   let webdavPass = $state('')
+  let readOnly = $state(false)
 
   let submitting = $state(false)
   let error = $state('')
@@ -38,6 +39,7 @@
         webdavUrl = c.webdav_url
         webdavUser = c.webdav_user
         webdavPass = c.webdav_pass
+        readOnly = c.read_only
       } catch {
         /* 忽略 */
       }
@@ -54,6 +56,7 @@
         webdav_url: webdavUrl.trim(),
         webdav_user: webdavUser,
         webdav_pass: webdavPass,
+        read_only: readOnly,
         create_new: libMode === 'new',
       })
       if (res.ok) {
@@ -129,6 +132,14 @@
         <input type="password" bind:value={webdavPass} autocomplete="current-password" />
       </label>
     {/if}
+
+    <label class="toggle">
+      <input type="checkbox" bind:checked={readOnly} />
+      <span class="toggle-body">
+        <span class="toggle-title">{t('settings.readOnly')}</span>
+        <span class="toggle-desc">{t('settings.readOnlyDesc')}</span>
+      </span>
+    </label>
 
     {#if error}
       <div class="error"><Icon name="alert" size={14} /> {error}</div>
@@ -238,6 +249,41 @@
     font-size: 11px;
     color: var(--text-dim);
     margin: 6px 0 0;
+  }
+  .toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-top: 18px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-side);
+    cursor: pointer;
+  }
+  .toggle input {
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin: 1px 0 0;
+    flex: 0 0 auto;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .toggle-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .toggle-title {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .toggle-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
   }
   .error {
     margin-top: 14px;

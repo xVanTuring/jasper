@@ -29,13 +29,15 @@ use crate::serialize;
 use crate::storage::StorageBackend;
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    extract::{DefaultBodyLimit, Path, Query, Request, State},
+    http::{header, HeaderMap, Method, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
     routing::{get, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub struct AppState {
@@ -43,6 +45,8 @@ pub struct AppState {
     pub storage: RwLock<Option<Arc<dyn StorageBackend>>>,
     pub config: Mutex<ConfigStore>,
     pub cache: crate::cache::CacheStore,
+    /// 只读模式：为真时中间件拒绝一切写方法（/api/config 除外）。运行时可切换。
+    pub read_only: AtomicBool,
 }
 
 fn storage_of(state: &Arc<AppState>) -> Option<Arc<dyn StorageBackend>> {
@@ -62,10 +66,32 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/resources", get(list_resources).post(upload_resource))
         .route("/api/resources/{id}", get(resource).put(rename_resource).delete(delete_resource))
         .route("/api/search", get(search))
+        // 只读守卫：只读模式下拦截一切写方法（/api/config 除外）。放在最内层，
+        // 保证它能拿到 State 且早于任何 handler 运行。
+        .layer(axum::middleware::from_fn_with_state(state.clone(), guard_read_only))
         // 资源上传可能较大（图片/附件），放宽请求体上限到 100MB
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+/// 只读强制拦截（核心安全保证）：只读开启时，凡写方法（POST/PUT/DELETE/PATCH）一律 403，
+/// 唯一例外是 `/api/config`（否则无法在设置页把只读关回去）。读方法（GET/HEAD/OPTIONS）放行。
+/// 按 HTTP 方法集中拦截 → 将来新增任何写路由自动被覆盖，不依赖逐个 handler 记得判断。
+async fn guard_read_only(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
+    let is_write = matches!(
+        *req.method(),
+        Method::POST | Method::PUT | Method::DELETE | Method::PATCH
+    );
+    let is_config = req.uri().path() == "/api/config";
+    if is_write && !is_config && state.read_only.load(Ordering::Relaxed) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "read_only", "message": "服务处于只读模式，写操作被拒绝" })),
+        )
+            .into_response();
+    }
+    next.run(req).await
 }
 
 // ---------- DTO ----------
@@ -76,6 +102,7 @@ struct StatusResp {
     source_type: String,
     notes: usize,
     folders: usize,
+    read_only: bool,
 }
 
 #[derive(Serialize)]
@@ -103,6 +130,8 @@ struct ApplyConfigReq {
     webdav_user: String,
     #[serde(default)]
     webdav_pass: String,
+    #[serde(default)]
+    read_only: bool,
     #[serde(default)]
     create_new: bool,
 }
@@ -232,7 +261,8 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResp> {
         .load()
         .map(|c| c.source_type)
         .unwrap_or_default();
-    Json(StatusResp { configured, source_type, notes, folders })
+    let read_only = state.read_only.load(Ordering::Relaxed);
+    Json(StatusResp { configured, source_type, notes, folders, read_only })
 }
 
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<SourceConfig> {
@@ -249,6 +279,7 @@ async fn apply_config(
         webdav_url: req.webdav_url,
         webdav_user: req.webdav_user,
         webdav_pass: req.webdav_pass,
+        read_only: req.read_only,
     };
     let storage = match config::build_storage(&cfg) {
         Ok(s) => s,
@@ -276,6 +307,8 @@ async fn apply_config(
             if let Err(e) = state.config.lock().unwrap().save(&cfg) {
                 return Json(ConfigResult::err(e));
             }
+            // 运行时同步只读开关（设置页切换即时生效，无需重启）
+            state.read_only.store(cfg.read_only, Ordering::Relaxed);
             Json(ConfigResult { ok: true, error: None, notes: stats.notes, folders: stats.folders })
         }
         Ok(Err(e)) => Json(ConfigResult::err(e)),
@@ -716,5 +749,58 @@ async fn delete_note(State(state): State<Arc<AppState>>, Path(id): Path<String>)
             StatusCode::NO_CONTENT
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+    use tower::ServiceExt; // 提供 Router::oneshot
+
+    // 无存储的最小 AppState（守卫在 handler 之前运行，故无需真实数据源）。
+    fn state_with_read_only(read_only: bool) -> Arc<AppState> {
+        Arc::new(AppState {
+            library: RwLock::new(Library::default()),
+            storage: RwLock::new(None),
+            config: Mutex::new(ConfigStore::in_memory().unwrap()),
+            cache: crate::cache::CacheStore::in_memory().unwrap(),
+            read_only: AtomicBool::new(read_only),
+        })
+    }
+
+    async fn status_of(state: Arc<AppState>, method: &str, uri: &str, body: &'static str) -> StatusCode {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .unwrap();
+        router(state).oneshot(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn read_only_blocks_writes_allows_reads_and_config() {
+        // 写方法 → 403（守卫拦截，未触达 handler）
+        assert_eq!(status_of(state_with_read_only(true), "POST", "/api/notes", "{}").await, StatusCode::FORBIDDEN);
+        assert_eq!(status_of(state_with_read_only(true), "DELETE", "/api/notes/abc", "").await, StatusCode::FORBIDDEN);
+        assert_eq!(status_of(state_with_read_only(true), "PUT", "/api/notes/abc", "{}").await, StatusCode::FORBIDDEN);
+        assert_eq!(status_of(state_with_read_only(true), "POST", "/api/folders", "{}").await, StatusCode::FORBIDDEN);
+        // 读方法放行（空库 → 200）
+        assert_eq!(status_of(state_with_read_only(true), "GET", "/api/folders", "").await, StatusCode::OK);
+        // /api/config 豁免（PUT 不应被守卫拦成 403）
+        assert_ne!(
+            status_of(state_with_read_only(true), "PUT", "/api/config", "{\"source_type\":\"\"}").await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn non_read_only_does_not_block_writes() {
+        // 非只读：写方法不再被守卫拦截（无存储 → 走到 handler 返回 503，而非 403）
+        let st = status_of(state_with_read_only(false), "POST", "/api/notes", "{\"parent_id\":\"x\"}").await;
+        assert_ne!(st, StatusCode::FORBIDDEN);
+        assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
     }
 }
