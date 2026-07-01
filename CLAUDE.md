@@ -89,6 +89,13 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 - demo 下隐藏所有写入入口（新建/编辑/删除/设置/资源），顶部有「演示预览」横幅说明能力边界。
 - 截图见 `docs/screenshots/05-wasm-demo.png`。
 
+## README 预览图（截图）
+
+- `docs/screenshots/` 下 `01-reading`/`02-editor`/`03-resources`/`04-search` 各出**中英两套**：英文用基名（`*.png`，供英文 `README.md`），中文加 `.zh` 后缀（`*.zh.png`，供 `README.zh-CN.md`）。UI 语言与笔记内容都随之切换（英文页配英文笔记，中文页配中文笔记）。`05-wasm-demo.png` 单独手工出，不在此流程内。
+- 一键重出：`cd web && pnpm shoot`（`scripts/shoot.mjs`）。前置：先 `pnpm build`（要 `web/dist`）+ `cd server && cargo build`（要 debug 二进制）。它对 en/zh 各自：`scripts/demo-library.mjs` 生成对应语言的演示库（临时目录，隔离配置）→ 起真后端 → Playwright（1280×820 @2x=2560×1640，浅色）截 4 张图。
+- 浏览器：默认用 Playwright 自带 chromium；本机未下载对应版本时设 `SHOOT_CHANNEL=chrome` 用系统 Chrome（`pnpm shoot` 亦可 `SHOOT_CHANNEL=chrome pnpm shoot`）。
+- `scripts/demo-library.mjs` 是 `docs/gen-demo-library.py` 的双语 JS 版（结构对齐、字段对齐 `serialize.rs`），仅供出图；改文案时两语言都要改。
+
 ## 数据源与配置
 
 - 数据源支持**本地文件夹**和 **WebDAV**，配置（含 WebDAV 密码，**明文**）存到 SQLite（rusqlite bundled）。

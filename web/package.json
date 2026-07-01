@@ -13,7 +13,8 @@
     "e2e": "playwright test",
     "e2e:install": "playwright install --with-deps chromium",
     "build:wasm": "wasm-pack build ../wasm --target web --out-dir ../web/src/wasm-pkg",
-    "build:demo": "pnpm build:wasm && VITE_DEMO=1 vite build"
+    "build:demo": "pnpm build:wasm && VITE_DEMO=1 vite build",
+    "shoot": "node scripts/shoot.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

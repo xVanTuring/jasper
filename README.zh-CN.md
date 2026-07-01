@@ -4,14 +4,14 @@
 
 [![Deploy WASM demo to Pages](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml)
 
-> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://xvanturing.github.io/jasper-web/
+> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://xvanturing.github.io/jasper/
 
 一个轻量、**可读可写**的 [Joplin](https://joplinapp.org/) 兼容客户端：**本地 Rust (axum) 服务 + 浏览器 SPA**，不依赖 Electron / Tauri / WebView。直接读写你已有的 Joplin 同步库，改动会被 Joplin 下次同步自动拾取。
 
 > [!NOTE]
 > **与 Joplin 无关联声明。** Jasper 是一个独立的、非官方的项目，仅与开放的 [Joplin](https://joplinapp.org/) 同步格式**兼容**；本项目与 Joplin 及其作者**没有任何**制作、赞助、背书或法律上的关联。“Joplin” 为其各自所有者的商标，此处仅作指代性使用，用以说明数据格式上的兼容性。
 
-![阅读视图](docs/screenshots/01-reading.png)
+![阅读视图](docs/screenshots/01-reading.zh.png)
 
 ## 为什么
 
@@ -43,7 +43,7 @@
 - 在编辑器里**粘贴**、**拖拽**，或点 **📎 附件** 按钮 —— 文件作为 Joplin 资源上传，并在光标处插入 `:/id` 引用。
 - **资源管理**面板（顶栏 🖼）：缩略图、类型与大小、**引用计数**、重命名、删除，以及对无人引用资源的**一键清理孤儿**。
 
-![资源管理](docs/screenshots/03-resources.png)
+![资源管理](docs/screenshots/03-resources.zh.png)
 
 ### ⚡ 增量缓存
 - 本地 SQLite 缓存按数据源记录每个条目的内容与修改时间。
@@ -53,7 +53,7 @@
 
 | 编辑（粘贴 / 拖拽 / 附件） | 全文搜索 |
 | --- | --- |
-| ![编辑](docs/screenshots/02-editor.png) | ![搜索](docs/screenshots/04-search.png) |
+| ![编辑](docs/screenshots/02-editor.zh.png) | ![搜索](docs/screenshots/04-search.zh.png) |
 
 ## 快速开始
 
