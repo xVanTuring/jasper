@@ -1,6 +1,7 @@
 # 构建 Docker 镜像并发布到 GitHub Container Registry (ghcr.io)。
 # 镜像名取仓库名：ghcr.io/<owner>/<repo>（统一转小写；GHCR 要求 lowercase）。
-# 触发：推到 main（打 latest + sha）、推 v* 版本 tag（打语义化版本）、手动。
+# 触发：只在推 v* 版本 tag（前缀匹配）或手动时发布——不再每次提交 main 都发包（省资源）。
+#   发版：git tag v1.2.3 && git push origin v1.2.3 → 打 {version}/{major}.{minor}/sha + latest。
 #
 # 多架构（amd64 + arm64）：不用 QEMU 模拟（Rust release 编译在模拟下极慢），
 # 改为每个架构各跑一台原生 runner（amd64→ubuntu-latest，arm64→免费的 ubuntu-24.04-arm，
@@ -10,7 +11,6 @@ name: Publish Docker image to GHCR
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
@@ -121,12 +121,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
+          # 只在 v* tag / 手动触发。semver tag 会自动补 `latest`（默认 flavor latest=auto）；
+          # 手动在分支上跑则打分支名 + sha 便于调试。
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
 
       # 用各架构 digest 组装 manifest list，一次性打上 meta 生成的全部 tag
       - name: Create manifest list and push

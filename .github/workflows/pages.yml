@@ -5,6 +5,11 @@ name: Deploy WASM demo to Pages
 on:
   push:
     branches: [main]
+    # 纯文档/截图提交不重建 demo（省资源）；改动前端/core/wasm/构建配置才触发。
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/**'
   workflow_dispatch:
 
 permissions:
