@@ -139,6 +139,7 @@ GET    /api/search?q=...      标题/正文全文搜索
 
 ## 约定与注意点（gotchas）
 
+- **提交信息**：commit message **一律用英文**（后续提交遵循此约定；正文/PR 描述可中文）。
 - Rust：tab 缩进、单引号、避免 `any`、注释用 `//`；网络/磁盘 IO 在 axum handler 里走 `spawn_blocking`；`ConfigStore`(rusqlite) 用 `Mutex` 包裹。
 - 前端：Svelte 5 **runes**（`$state/$props/$derived/$effect`），事件用 `onclick=` 不是 `on:click`；`NoteView` 按笔记 id 以 `{#key}` 重挂载（先取详情再切 id）。
 - **多语言**：自建轻量 i18n（无第三方包）。新增/改文案要**同时**写 `messages.ts` 的 `zh` 和 `en`（漏键编译报错）。组件里用 `t('key', {插值})`；模板内调用 `t()` 会读 `i18n.svelte.ts` 的 rune→切换语言即时重渲染。纯 `.ts`（如 api.ts）里调 `t()` 取当时语言即可。顶栏「中/EN」按钮切换，localStorage 持久化。

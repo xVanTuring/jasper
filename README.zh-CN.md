@@ -57,73 +57,22 @@
 
 ## 快速开始
 
-### 源码运行
+最快的方式是拉取预构建的 Docker 镜像 —— 一个自带前端的单文件二进制，跑在 `debian-slim` 上：
 
 ```bash
-# 后端 —— 在 http://127.0.0.1:27583 提供 API 并托管前端
-cd server && cargo run                       # 读已保存配置，或进入向导
-cd server && cargo run -- /路径/JoplinDir     # 用本地文件夹引导
-cd server && cargo run -- https://host/dav/   # 或一个 WebDAV 地址
-
-# 前端
-cd web && pnpm install
-cd web && pnpm build      # 产出 web/dist，由后端在 :27583 托管
-cd web && pnpm dev        # 或开发热更新(:5173，/api 代理到后端)
+docker run -p 27583:27583 -v jasper-config:/config \
+  ghcr.io/xvanturing/jasper:latest
 ```
 
-然后打开 **http://127.0.0.1:27583/**。首次启动可在向导里选择 *现有库* / *新建库* × *本地* / *WebDAV*。
+然后打开 **http://127.0.0.1:27583/**。首次启动可在向导里选择 *现有库* / *新建库* × *本地文件夹* / *WebDAV*。`/config` 数据卷会持久化数据源设置与缓存。要暴露到局域网，加 `-e JASPER_HOST=0.0.0.0`（请先看[限制](#兼容性与限制)）。
 
-### 单文件打包
-
-前端可经 [rust-embed](https://crates.io/crates/rust-embed) **编译进二进制**，整个应用就是一个自带前端的可执行文件 —— 运行时不再需要 `web/dist`：
-
-```bash
-cd web && pnpm build                                  # 先构建出 web/dist
-cd server && cargo build --release --features embed    # → server/target/release/jasper（约 5 MB）
-```
-
-把这个文件拷到任意位置直接运行即可。`embed` 是可选 feature；不带它时后端照旧从磁盘 `web/dist` 托管（所以不构建前端也能直接 `cargo run`）。
-
-### Docker
+想自己构建镜像？
 
 ```bash
 docker compose up --build   # 然后访问 http://localhost:27583/
 ```
 
-镜像是 `debian-slim` 上的单个内嵌二进制（前端已打进去）。配置目录挂载为数据卷，数据源设置与缓存会持久化。
-
-#### 从 GHCR 拉取预构建镜像
-
-推送会由 [`.github/workflows/docker.yml`](.github/workflows/docker.yml) 构建并发布到 GitHub Container Registry：
-
-```bash
-docker run -p 27583:27583 -v jasper-config:/config \
-  ghcr.io/<owner>/jasper:latest      # 然后访问 http://localhost:27583/
-```
-
-`main` 构建 `latest`（+ `sha-…`）；版本 tag（`v1.2.3`）打语义化版本标签。
-
-### 用演示内容试一试
-
-`docs/gen-demo-library.py` 会生成一个小型示例库（即这些截图所用）：
-
-```bash
-python3 docs/gen-demo-library.py /tmp/jasper-demo
-cd server && cargo run -- /tmp/jasper-demo
-```
-
-### 浏览器 demo（WASM，无 server）
-
-核心逻辑（数据模型 / 解析 / 序列化 / 索引）抽成了依赖很轻的 `jasper-core` crate，它也能编译到 WebAssembly。配上内置的演示库，就能做一个**只读、零服务器**的预览——整页跑在浏览器标签里，适合做静态演示站（如 GitHub Pages）。
-
-```bash
-# 需先装：rustup target add wasm32-unknown-unknown + wasm-pack
-cd web && pnpm build:demo   # 先编 wasm，再产出静态 demo 到 web/dist
-```
-
-不影响原生构建：非 demo 模式下 wasm import 会被整体 tree-shake 掉。
-
-![浏览器 WASM demo](docs/screenshots/05-wasm-demo.png)
+> **源码运行、单文件打包、演示库、浏览器 WASM 预览，以及全部环境变量** 都在 **[dev.md](dev.md)**。
 
 ## 工作原理
 

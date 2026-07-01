@@ -57,73 +57,22 @@ A lightweight, **read-write** [Joplin](https://joplinapp.org/)-compatible client
 
 ## Quick start
 
-### From source
+The quickest way to run Jasper is the pre-built Docker image — a single self-contained binary (frontend baked in) on `debian-slim`:
 
 ```bash
-# Backend — serves the API and the built UI on http://127.0.0.1:27583
-cd server && cargo run                       # uses saved config, or the setup wizard
-cd server && cargo run -- /path/to/JoplinDir # bootstrap with a local folder
-cd server && cargo run -- https://host/dav/  # or a WebDAV URL
-
-# Frontend
-cd web && pnpm install
-cd web && pnpm build      # produces web/dist, served by the backend at :27583
-cd web && pnpm dev        # or hot-reload dev server on :5173 (proxies /api)
+docker run -p 27583:27583 -v jasper-config:/config \
+  ghcr.io/xvanturing/jasper:latest
 ```
 
-Then open **http://127.0.0.1:27583/**. On first run the wizard lets you pick *existing library* / *new library* × *local* / *WebDAV*.
+Then open **http://127.0.0.1:27583/**. On first run a setup wizard lets you pick *existing library* / *new library* × *local folder* / *WebDAV*. The `/config` volume keeps your data-source settings and cache across restarts. To expose it on a LAN, add `-e JASPER_HOST=0.0.0.0` (see the [limitations](#compatibility--limitations) first).
 
-### Single binary
-
-The frontend can be **embedded into the executable** (via [rust-embed](https://crates.io/crates/rust-embed)) so the whole app ships as one self-contained file — no separate `web/dist` at runtime:
-
-```bash
-cd web && pnpm build                                   # build web/dist first
-cd server && cargo build --release --features embed     # → server/target/release/jasper (~5 MB)
-```
-
-Copy that single binary anywhere and run it. The `embed` feature is opt-in; without it the backend serves `web/dist` from disk as before (so plain `cargo run` still works without building the frontend).
-
-### Docker
+Prefer to build the image yourself?
 
 ```bash
 docker compose up --build   # then open http://localhost:27583/
 ```
 
-The image is a single embedded binary on `debian-slim` (frontend baked in). The config directory is a mounted volume so your data-source settings and cache persist.
-
-#### Pre-built image from GHCR
-
-Pushed images are published to the GitHub Container Registry by [`.github/workflows/docker.yml`](.github/workflows/docker.yml):
-
-```bash
-docker run -p 27583:27583 -v jasper-config:/config \
-  ghcr.io/<owner>/jasper:latest      # then open http://localhost:27583/
-```
-
-`main` builds tag `latest` (+ `sha-…`); version tags (`v1.2.3`) get semver tags.
-
-### Try it with demo content
-
-`docs/gen-demo-library.py` generates a small sample library (the one in these screenshots):
-
-```bash
-python3 docs/gen-demo-library.py /tmp/jasper-demo
-cd server && cargo run -- /tmp/jasper-demo
-```
-
-### Browser-only demo (WASM, no server)
-
-The core (model / parser / serializer / index) is a dependency-light `jasper-core` crate that also compiles to WebAssembly. With a bundled sample library it powers a **read-only, server-less preview** that runs entirely in the browser tab — handy for a static demo (e.g. GitHub Pages).
-
-```bash
-# needs: rustup target add wasm32-unknown-unknown + wasm-pack
-cd web && pnpm build:demo   # builds the wasm, then a static demo bundle into web/dist
-```
-
-It does not affect the native build: when not in demo mode the wasm import is tree-shaken out entirely.
-
-![Browser WASM demo](docs/screenshots/05-wasm-demo.png)
+> **Running from source, the single-binary build, the demo library, the browser-only WASM preview, and all environment variables** live in **[dev.md](dev.md)**.
 
 ## How it works
 
