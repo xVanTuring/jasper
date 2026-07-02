@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 
-for dir in trim-trailing testbed webdav-storage s3-storage; do
+for dir in trim-trailing testbed webdav-storage s3-storage ai-polish; do
 	[ -d "$dir" ] || continue
 	echo "==> $dir"
 	(cd "$dir" && cargo build --release --target wasm32-unknown-unknown --quiet)

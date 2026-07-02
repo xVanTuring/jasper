@@ -37,6 +37,7 @@ jobs:
             plugins-examples/testbed
             plugins-examples/webdav-storage
             plugins-examples/s3-storage
+            plugins-examples/ai-polish
       - name: Build example plugins (wasm fixtures)
         run: plugins-examples/build-wasm.sh
       - name: cargo test (core)
@@ -49,6 +50,7 @@ jobs:
         run: |
           cargo test --locked --manifest-path plugins-examples/s3-storage/Cargo.toml
           cargo test --locked --manifest-path plugins-examples/webdav-storage/Cargo.toml
+          cargo test --locked --manifest-path plugins-examples/ai-polish/Cargo.toml
       - name: Start WebDAV + MinIO test servers (plugin integration)
         run: docker compose -f docker-compose.dev.yml up -d
       - name: cargo test (server, default + plugins)

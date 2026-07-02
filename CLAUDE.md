@@ -45,6 +45,8 @@ plugins-examples/  示例插件（cdylib → wasm32-unknown-unknown；build-wasm
   webdav-storage/  存储 provider 参考实现：WebDAV over host:http（对照内置 webdav.rs）
   s3-storage/      S3 兼容对象存储（AWS/MinIO/R2…）：纯 Rust SigV4（官方向量已知答案测试）、
                    path-style、ListObjectsV2 分页、init_new 尽力 CreateBucket；时间来自宿主 time.now
+  ai-polish/       交互命令插件：源码编辑器工具栏「一键优化」→ 一次性 AI 调用 → 替换正文；
+                   provider 设置切 anthropic(Messages API)/openai(Chat Completions)；密钥存 settings(secret)，网络经 host:http
 wasm/          浏览器 demo crate (jasper-wasm)：jasper-core + 内置演示库 → wasm-bindgen
   src/lib.rs / demo.rs   暴露 folders/notes/note/search（只读），内置纯文本演示库
 web/           Svelte 5 (runes) + Vite + TS 前端
@@ -131,13 +133,14 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 
 - **规范/设计**：`docs/plugin-spec.md`（契约，apiVersion 0.2）+ `docs/plugin-design.md`（决策）。核心决策：**wasmi 沙箱**（纯 Rust 解释器）、JSON ABI（`plugin_dispatch`/`host_call`，指针+长度）、插件 Rust-only 编到 `wasm32-unknown-unknown`、zip 包（`.jplug`）+ `manifest.toml`、能力默认全拒。
 - **构建**：`cd server && cargo build --features plugins`（默认构建**零新增依赖、行为完全不变**；wasmi/zip/toml 全 optional）。示例插件：`plugins-examples/build-wasm.sh`（需 `rustup target add wasm32-unknown-unknown`；产物 `plugin.wasm` 已 gitignore，缺失时相关测试自动跳过）。
-- **能力（capabilities）**：`settings`（插件作用域 KV）、`host:http`（宿主 ureq 代理的 HTTP(S)，响应 ≤128MiB、重定向 ≤5、**非 2xx 以 ok 带 status 返回**）；`notes:*`/`host:ai` 是阶段 3。无裸 socket——**SMB/NFS 是非目标**（OS 挂载 + local 数据源覆盖）。
+- **能力（capabilities）**：`settings`（插件作用域 KV）、`host:http`（宿主 ureq 代理的 HTTP(S)，响应 ≤128MiB、重定向 ≤5、**非 2xx 以 ok 带 status 返回**）；免能力的 `log` 与 `time.now`（沙箱无时钟，SigV4 等签名协议用）。`notes:*`/`host:ai` 是后续阶段。无裸 socket——**SMB/NFS 是非目标**（OS 挂载 + local 数据源覆盖）。
+- **命令 + 工具栏贡献**：manifest `[[contributes.command]]`（target=backend 调 wasm `command` 方法）+ `[[contributes.toolbar]]`（location=note-toolbar）→ 源码编辑器工具栏出现按钮。宿主 `POST /api/plugins/{id}/commands/{cmd}` 以 `args={note_id,title,body}` 调用；返回 `result.body` 则替换编辑缓冲（走自动保存）。只读模式下该端点被写守卫拦截。参考实现 `ai-polish`（一键优化）。SDK 用 `register! { command: fn(&str,Value)->Result<Value,PluginError> }` 接入（宏可组合 before_save/storage/command 任意子集）。
 - **限额两档**（fuel 切片 + wasmi resumable 检查点；墙钟只算 CPU，host_call 的 IO 不计）：Normal 64MiB/fuel 1e9/CPU 2s；Storage 256MiB/fuel 5e9/CPU 10s。内存超限 trap 不崩宿主；每次调用新建实例（状态隔离）。
 - **存储 provider 扩展点**：manifest `[[contributes.storage]]` + `config_schema`（字段词汇同 settings.schema）→ 插件实现 `storage.*` 8 方法（SDK 的 `Storage` trait）→ 宿主 `PluginStorage` 适配成 `StorageBackend`（rayon 并发安全）。数据源配置存 `SourceConfig`（source_type="plugin" + plugin_id/plugin_storage/plugin_config），`source_key` 用剔除 secret 的 `plugin_config_key`。参考实现 `plugins-examples/webdav-storage`（与内置 webdav 等价对照测试）。
 - **生命周期**：安装（`<config>/plugins/<id>/`）→ 含 `[backend]` 默认 **disabled**，启用=能力授权（前端 PluginConsent 弹窗，host:http 带联网警告）；纯零代码插件（如纯主题）自动启用。活动数据源引用的插件禁止停用/卸载（409 in_use）。能力集扩大后旧授权失效（回禁用态）。
 - **前端**：`plugins.svelte.ts`（列表 + 主题 `<link>` 注入 + `registerPluginThemes` 喂 ThemePicker）；顶栏 plug 按钮 → PluginPanel；向导数据源段动态渲染 provider（SchemaForm）。**探测坑**：feature off 时 SPA fallback 对 `/api/plugins` 回 200 的 HTML——`api.plugins()` 必须查 content-type。
 - **只读模式**：插件管理写操作被 `guard_read_only` 一并拦截；GET（列表/主题资产）放行 → 只读下已装主题继续生效。
-- **写插件**：cdylib crate 依赖 `jasper-plugin-sdk`，实现业务后 `sdk::register! { before_save: f, storage: T }` 一行接入；不要给插件 crate 引入会带 wasm-bindgen 的依赖（如 chrono 默认 feature——core 已裁掉 wasmbind，getrandom 由 SDK 注册报错桩）。
+- **写插件**：cdylib crate 依赖 `jasper-plugin-sdk`，实现业务后 `sdk::register! { before_save: f, storage: T, command: g }` 一行接入（三槽可组合）；不要给插件 crate 引入会带 wasm-bindgen 的依赖（如 chrono 默认 feature——core 已裁掉 wasmbind，getrandom 由 SDK 注册报错桩）。**完整作者指南（脚手架/wasm 工具链坑/测试配方/打包）见 skill `.claude/skills/jasper-plugin/SKILL.md`**——新建或调试插件时先读它。
 - **before-save 改写不回显编辑器**（易误判为"插件没生效"）：钩子在服务端保存链路里跑，改写落 API 响应与磁盘；`NoteView` 保存后不回填编辑缓冲（自动保存频繁，回填会跳光标）。验证：切走再切回笔记、或看磁盘 `<id>.md`；且要用**源码模式**测（富文本 Milkdown 本来就会重排掉行尾空白之类的差异）。
 
 ## API
@@ -170,6 +173,7 @@ DELETE /api/plugins/{id}               卸载（活动数据源引用中 → 409
 POST   /api/plugins/{id}/enable        { enabled }；enable=能力授权；wasm 加载失败 422
 GET/PUT /api/plugins/{id}/settings     GET secret 不回显（secret_set 标记）；PUT 缺键=不变、空串=清除
 GET    /api/plugins/{id}/assets/{path} 插件静态资产（仅 enabled；防路径逃逸；no-cache + ?v= 破缓存）
+POST   /api/plugins/{id}/commands/{cmd} 执行 backend 命令 { args } → { result }；插件业务错误按 code 映射状态
 ```
 
 > **只读模式**：`read_only` 开启时，`api::guard_read_only` 中间件按 HTTP 方法拦截，凡写方法（POST/PUT/DELETE/PATCH）一律返回 `403 {"error":"read_only"}`，**唯 `PUT /api/config` 豁免**（用于在设置页把只读关回去）。`/api/status` 与 `/api/config` 返回 `read_only` 供前端遮蔽写入入口。

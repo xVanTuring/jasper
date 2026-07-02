@@ -1,0 +1,32 @@
+id = "ai-polish"
+name = "一键优化"
+version = "0.1.0"
+apiVersion = "0.2"
+description = "在源码编辑器加一个按钮：把当前笔记正文交给 AI 优化（错别字/语句通顺/格式），一次性调用后替换编辑内容"
+
+[backend]
+wasm = "plugin.wasm"
+# settings：读自己存的 API Key 等；host:http：经宿主代理调 AI 端点
+capabilities = ["settings", "host:http"]
+
+[[contributes.command]]
+id = "polish"
+title = "一键优化"
+target = "backend"
+icon = "rich"
+
+[[contributes.toolbar]]
+command = "polish"
+location = "note-toolbar"
+
+# AI 参数（值存宿主、按插件隔离；api_key 为 secret：前端不回显）
+# 两种格式：anthropic(Messages API) 或 openai(Chat Completions)——按你的服务商选，改 api_url/model 即可
+# 例：Anthropic api.anthropic.com | DeepSeek(anthropic 兼容) api.deepseek.com/anthropic
+#     OpenAI api.openai.com | 各家 openai 兼容端点（Kimi/GLM/本地 ollama 等）
+[settings.schema]
+provider     = { type = "select", label = "API 格式", options = ["anthropic", "openai"], default = "anthropic", description = "anthropic=Messages API（/v1/messages, x-api-key）；openai=Chat Completions（/v1/chat/completions, Bearer）" }
+api_url      = { type = "string", label = "API 端点", default = "https://api.anthropic.com", description = "服务地址；不带 /v1/... 后缀（插件按格式自动补 /v1/messages 或 /v1/chat/completions）" }
+api_key      = { type = "secret", label = "API Key", required = true }
+model        = { type = "string", label = "模型", default = "claude-opus-4-8" }
+system_prompt = { type = "multiline", label = "优化提示词", default = "你是文字编辑。优化用户给出的 markdown 笔记正文：修正错别字与病句，使表达更通顺简洁；保持原意、语言、语气与 markdown 结构（标题/列表/代码块/链接/图片引用一律原样保留，代码块内容不改）。只输出优化后的正文，不要任何解释或前后缀。" }
+max_tokens   = { type = "number", label = "max_tokens", default = 16000 }
