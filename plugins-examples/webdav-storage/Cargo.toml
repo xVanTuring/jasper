@@ -1,0 +1,18 @@
+[package]
+name = "webdav-storage"
+version = "0.1.0"
+edition = "2021"
+description = "示例存储插件：以插件形式接入 WebDAV（对照 server/src/storage/webdav.rs 的参考实现）"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jasper-plugin-sdk = { path = "../../plugin-sdk" }
+base64 = "0.22"
+roxmltree = "0.20"
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[profile.release]
+opt-level = "s"
+lto = true

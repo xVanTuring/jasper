@@ -1,0 +1,19 @@
+id = "webdav-storage"
+name = "WebDAV (插件)"
+version = "0.1.0"
+apiVersion = "0.2"
+description = "以插件形式接入 WebDAV 数据源（存储扩展点参考实现；内置 WebDAV 仍在）"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = ["host:http"]
+
+[[contributes.storage]]
+id = "webdav"
+name = "WebDAV (插件)"
+icon = "cloud"
+
+[contributes.storage.config_schema]
+url  = { type = "string", label = "WebDAV URL", required = true, placeholder = "https://dav.example.com/joplin/" }
+user = { type = "string", label = "用户名" }
+pass = { type = "secret", label = "密码" }
