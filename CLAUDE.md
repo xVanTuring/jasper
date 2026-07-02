@@ -286,4 +286,4 @@ notes:read/notes:write（写=提案回传 + 宿主托管免确认）+ host:ai（
 `[[contributes.sidebar]]` 侧边栏（左栏入口 + 右侧 dock）+ UiWidget 六 widget 渲染器（server-driven UI）+ ChatWidget +
 PendingWriteDialog 写确认（自研行级 diff）+ ui/auto-approve/ai-config 端点 + SDK 0.3.0（notes/ai 封装、register! ui 槽、native 替身扩容）。
 
-待办：LAN 鉴权/访问口令、标签视图、E2EE 解密（按需）；官方 ai-chat 插件（jasper-plugins 仓库，用 notes:*/host:ai + chat sidebar 端到端）+ SDK 0.3.0 发 crates.io（同步模板仓库）；插件阶段 4（编辑钩子 input 时检测 + 扩词汇表，见 docs/plugin-design.md §11）。
+待办：LAN 鉴权/访问口令、标签视图、E2EE 解密（按需）；官方 ai-chat 插件（jasper-plugins 仓库，用 notes:*/host:ai + chat sidebar 端到端）+ SDK 0.3.0 发 crates.io（同步模板仓库）；**变更推送/自动刷新**（应用现为纯拉模式，插件免确认直写与外部写入不会实时反映到已打开页面——轻量 SSE `/api/events` + 前端按需刷新；打开中笔记的回显要守住「不跳光标」边界，保守规则见 design doc §5.3；宜与 ai-chat 同轮做）；插件阶段 4（编辑钩子 input 时检测 + 扩词汇表，见 docs/plugin-design.md §11）。
