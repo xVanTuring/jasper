@@ -15,7 +15,9 @@ chrono = "0.4"
 anyhow = "1"
 thiserror = "2"
 walkdir = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
+# SSE 变更流（/api/events）：broadcast::Receiver → Stream 适配
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = "0.8"
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 ureq = "2"

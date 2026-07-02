@@ -228,6 +228,7 @@ fn notes_ctx_of(state: &Arc<AppState>, plugin_id: &str) -> super::runtime::Notes
         handle: tokio::runtime::Handle::current(),
         ai,
         pending: Arc::new(std::sync::Mutex::new(Vec::new())),
+        events: state.events.clone(),
     }
 }
 
@@ -445,6 +446,7 @@ mod tests {
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(read_only),
             plugins: Some(host),
+            events: crate::events::EventBus::new(),
         });
         (dir, state)
     }
@@ -672,6 +674,7 @@ token = { type = "secret" }
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(false),
             plugins: Some(host),
+            events: crate::events::EventBus::new(),
         });
 
         // 未启用时命令 404
@@ -803,6 +806,7 @@ view = "main"
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(false),
             plugins: Some(host),
+            events: crate::events::EventBus::new(),
         });
         let (st, _) =
             send(state.clone(), "POST", "/api/plugins/testbed/enable", b"{\"enabled\":true}".to_vec()).await;

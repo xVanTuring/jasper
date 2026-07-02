@@ -84,6 +84,8 @@ pub struct NotesCtx {
     pub ai: AiConfig,
     /// 本次调用累积的写提案（WriteProposal JSON）；路由层持 clone、调用后 drain 进 HTTP 响应。
     pub pending: Arc<Mutex<Vec<Value>>>,
+    /// 变更事件总线：免确认直写经 persist_note_blocking 广播（SSE /api/events）。
+    pub events: crate::events::EventBus,
 }
 
 /// 宿主上下文：挂在 Store 数据上，host_call 从这里拿能力/配置/HTTP 出口。

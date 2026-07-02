@@ -14,6 +14,7 @@
 //!   GET    /api/resources        资源清单（含引用计数）
 //!   GET    /api/resources/{id}   资源二进制
 //!   GET    /api/search?q=...     全文搜索
+//!   GET    /api/events           SSE 变更流（事件 `change`：{kind, op, id}；前端按需刷新）
 //! 写：
 //!   POST   /api/notes            新建笔记
 //!   PUT    /api/notes/{id}       更新笔记
@@ -52,6 +53,8 @@ pub struct AppState {
     pub read_only: AtomicBool,
     /// 插件宿主（--features plugins；关闭或初始化失败时为 None）。
     pub plugins: Option<Arc<crate::plugins::PluginHost>>,
+    /// 变更事件总线（SSE /api/events）：一切写路径在此广播，前端按需刷新。
+    pub events: crate::events::EventBus,
 }
 
 fn storage_of(state: &Arc<AppState>) -> Option<Arc<dyn StorageBackend>> {
@@ -72,6 +75,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/resources", get(list_resources).post(upload_resource))
         .route("/api/resources/{id}", get(resource).put(rename_resource).delete(delete_resource))
         .route("/api/search", get(search))
+        .route("/api/events", get(events_sse))
         // 插件管理路由（feature off = 空路由）。挂在只读守卫之内 → 只读时插件写操作同样被拦。
         .merge(crate::plugins::api_router())
         // 只读守卫：只读模式下拦截一切写方法（/api/config 除外）。放在最内层，
@@ -341,6 +345,8 @@ async fn apply_config(
             }
             // 运行时同步只读开关（设置页切换即时生效，无需重启）
             state.read_only.store(cfg.read_only, Ordering::Relaxed);
+            // 整库被替换：通知所有客户端全量刷新（含发起切换的那个之外的标签页）
+            state.events.library_reloaded();
             Json(ConfigResult { ok: true, error: None, notes: stats.notes, folders: stats.folders })
         }
         Ok(Err(e)) => Json(ConfigResult::err(e)),
@@ -625,6 +631,29 @@ async fn search(
     Json(lib.search(&q).into_iter().map(summarize).collect())
 }
 
+/// GET /api/events —— SSE 变更流（事件名 `change`，data 为 ChangeEvent JSON）。
+/// 只带 (kind, op, id)，内容由前端按需再拉；接收端落后（lagged，慢消费者被丢事件）
+/// 折算成一条 library reload，前端全量刷新兜底。GET 方法天然通过只读守卫。
+async fn events_sse(
+    State(state): State<Arc<AppState>>,
+) -> axum::response::sse::Sse<impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>
+{
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+    use tokio_stream::wrappers::BroadcastStream;
+    use tokio_stream::StreamExt as _;
+
+    let stream = BroadcastStream::new(state.events.subscribe()).filter_map(|item| {
+        let ev = match item {
+            Ok(ev) => ev,
+            Err(BroadcastStreamRecvError::Lagged(_)) => crate::events::ChangeEvent::reload(),
+        };
+        // 事件是纯 &'static str + String 结构，序列化不会失败；防御性丢弃而非 panic
+        Event::default().event("change").json_data(&ev).ok().map(Ok)
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
 // ---------- 写 handlers ----------
 
 async fn write_item(state: &Arc<AppState>, name: String, content: String) -> Result<(), StatusCode> {
@@ -635,25 +664,30 @@ async fn write_item(state: &Arc<AppState>, name: String, content: String) -> Res
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-/// 笔记保存原语（阻塞）：写存储 + 刷内存索引，返回最新 Note 快照。
+/// 笔记保存原语（阻塞）：写存储 + 刷内存索引 + 广播变更事件，返回最新 Note 快照。
 /// api handlers（经 [`persist_note`]）与插件 notes.upsert/create 直写路径（已在阻塞线程）共用；
 /// **不含 before-save 钩子**——由调用方决定（插件直写路径明确跳过，spec 0.3 §6.5 防重入）。
+/// 事件在这个单一咽喉上发，普通 API 写入 / 插件免确认直写 / 外部 curl 写入天然全覆盖。
 pub(crate) fn persist_note_blocking(
     library: &RwLock<Library>,
     storage: &dyn StorageBackend,
+    events: &crate::events::EventBus,
     id: &str,
     content: &str,
 ) -> anyhow::Result<Note> {
     storage.put_item(&format!("{id}.md"), content)?;
     let mut lib = library.write().unwrap();
     lib.upsert_note(content)?;
-    lib.note(id).cloned().ok_or_else(|| anyhow::anyhow!("写入后索引缺失: {id}"))
+    let note = lib.note(id).cloned().ok_or_else(|| anyhow::anyhow!("写入后索引缺失: {id}"))?;
+    events.note_upserted(id);
+    Ok(note)
 }
 
 async fn persist_note(state: &Arc<AppState>, id: String, content: String) -> Result<Note, StatusCode> {
     let storage = storage_of(state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let library = state.library.clone();
-    tokio::task::spawn_blocking(move || persist_note_blocking(&library, storage.as_ref(), &id, &content))
+    let events = state.events.clone();
+    tokio::task::spawn_blocking(move || persist_note_blocking(&library, storage.as_ref(), &events, &id, &content))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -756,8 +790,11 @@ async fn create_folder(
     let id = serialize::new_id();
     let content = serialize::new_folder_md(&id, &parent, &title, serialize::now_ms());
     write_item(&state, format!("{id}.md"), content.clone()).await?;
-    let mut lib = state.library.write().unwrap();
-    lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    {
+        let mut lib = state.library.write().unwrap();
+        lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    state.events.folder_changed(&id);
     Ok(Json(FolderRef { id, title, parent_id: parent }))
 }
 
@@ -788,10 +825,14 @@ async fn rename_folder(
     let content = serialize::rename_folder_md(&original, &title, serialize::now_ms())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     write_item(&state, name, content.clone()).await?;
-    let mut lib = state.library.write().unwrap();
-    lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let f = lib.folders.get(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(FolderRef { id: id.clone(), title: f.title.clone(), parent_id: f.parent_id.clone() }))
+    let resp = {
+        let mut lib = state.library.write().unwrap();
+        lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let f = lib.folders.get(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        FolderRef { id: id.clone(), title: f.title.clone(), parent_id: f.parent_id.clone() }
+    };
+    state.events.folder_changed(&id);
+    Ok(Json(resp))
 }
 
 /// PUT /api/folders/{id}/move —— 移动笔记本到新父级。parent_id 空=移到根。
@@ -830,10 +871,14 @@ async fn move_folder(
     let content = serialize::move_folder_md(&original, &new_parent, serialize::now_ms())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     write_item(&state, name, content.clone()).await?;
-    let mut lib = state.library.write().unwrap();
-    lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let f = lib.folders.get(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(FolderRef { id: id.clone(), title: f.title.clone(), parent_id: f.parent_id.clone() }))
+    let resp = {
+        let mut lib = state.library.write().unwrap();
+        lib.upsert_folder(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let f = lib.folders.get(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        FolderRef { id: id.clone(), title: f.title.clone(), parent_id: f.parent_id.clone() }
+    };
+    state.events.folder_changed(&id);
+    Ok(Json(resp))
 }
 
 async fn delete_note(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> StatusCode {
@@ -846,6 +891,7 @@ async fn delete_note(State(state): State<Arc<AppState>>, Path(id): Path<String>)
     match res {
         Ok(Ok(())) => {
             state.library.write().unwrap().remove_note(&id);
+            state.events.note_deleted(&id);
             StatusCode::NO_CONTENT
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -868,6 +914,7 @@ mod tests {
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(read_only),
             plugins: None,
+            events: crate::events::EventBus::new(),
         })
     }
 
@@ -904,5 +951,51 @@ mod tests {
         let st = status_of(state_with_read_only(false), "POST", "/api/notes", "{\"parent_id\":\"x\"}").await;
         assert_ne!(st, StatusCode::FORBIDDEN);
         assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// SSE 端点：订阅后广播的事件应以 `event: change` + ChangeEvent JSON 流出。
+    #[tokio::test]
+    async fn events_sse_streams_changes() {
+        use tokio_stream::StreamExt as _;
+
+        let state = state_with_read_only(false);
+        let req = Request::builder().method("GET").uri("/api/events").body(Body::empty()).unwrap();
+        let resp = router(state.clone()).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .starts_with("text/event-stream"));
+
+        // handler 已在 oneshot 里订阅；现在发事件、再读第一帧
+        state.events.note_upserted("abc123");
+        let mut body = resp.into_body().into_data_stream();
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), body.next())
+            .await
+            .expect("5s 内应收到事件帧")
+            .expect("流不应结束")
+            .expect("帧不应出错");
+        let text = String::from_utf8_lossy(&frame);
+        assert!(text.contains("event: change"), "SSE 帧: {text}");
+        assert!(text.contains(r#""kind":"note""#) && text.contains("abc123"), "SSE 帧: {text}");
+    }
+
+    /// 保存原语是事件的单一咽喉：写入成功后广播 note upsert（插件直写路径共用此原语）。
+    #[tokio::test]
+    async fn persist_note_emits_change_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = crate::storage::local::LocalStorage::new(dir.path());
+        let state = state_with_read_only(false);
+        let mut rx = state.events.subscribe();
+
+        let id = "a".repeat(32);
+        let content = serialize::new_note_md(&id, "", "标题", "正文", false, 0);
+        persist_note_blocking(&state.library, &storage, &state.events, &id, &content).unwrap();
+
+        let ev = rx.try_recv().expect("写入后应有事件");
+        assert_eq!((ev.kind, ev.op), ("note", "upsert"));
+        assert_eq!(ev.id, id);
     }
 }

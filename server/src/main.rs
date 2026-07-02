@@ -19,6 +19,7 @@
 mod api;
 mod cache;
 mod config;
+mod events;
 mod indexer;
 mod plugins;
 mod storage;
@@ -138,6 +139,7 @@ async fn main() -> Result<()> {
         cache: cache_store,
         read_only: AtomicBool::new(read_only),
         plugins: plugin_host,
+        events: events::EventBus::new(),
     });
 
     // 托管前端：SPA 回退到 index.html。开发期前端跑 Vite 即可。

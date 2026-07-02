@@ -147,7 +147,7 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 - **插件市场（纯前端，零新端点）**：`market.ts`（纯逻辑可单测：索引解析（强制 `{zh,en}` 双语对象）/`cmpVersion`（移植 manifest.rs）/兼容判断/`sha256Hex`）+ `market.svelte.ts`（rune store：懒加载索引 + 条目状态推导 + 安装动作）。流程：fetch registry 静态索引（raw.githubusercontent 带 CORS，URL 在 `MARKET_INDEX_URL`）→ 按 UI 语言取词 → apiVersion 大版本（前端 `HOST_PLUGIN_API_MAJORS` 镜像宿主）+ `minHostVersion` vs `/api/status` 的 `version` 过滤 → 浏览器下载 `.jplug` → WebCrypto 校验 sha256（不匹配即中止，不给宿主喂可疑字节）→ POST 现有 `/api/plugins/install` → 切回已安装 tab 走 enable/consent。已装同 id 比版本给「更新」按钮（更新=普通 install，同版本重装才要 force）。只读模式隐藏安装按钮。
 - **只读模式**：插件管理写操作被 `guard_read_only` 一并拦截；GET（列表/主题资产）放行 → 只读下已装主题继续生效。
 - **写插件**：cdylib crate 依赖 `jasper-plugin-sdk`，实现业务后 `sdk::register! { before_save: f, storage: T, command: g }` 一行接入（三槽可组合）；不要给插件 crate 引入会带 wasm-bindgen 的依赖（如 chrono 默认 feature——core 已裁掉 wasmbind，getrandom 由 SDK 注册报错桩）。**完整作者指南（脚手架/wasm 工具链坑/测试配方/打包）见 skill `.claude/skills/jasper-plugin/SKILL.md`**——新建或调试插件时先读它。**仓库外插件**用模板仓库 [xVanTuring/jasper-plugin-template](https://github.com/xVanTuring/jasper-plugin-template)（脚手架 + `scripts/package.py` 校验打包（对齐 manifest.rs/install.rs 规则、查 wasm import 干净、确定性 zip）+ CI：推 `v*` tag 自动出 GitHub Release 挂 `.jplug`）；其 CI 依赖 crates.io 上的 `jasper-plugin-sdk`，SDK 有破坏性改动时要同步更新模板。
-- **插件生态仓库**（本机同在 `~/agent-home/jasper-all/` 下）：[jasper-plugins](https://github.com/xVanTuring/jasper-plugins)（官方插件 monorepo，**s3-storage/ai-polish 的分发源**；cargo workspace + 共享 package.py；发版=推 `<插件>-v<版本>` tag → GitHub Release 挂 `.jplug`+sha256）、[jasper-plugin-template](https://github.com/xVanTuring/jasper-plugin-template)（社区模板）、[jasper-plugin-registry](https://github.com/xVanTuring/jasper-plugin-registry)（市场索引 `plugins.json`；**name/description 是 `{zh,en}` 双语对象、两键必填**——生态所有用户可见面（索引、将来的市场 UI 等）都必须中英双语，市场 UI 按当前语言取词）。s3-storage/ai-polish **只存在于 jasper-plugins**（主仓库副本已删，2026-07-02）：插件行为测试随行（SDK 的 `native-host` feature：host_call 在 native 测试下走本地实现——http→ureq、settings 内存注入，ai-polish 打本地 stub、s3 直连 MinIO）；主仓库 `plugins-examples/` 只留 trim-trailing/testbed/webdav-storage 三个宿主测试夹具。
+- **插件生态仓库**（本机同在 `~/agent-home/jasper-all/` 下）：[jasper-plugins](https://github.com/xVanTuring/jasper-plugins)（官方插件 monorepo，**s3-storage/ai-polish/ai-chat 的分发源**；cargo workspace + 共享 package.py；发版=推 `<插件>-v<版本>` tag → GitHub Release 挂 `.jplug`+sha256）、[jasper-plugin-template](https://github.com/xVanTuring/jasper-plugin-template)（社区模板）、[jasper-plugin-registry](https://github.com/xVanTuring/jasper-plugin-registry)（市场索引 `plugins.json`；**name/description 是 `{zh,en}` 双语对象、两键必填**——生态所有用户可见面（索引、将来的市场 UI 等）都必须中英双语，市场 UI 按当前语言取词）。s3-storage/ai-polish/ai-chat **只存在于 jasper-plugins**（主仓库副本已删，2026-07-02）：插件行为测试随行（SDK 的 `native-host` feature：host_call 在 native 测试下走本地实现——http→ureq、settings 内存注入，ai-polish 打本地 stub、s3 直连 MinIO）；主仓库 `plugins-examples/` 只留 trim-trailing/testbed/webdav-storage 三个宿主测试夹具。
 - **before-save 改写不回显编辑器**（易误判为"插件没生效"）：钩子在服务端保存链路里跑，改写落 API 响应与磁盘；`NoteView` 保存后不回填编辑缓冲（自动保存频繁，回填会跳光标）。验证：切走再切回笔记、或看磁盘 `<id>.md`；且要用**源码模式**测（富文本 Milkdown 本来就会重排掉行尾空白之类的差异）。
 
 ## API
@@ -172,6 +172,11 @@ GET    /api/resources/{id}    资源二进制（带 mime 头）
 PUT    /api/resources/{id}    重命名资源 { title }
 DELETE /api/resources/{id}    删除资源（二进制 + 元数据条目）
 GET    /api/search?q=...      标题/正文全文搜索
+GET    /api/events            SSE 变更流（事件 `change`：{kind: note|folder|library, op: upsert|delete|reload, id}）；
+                                一切写路径（API/插件免确认直写/外部 curl）在 persist_note_blocking 等咽喉广播，
+                                前端 events.ts 订阅 → App.svelte 去抖合并按需刷新；打开中笔记走 NoteView.applyExternal
+                                的 §5.3 保守规则（无未保存输入且内容确不同才替换缓冲，富文本编辑中跳过）；
+                                慢消费者 lagged / 断线重连 → 折算 library reload 全量刷新兜底
 
 （以下仅 --features plugins 构建存在）
 GET    /api/plugins                    已装列表：manifest 摘要+contributes+capabilities+enabled+error+write_auto_approve
@@ -286,4 +291,7 @@ notes:read/notes:write（写=提案回传 + 宿主托管免确认）+ host:ai（
 `[[contributes.sidebar]]` 侧边栏（左栏入口 + 右侧 dock）+ UiWidget 六 widget 渲染器（server-driven UI）+ ChatWidget +
 PendingWriteDialog 写确认（自研行级 diff）+ ui/auto-approve/ai-config 端点 + SDK 0.3.0（notes/ai 封装、register! ui 槽、native 替身扩容）。
 
-待办：LAN 鉴权/访问口令、标签视图、E2EE 解密（按需）；官方 ai-chat 插件（jasper-plugins 仓库，用 notes:*/host:ai + chat sidebar 端到端）+ SDK 0.3.0 发 crates.io（同步模板仓库）；**变更推送/自动刷新**（应用现为纯拉模式，插件免确认直写与外部写入不会实时反映到已打开页面——轻量 SSE `/api/events` + 前端按需刷新；打开中笔记的回显要守住「不跳光标」边界，保守规则见 design doc §5.3；宜与 ai-chat 同轮做）；插件阶段 4（编辑钩子 input 时检测 + 扩词汇表，见 docs/plugin-design.md §11）。
+**变更推送/自动刷新（SSE）**（2026-07-02 落地）：`GET /api/events`（见上 API 节）——服务端 events.rs 广播总线挂 AppState/NotesCtx，
+persist_note_blocking 为事件单一咽喉（API 写入/插件免确认直写/外部 curl 全覆盖）；前端 events.ts（EventSource，断线重连合成 reload）+
+App.svelte 去抖合并刷新 + NoteView.applyExternal 保守回显（design doc §5.3）。e2e：sse-refresh.spec.ts。
+待办：LAN 鉴权/访问口令、标签视图、E2EE 解密（按需）；插件阶段 4（编辑钩子 input 时检测 + 扩词汇表，见 docs/plugin-design.md §11）。

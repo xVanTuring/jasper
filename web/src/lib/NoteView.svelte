@@ -99,6 +99,21 @@
     scheduleSave()
   }
 
+  // SSE 外部变更（免确认直写/别的客户端/curl）的保守回显（design doc §5.3）：
+  // 仅当 (a) 本地无未保存输入、(b) 服务端内容确与缓冲不同 时才替换——绝不打断正在输入的用户。
+  // 富文本编辑中无法无损同步 Crepe 缓冲 → 跳过（下一次保存按最后写入者胜，与既有行为一致）。
+  // 返回是否已应用，父级据此同步自己的 detail 快照。
+  export function applyExternal(fresh: NoteDetail): boolean {
+    if (!detail || fresh.id !== detail.id) return false
+    if (dirty || saveState === 'saving') return false
+    if (fresh.title === title && fresh.body === body) return false
+    if (editMode && engine === 'wysiwyg') return false
+    title = fresh.title
+    body = fresh.body
+    sourceHandle?.setValue(body) // 源码编辑器视图同步（阅读视图经 html derived 自动更新）
+    return true
+  }
+
   // 插件 backend 命令（note-toolbar）：把当前正文交给命令，返回的 body 替换编辑缓冲。
   // 仅源码模式暴露（富文本会整篇重排 markdown，替换正文语义不清）。
   let runningCmd = $state<string | null>(null)

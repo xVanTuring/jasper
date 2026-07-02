@@ -251,7 +251,7 @@ fn notes_upsert(ctx: &mut HostCtx, params: &Value) -> HostResult {
         crate::serialize::update_note_md(&original_raw, &proposed.title, &proposed.body, crate::serialize::now_ms())
             .map_err(|e| ("internal".to_string(), e.to_string()))?;
     let started = Instant::now();
-    let saved = crate::api::persist_note_blocking(&n.library, storage.as_ref(), id, &content);
+    let saved = crate::api::persist_note_blocking(&n.library, storage.as_ref(), &n.events, id, &content);
     *io_time += started.elapsed();
     let saved = saved.map_err(|e| ("internal".to_string(), format!("写入失败: {e}")))?;
     Ok(json!({ "note": saved, "pending": false }))
@@ -304,7 +304,7 @@ fn notes_create(ctx: &mut HostCtx, params: &Value) -> HostResult {
     let id = crate::serialize::new_id();
     let content = crate::serialize::new_note_md(&id, parent_id, title, body, false, now);
     let started = Instant::now();
-    let saved = crate::api::persist_note_blocking(&n.library, storage.as_ref(), &id, &content);
+    let saved = crate::api::persist_note_blocking(&n.library, storage.as_ref(), &n.events, &id, &content);
     *io_time += started.elapsed();
     let saved = saved.map_err(|e| ("internal".to_string(), format!("写入失败: {e}")))?;
     Ok(json!({ "note": saved, "pending": false }))

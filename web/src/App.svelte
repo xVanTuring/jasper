@@ -24,6 +24,7 @@
   import PluginSidebar from './lib/PluginSidebar.svelte'
   import PendingWriteDialog from './lib/PendingWriteDialog.svelte'
   import { loadPlugins, pluginsAvailable, sidebarContributions, type SidebarEntry } from './lib/plugins.svelte'
+  import { connectEvents, type ChangeEvent } from './lib/events'
 
   // 让 <html lang> 跟随当前语言（影响断词/无障碍等）
   $effect(() => {
@@ -37,6 +38,8 @@
   let selectedNoteId = $state<string | null>(null)
   let detail = $state<NoteDetail | null>(null)
   let editOnOpenId = $state<string | null>(null)
+  // NoteView 组件实例（bind:this）：SSE 外部变更经 applyExternal 保守回显
+  let noteView = $state<ReturnType<typeof NoteView> | null>(null)
 
   let query = $state('')
   let searchMode = $state(false)
@@ -87,6 +90,59 @@
   let serverReadOnly = $state(false)
   const readOnly = $derived(IS_DEMO || serverReadOnly)
 
+  // ---- SSE 变更 → 去抖合并刷新（/api/events）----
+  // 自己的写入也会回声：列表刷新幂等、打开中的笔记走 NoteView.applyExternal 的
+  // §5.3 保守规则（内容相同/正在输入都不动缓冲），所以无需区分事件来源。
+  const remotePending = { folders: false, list: false, openNote: false, openNoteDeleted: false }
+  let remoteTimer: ReturnType<typeof setTimeout> | undefined
+
+  function onRemoteChange(ev: ChangeEvent) {
+    if (ev.kind === 'library') {
+      // 整库替换（数据源切换/服务重启后重连）：全量重载
+      clearTimeout(remoteTimer)
+      remotePending.folders = remotePending.list = remotePending.openNote = false
+      remotePending.openNoteDeleted = false
+      void checkStatus()
+      return
+    }
+    if (ev.kind === 'folder') {
+      remotePending.folders = remotePending.list = true
+    } else {
+      remotePending.list = true
+      // 未知 id 的 upsert 可能是新建/移动（笔记本计数变了）；删除同理
+      const known = notes.some((n) => n.id === ev.id)
+      if (ev.op === 'delete' || !known) remotePending.folders = true
+      if (ev.id === selectedNoteId) {
+        if (ev.op === 'delete') remotePending.openNoteDeleted = true
+        else remotePending.openNote = true
+      }
+    }
+    clearTimeout(remoteTimer)
+    remoteTimer = setTimeout(applyRemoteChanges, 250)
+  }
+
+  async function applyRemoteChanges() {
+    const { folders: doFolders, list: doList, openNote, openNoteDeleted } = remotePending
+    remotePending.folders = remotePending.list = remotePending.openNote = false
+    remotePending.openNoteDeleted = false
+    try {
+      if (openNoteDeleted) {
+        // 打开中的笔记被外部删除：关视图（未保存输入已无处可保存）
+        selectedNoteId = null
+        detail = null
+        saveLastNoteId(null)
+      }
+      if (doFolders) folders = await api.folders()
+      if (doList) await refreshList()
+      if (openNote && !openNoteDeleted && selectedNoteId) {
+        const fresh = await api.note(selectedNoteId)
+        if (noteView?.applyExternal(fresh)) detail = fresh
+      }
+    } catch {
+      /* 网络抖动忽略；下一个事件会再触发 */
+    }
+  }
+
   // 资源被删除/重命名后，刷新当前笔记详情（被引用资源变动可能影响渲染）
   async function onResourcesChanged() {
     if (selectedNoteId) {
@@ -125,7 +181,10 @@
       const s = await api.status()
       configured = s.configured
       serverReadOnly = s.read_only
-      if (configured) await loadFolders()
+      if (configured) {
+        connectEvents(onRemoteChange) // 幂等；DEMO/不支持时静默跳过
+        await loadFolders()
+      }
     } catch (e) {
       error = `${e}`
     }
@@ -475,6 +534,7 @@
     <main class="reader">
       {#key selectedNoteId}
         <NoteView
+          bind:this={noteView}
           {detail}
           onNavigate={navigate}
           onChanged={refreshList}

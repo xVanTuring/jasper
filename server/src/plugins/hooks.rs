@@ -101,6 +101,7 @@ mod tests {
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(false),
             plugins: Some(host),
+            events: crate::events::EventBus::new(),
         });
 
         // 连接数据源（走正式 apply_config 路径）

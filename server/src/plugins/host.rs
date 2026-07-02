@@ -626,6 +626,7 @@ mod tests {
                 handle: fx.rt.handle().clone(),
                 ai: Default::default(),
                 pending: pending.clone(),
+                events: crate::events::EventBus::new(),
             },
             pending,
         )
