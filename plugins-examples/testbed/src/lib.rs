@@ -8,6 +8,12 @@
 //!     - `echo-args`  原样返回 args（参数透传验证）
 //!     - `relay`      读 settings（target_url + secret token）→ host:http GET → 响应文本作
 //!                    `result.body`；缺 target_url → invalid（错误码映射验证）
+//!     - `read-note` / `search-notes` / `list-folders`  notes:read 链路（spec 0.3）
+//!     - `write-note` / `make-note`   notes:write 链路（提案回传 vs 免确认直写）
+//!     - `ai-echo`    host:ai 链路（宿主代理补全）
+//!     - `chat`       chat widget 契约（args {messages,input,note_id} → result.reply）
+//! - `ui`          server-driven UI（spec §9.3）：view "main" 返回静态小树；
+//!                 view "notes" 调 notes.search 组 list（证明 ui 上下文有 notes 能力）
 //!
 //! 故意不用 `register!` 宏：手写 ABI，同时验证「不用 SDK 宏的插件」也符合规范。
 //! 测试按需在临时目录写自己的 manifest（能力集各测各的），只复用这里的 plugin.wasm。
@@ -55,7 +61,74 @@ fn dispatch_impl(method: &str, params: Value) -> Result<Value, PluginError> {
                     let resp = sdk::host::http_request(&req)?;
                     Ok(json!({ "body": resp.body_text() }))
                 }
+                "read-note" => {
+                    let id = args.get("id").and_then(Value::as_str).unwrap_or("");
+                    let note = sdk::host::notes_get(id)?;
+                    Ok(json!({ "note": note }))
+                }
+                "search-notes" => {
+                    let q = args.get("q").and_then(Value::as_str).unwrap_or("");
+                    let limit = args.get("limit").and_then(Value::as_u64).map(|v| v as u32);
+                    let notes = sdk::host::notes_search(q, limit)?;
+                    Ok(json!({ "notes": notes }))
+                }
+                "list-folders" => {
+                    let folders = sdk::host::notes_list_folders()?;
+                    Ok(json!({ "folders": folders }))
+                }
+                "write-note" => {
+                    let id = args.get("id").and_then(Value::as_str).unwrap_or("");
+                    let body = args.get("body").and_then(Value::as_str);
+                    let title = args.get("title").and_then(Value::as_str);
+                    let r = sdk::host::notes_upsert(id, title, body)?;
+                    Ok(json!({ "pending": r.pending, "note": r.note }))
+                }
+                "make-note" => {
+                    let parent_id = args.get("parent_id").and_then(Value::as_str).unwrap_or("");
+                    let title = args.get("title").and_then(Value::as_str);
+                    let body = args.get("body").and_then(Value::as_str);
+                    let r = sdk::host::notes_create(parent_id, title, body)?;
+                    Ok(json!({ "pending": r.pending, "note": r.note }))
+                }
+                "ai-echo" => {
+                    let prompt = args.get("prompt").and_then(Value::as_str).unwrap_or("");
+                    let content =
+                        sdk::host::ai_complete(&[sdk::host::Message::user(prompt)], None)?;
+                    Ok(json!({ "content": content }))
+                }
+                // chat widget 契约（spec §9.2）：回显输入作 reply
+                "chat" => {
+                    let input = args.get("input").and_then(Value::as_str).unwrap_or("");
+                    Ok(json!({ "reply": format!("echo: {input}") }))
+                }
                 other => Err(PluginError::unsupported(format!("未知命令: {other}"))),
+            }
+        }
+        "ui" => {
+            let view = params.get("view").and_then(Value::as_str).unwrap_or("");
+            match view {
+                "main" => Ok(json!({
+                    "type": "markdown",
+                    "props": { "source": "**testbed**" },
+                    "children": [
+                        { "type": "button", "props": { "label": "Echo", "command": "echo-args", "args": { "from": "ui" } } },
+                        { "type": "list", "props": { "items": [ { "id": "1", "title": "one" } ], "command": "echo-args" } },
+                    ],
+                })),
+                // ui 分发上下文同样有 notes 能力（spec §6.5）
+                "notes" => {
+                    let q = params
+                        .get("state")
+                        .and_then(|s| s.get("q"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let items: Vec<Value> = sdk::host::notes_search(q, None)?
+                        .into_iter()
+                        .map(|n| json!({ "id": n.id, "title": n.title }))
+                        .collect();
+                    Ok(json!({ "type": "list", "props": { "items": items } }))
+                }
+                other => Err(PluginError::not_found(format!("未知 view: {other}"))),
             }
         }
         other => Err(PluginError::unsupported(format!("未知方法: {other}"))),

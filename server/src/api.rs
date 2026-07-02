@@ -635,6 +635,30 @@ async fn write_item(state: &Arc<AppState>, name: String, content: String) -> Res
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
+/// 笔记保存原语（阻塞）：写存储 + 刷内存索引，返回最新 Note 快照。
+/// api handlers（经 [`persist_note`]）与插件 notes.upsert/create 直写路径（已在阻塞线程）共用；
+/// **不含 before-save 钩子**——由调用方决定（插件直写路径明确跳过，spec 0.3 §6.5 防重入）。
+pub(crate) fn persist_note_blocking(
+    library: &RwLock<Library>,
+    storage: &dyn StorageBackend,
+    id: &str,
+    content: &str,
+) -> anyhow::Result<Note> {
+    storage.put_item(&format!("{id}.md"), content)?;
+    let mut lib = library.write().unwrap();
+    lib.upsert_note(content)?;
+    lib.note(id).cloned().ok_or_else(|| anyhow::anyhow!("写入后索引缺失: {id}"))
+}
+
+async fn persist_note(state: &Arc<AppState>, id: String, content: String) -> Result<Note, StatusCode> {
+    let storage = storage_of(state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let library = state.library.clone();
+    tokio::task::spawn_blocking(move || persist_note_blocking(&library, storage.as_ref(), &id, &content))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
 async fn update_note(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -654,12 +678,8 @@ async fn update_note(
     let content = serialize::update_note_md(&original, &title, &body, serialize::now_ms())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    write_item(&state, format!("{id}.md"), content.clone()).await?;
-
-    let mut lib = state.library.write().unwrap();
-    lib.upsert_note(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let n = lib.note(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(detail_of(n)))
+    let n = persist_note(&state, id, content).await?;
+    Ok(Json(detail_of(&n)))
 }
 
 /// PUT /api/notes/{id}/move —— 把笔记移动到另一个笔记本（改 parent_id）。
@@ -685,12 +705,8 @@ async fn move_note(
     let content = serialize::move_note_md(&original, &new_parent, serialize::now_ms())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    write_item(&state, format!("{id}.md"), content.clone()).await?;
-
-    let mut lib = state.library.write().unwrap();
-    lib.upsert_note(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let n = lib.note(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(detail_of(n)))
+    let n = persist_note(&state, id, content).await?;
+    Ok(Json(detail_of(&n)))
 }
 
 async fn create_note(
@@ -717,12 +733,8 @@ async fn create_note(
     let (title, body) = crate::plugins::before_save(&state.plugins, hook_note).await;
     let content = serialize::new_note_md(&id, &req.parent_id, &title, &body, req.is_todo, now);
 
-    write_item(&state, format!("{id}.md"), content.clone()).await?;
-
-    let mut lib = state.library.write().unwrap();
-    lib.upsert_note(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let n = lib.note(&id).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(detail_of(n)))
+    let n = persist_note(&state, id, content).await?;
+    Ok(Json(detail_of(&n)))
 }
 
 /// POST /api/folders —— 新建笔记本。parent_id 空=根，非空须为已存在笔记本。

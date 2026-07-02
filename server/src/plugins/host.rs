@@ -541,6 +541,329 @@ mod tests {
         assert!(matches!(host.set_settings("cfg", &bad), Err(HostOpError::Invalid(_))));
     }
 
+    // ---------- notes.*（spec 0.3 §6.5）----------
+
+    use crate::plugins::runtime::NotesCtx;
+
+    /// testbed wasm + 自写 manifest（能力集由测试指定）。
+    fn host_with_manifest(manifest: &str) -> Option<(tempfile::TempDir, Arc<PluginHost>)> {
+        let src = examples_dir().join("testbed/plugin.wasm");
+        if !src.exists() {
+            eprintln!("跳过：testbed/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            return None;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("testbed");
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::copy(src, dst.join("plugin.wasm")).unwrap();
+        std::fs::write(dst.join("manifest.toml"), manifest).unwrap();
+        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
+        let host =
+            PluginHost::init_at_with_limits(dir.path().to_path_buf(), config, tiny_limits()).unwrap();
+        host.set_enabled("testbed", true).unwrap();
+        Some((dir, host))
+    }
+
+    const NOTES_MANIFEST: &str = "id = \"testbed\"\nname = \"T\"\nversion = \"1\"\napiVersion = \"0.3\"\n[backend]\nwasm = \"plugin.wasm\"\ncapabilities = [\"notes:read\", \"notes:write\"]\n";
+
+    /// Library + 本地临时存储夹具（1 笔记本 + 2 笔记，其一含行尾空格供钩子测试）。
+    struct NotesFixture {
+        library: Arc<RwLock<crate::library::Library>>,
+        _storage_dir: tempfile::TempDir,
+        storage_root: PathBuf,
+        storage: Arc<dyn crate::storage::StorageBackend>,
+        folder_id: String,
+        note_id: String,
+        rt: tokio::runtime::Runtime,
+    }
+
+    fn notes_fixture() -> NotesFixture {
+        let folder_id = "f".repeat(32);
+        let note_id = "a".repeat(32);
+        let note2_id = "b".repeat(32);
+        let contents = vec![
+            crate::serialize::new_folder_md(&folder_id, "", "收件箱", 1_700_000_000_000),
+            crate::serialize::new_note_md(&note_id, &folder_id, "购物清单", "牛奶 面包", false, 1_700_000_000_000),
+            crate::serialize::new_note_md(&note2_id, &folder_id, "旅行", "订机票", false, 1_700_000_000_000),
+        ];
+        let storage_dir = tempfile::tempdir().unwrap();
+        // 存储镜像同一批条目（写路径要读原 raw + 落盘断言）
+        std::fs::write(storage_dir.path().join(format!("{folder_id}.md")), &contents[0]).unwrap();
+        std::fs::write(storage_dir.path().join(format!("{note_id}.md")), &contents[1]).unwrap();
+        std::fs::write(storage_dir.path().join(format!("{note2_id}.md")), &contents[2]).unwrap();
+        let (lib, _stats) = crate::library::Library::from_contents(contents);
+        NotesFixture {
+            library: Arc::new(RwLock::new(lib)),
+            storage_root: storage_dir.path().to_path_buf(),
+            storage: Arc::new(crate::storage::local::LocalStorage::new(storage_dir.path())),
+            _storage_dir: storage_dir,
+            folder_id,
+            note_id,
+            rt: tokio::runtime::Runtime::new().unwrap(),
+        }
+    }
+
+    fn ctx_of(fx: &NotesFixture, read_only: bool, auto_approve: bool) -> (NotesCtx, Arc<Mutex<Vec<serde_json::Value>>>) {
+        let pending = Arc::new(Mutex::new(Vec::new()));
+        (
+            NotesCtx {
+                library: fx.library.clone(),
+                storage: Some(fx.storage.clone()),
+                read_only,
+                auto_approve,
+                handle: fx.rt.handle().clone(),
+                ai: Default::default(),
+                pending: pending.clone(),
+            },
+            pending,
+        )
+    }
+
+    fn cmd(id: &str, args: serde_json::Value) -> Value {
+        json!({ "id": id, "args": args })
+    }
+
+    #[test]
+    fn notes_without_capability_is_forbidden() {
+        // manifest 未申请 notes:* → forbidden（即便给了 ctx）
+        let Some((_dir, host)) = host_with_manifest(
+            "id = \"testbed\"\nname = \"T\"\nversion = \"1\"\napiVersion = \"0.3\"\n[backend]\nwasm = \"plugin.wasm\"\n",
+        ) else {
+            return;
+        };
+        let fx = notes_fixture();
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let err = host
+            .dispatch_with_notes("testbed", "command", cmd("read-note", json!({"id": fx.note_id})), CallClass::Normal, Some(ctx))
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, .. } => assert_eq!(code, "forbidden"),
+            other => panic!("期望 forbidden，得到 {other}"),
+        }
+    }
+
+    #[test]
+    fn notes_outside_command_ui_context_is_unsupported() {
+        // 有能力但无 ctx（hooks/storage 路径）→ unsupported（spec §6.5）
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let err = host
+            .dispatch("testbed", "command", cmd("read-note", json!({"id": fx.note_id})), CallClass::Normal)
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, .. } => assert_eq!(code, "unsupported"),
+            other => panic!("期望 unsupported，得到 {other}"),
+        }
+    }
+
+    #[test]
+    fn notes_read_search_and_folders() {
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes("testbed", "command", cmd("read-note", json!({"id": fx.note_id})), CallClass::Normal, Some(ctx))
+            .unwrap();
+        assert_eq!(r["note"]["title"], "购物清单");
+        assert_eq!(r["note"]["parent_id"], fx.folder_id.as_str());
+
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes("testbed", "command", cmd("search-notes", json!({"q": "机票"})), CallClass::Normal, Some(ctx))
+            .unwrap();
+        let hits = r["notes"].as_array().unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0]["title"], "旅行");
+
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes("testbed", "command", cmd("list-folders", json!({})), CallClass::Normal, Some(ctx))
+            .unwrap();
+        let folders = r["folders"].as_array().unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0]["title"], "收件箱");
+
+        // 不存在的笔记 → not_found
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let err = host
+            .dispatch_with_notes("testbed", "command", cmd("read-note", json!({"id": "9".repeat(32)})), CallClass::Normal, Some(ctx))
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, .. } => assert_eq!(code, "not_found"),
+            other => panic!("期望 not_found，得到 {other}"),
+        }
+    }
+
+    #[test]
+    fn notes_write_pending_by_default() {
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let disk_before =
+            std::fs::read_to_string(fx.storage_root.join(format!("{}.md", fx.note_id))).unwrap();
+
+        let (ctx, pending) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes(
+                "testbed",
+                "command",
+                cmd("write-note", json!({"id": fx.note_id, "body": "改写后的正文"})),
+                CallClass::Normal,
+                Some(ctx),
+            )
+            .unwrap();
+        assert_eq!(r["pending"], true);
+        assert_eq!(r["note"]["body"], "改写后的正文");
+
+        // 提案在累积器里，形状齐全
+        let proposals = pending.lock().unwrap();
+        assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0]["action"], "update");
+        assert_eq!(proposals[0]["plugin_id"], "testbed");
+        assert_eq!(proposals[0]["note"]["body"], "改写后的正文");
+        assert_eq!(proposals[0]["original"]["body"], "牛奶 面包");
+
+        // 盘与索引都未动
+        let disk_after =
+            std::fs::read_to_string(fx.storage_root.join(format!("{}.md", fx.note_id))).unwrap();
+        assert_eq!(disk_before, disk_after);
+        assert_eq!(fx.library.read().unwrap().note(&fx.note_id).unwrap().body, "牛奶 面包");
+    }
+
+    #[test]
+    fn notes_write_auto_approve_writes_and_skips_hooks() {
+        // testbed（写）+ trim-trailing（before-save 钩子）同装：
+        // 插件直写路径必须跳过钩子 → 行尾空格存活（spec §6.5 防重入）
+        let Some((dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        if install_example(dir.path(), "trim-trailing").is_none() {
+            return;
+        }
+        host.rescan();
+        host.set_enabled("testbed", true).unwrap();
+        host.set_enabled("trim-trailing", true).unwrap();
+        assert!(host.before_save_plugins().contains(&"trim-trailing".to_string()), "钩子插件应已挂上");
+
+        let fx = notes_fixture();
+        let (ctx, pending) = ctx_of(&fx, false, true); // 免确认
+        let r = host
+            .dispatch_with_notes(
+                "testbed",
+                "command",
+                cmd("write-note", json!({"id": fx.note_id, "body": "行尾有空格  \n第二行\t"})),
+                CallClass::Normal,
+                Some(ctx),
+            )
+            .unwrap();
+        assert_eq!(r["pending"], false);
+        assert!(pending.lock().unwrap().is_empty());
+
+        // 落盘 + 索引已更新，且行尾空白保留（未过 trim-trailing）
+        let disk =
+            std::fs::read_to_string(fx.storage_root.join(format!("{}.md", fx.note_id))).unwrap();
+        assert!(disk.contains("行尾有空格  \n第二行\t"), "直写应跳过 before-save 钩子: {disk:?}");
+        assert_eq!(fx.library.read().unwrap().note(&fx.note_id).unwrap().body, "行尾有空格  \n第二行\t");
+        // 其余元数据逐字保留（id/parent 不变）
+        assert_eq!(fx.library.read().unwrap().note(&fx.note_id).unwrap().parent_id, fx.folder_id);
+    }
+
+    #[test]
+    fn notes_create_validates_parent_and_writes() {
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+
+        // parent 不存在 → invalid
+        let (ctx, _) = ctx_of(&fx, false, true);
+        let err = host
+            .dispatch_with_notes(
+                "testbed",
+                "command",
+                cmd("make-note", json!({"parent_id": "9".repeat(32), "title": "x"})),
+                CallClass::Normal,
+                Some(ctx),
+            )
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, .. } => assert_eq!(code, "invalid"),
+            other => panic!("期望 invalid，得到 {other}"),
+        }
+
+        // pending：id 为空串、不落盘
+        let (ctx, pending) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes(
+                "testbed",
+                "command",
+                cmd("make-note", json!({"parent_id": fx.folder_id, "title": "新笔记", "body": "内容"})),
+                CallClass::Normal,
+                Some(ctx),
+            )
+            .unwrap();
+        assert_eq!(r["pending"], true);
+        assert_eq!(r["note"]["id"], "");
+        assert_eq!(pending.lock().unwrap()[0]["action"], "create");
+        assert!(pending.lock().unwrap()[0]["original"].is_null());
+
+        // 免确认：生成 id、落盘 + 进索引
+        let (ctx, _) = ctx_of(&fx, false, true);
+        let r = host
+            .dispatch_with_notes(
+                "testbed",
+                "command",
+                cmd("make-note", json!({"parent_id": fx.folder_id, "title": "直写笔记", "body": "内容"})),
+                CallClass::Normal,
+                Some(ctx),
+            )
+            .unwrap();
+        assert_eq!(r["pending"], false);
+        let new_id = r["note"]["id"].as_str().unwrap().to_string();
+        assert_eq!(new_id.len(), 32);
+        assert!(fx.storage_root.join(format!("{new_id}.md")).exists());
+        assert_eq!(fx.library.read().unwrap().note(&new_id).unwrap().title, "直写笔记");
+    }
+
+    #[test]
+    fn notes_write_read_only_is_forbidden() {
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let (ctx, pending) = ctx_of(&fx, true, true); // 只读优先于免确认
+        let err = host
+            .dispatch_with_notes(
+                "testbed",
+                "command",
+                cmd("write-note", json!({"id": fx.note_id, "body": "x"})),
+                CallClass::Normal,
+                Some(ctx),
+            )
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, .. } => assert_eq!(code, "forbidden"),
+            other => panic!("期望 forbidden，得到 {other}"),
+        }
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ui_dispatch_returns_tree_and_reaches_notes() {
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+
+        // 静态树
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes("testbed", "ui", json!({"view": "main", "state": null}), CallClass::Normal, Some(ctx))
+            .unwrap();
+        assert_eq!(r["type"], "markdown");
+        assert_eq!(r["children"][0]["type"], "button");
+
+        // ui 上下文里 notes.search 可用（spec §6.5）
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let r = host
+            .dispatch_with_notes("testbed", "ui", json!({"view": "notes", "state": {"q": "购物"}}), CallClass::Normal, Some(ctx))
+            .unwrap();
+        assert_eq!(r["type"], "list");
+        assert_eq!(r["props"]["items"][0]["title"], "购物清单");
+    }
+
     #[test]
     fn zero_code_auto_enables_and_backend_defaults_disabled() {
         let dir = tempfile::tempdir().unwrap();
