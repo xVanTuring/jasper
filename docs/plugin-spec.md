@@ -1,8 +1,8 @@
-# jasper 插件规范 v0.2（草案）
+# jasper 插件规范 v0.3（草案）
 
 > 状态：**草案，征求确认**。这是给「插件作者」和「宿主实现」照着做的**契约**；方案/路线见 [plugin-design.md](./plugin-design.md)。
 > 规范用词遵循 RFC 2119：**MUST/必须**、**SHOULD/应当**、**MAY/可以**。
-> 本版 `apiVersion = "0.2"`。破坏性改动升 MAJOR，向后兼容的新增升 MINOR。
+> 本版 `apiVersion = "0.3"`。破坏性改动升 MAJOR，向后兼容的新增升 MINOR。
 
 **版本历史**
 
@@ -10,6 +10,7 @@
 |---|---|---|
 | 0.1 | 2026-06-30（冻结） | 基础契约：主题 / 后端 wasm / 前端贡献 / 设置 |
 | 0.2 | 2026-07-02 | 向后兼容新增：`[[contributes.storage]]` 存储 provider（§3.9）、`host:http` 能力（§7）、`storage.*` 方法族（§6.5）、§10 增 `required`/`placeholder`、存储类调用限额修正（§11）、SMB/裸 TCP 非目标声明（§11）、v0.2 决策（§12.1） |
+| 0.3 | 2026-07-02 | 向后兼容新增：`notes:*`/`host:ai` 能力落地（§6.5/§7）、写确认=**提案回传**（§6.5/§7/§11）、`[[contributes.sidebar]]` 扩 `command`/`view`（§3.5）、widget 事件契约钉死（§9.2）、UiNode 交互约定（§9.3）、宿主端点 ui / ai-config / auto-approve（§9.5 新）、图标令牌 +3（§9.1）、§10 删除与宿主托管开关矛盾的示例、v0.3 决策（§12.2） |
 
 ---
 
@@ -69,7 +70,7 @@ assets/                # 可选：css / svg / 图片等
 | `id` | string | ✅ | `^[a-z0-9][a-z0-9-]*$`，全局唯一，即安装目录名 |
 | `name` | string | ✅ | 显示名 |
 | `version` | string | ✅ | semver（如 `1.2.0`） |
-| `apiVersion` | string | ✅ | 插件面向的插件 API 版本，`MAJOR.MINOR`（本版 `0.1`） |
+| `apiVersion` | string | ✅ | 插件面向的插件 API 版本，`MAJOR.MINOR`（本版 `0.3`） |
 | `description` | string | ⬜ | 一句话简介 |
 | `author` | string | ⬜ | |
 | `minHostVersion` | string | ⬜ | 要求的最低宿主版本（semver） |
@@ -100,14 +101,35 @@ assets/                # 可选：css / svg / 图片等
 | `target` | `"backend"`\|`"builtin"` | ✅ | backend=调 wasm `command` 方法；builtin=宿主内置动作 |
 | `icon` | string | ⬜ | 图标令牌名（§9.1），不带 `--icon-` 前缀 |
 
-### 3.5 `[[contributes.sidebar]]`
+### 3.5 `[[contributes.sidebar]]`（0.3 扩展）
 
 | 字段 | 类型 | 必须 | 说明 |
 |---|---|---|---|
-| `id` | string | ✅ | 面板 id |
+| `id` | string | ✅ | 面板 id（插件内唯一，`^[a-z0-9][a-z0-9-]*$`） |
 | `title` | string | ✅ | |
-| `icon` | string | ⬜ | 图标令牌名 |
-| `widget` | string | ✅ | 用哪个内置 widget（§9.2） |
+| `icon` | string | ⬜ | 图标令牌名（§9.1），缺省宿主用 `plug` |
+| `widget` | string | ✅ | 用哪个内置 widget（§9.2）；`view` 存在时仅作声明参考，实际树由 `ui` 方法给出 |
+| `command` | string | ⬜ | **静态模式**交互目标：指向某 `contributes.command.id`（须 `target="backend"`）。`widget="chat"` 且无 `view` 时**必须** |
+| `view` | string | ⬜ | **动态模式**：宿主经 `POST /api/plugins/{id}/ui/{view}`（§9.5）调 dispatch `ui`（§6.5）取声明树渲染 |
+
+约束：`command` 或 `view` 任一存在 ⇒ 插件 MUST 含 `[backend]`；`command` MUST 引用已声明的 backend 命令。
+
+```toml
+# 静态模式：AI 聊天（消息由前端持有，发送经 command 调后端）
+[[contributes.sidebar]]
+id = "ai-chat"
+title = "AI 对话"
+icon = "chat"
+widget = "chat"
+command = "chat"
+
+# 动态模式：面板树由 wasm 的 ui 方法按 view 返回
+[[contributes.sidebar]]
+id = "tools"
+title = "工具箱"
+widget = "markdown"
+view = "main"
+```
 
 ### 3.6 `[[contributes.toolbar]]`
 
@@ -157,7 +179,7 @@ pass = { type = "secret", label = "密码" }
 
 ## 4. 版本与兼容
 
-- 宿主 MUST 暴露自身支持的 `apiVersion` 集合（如 `["0.1"]`）。
+- 宿主 MUST 暴露自身支持的 `apiVersion` 集合（如 `["0.1", "0.2", "0.3"]`）。
 - 加载时：若 `manifest.apiVersion` 的 MAJOR 不在宿主支持集，MUST 拒绝并提示。MINOR 更高可加载但宿主 MAY 警告。
 - `minHostVersion` 大于当前宿主版本时 MUST 拒绝。
 - 同 `id` 重复安装：以更高 `version` 覆盖；相等或更低 MUST 询问/拒绝。
@@ -264,8 +286,8 @@ joplin.host_call(ptr: u32, len: u32) -> u64
 | `notes.get` | `{ id }` | `{ note }` | `notes:read` |
 | `notes.search` | `{ query, limit? }` | `{ notes: NoteRef[] }` | `notes:read` |
 | `notes.list_folders` | — | `{ folders: FolderRef[] }` | `notes:read` |
-| `notes.upsert` | `{ id, title?, body? }` | `{ note }` | `notes:write` |
-| `notes.create` | `{ parent_id, title?, body? }` | `{ note }` | `notes:write` |
+| `notes.upsert` | `{ id, title?, body? }` | `{ note, pending }` | `notes:write` |
+| `notes.create` | `{ parent_id, title?, body? }` | `{ note, pending }` | `notes:write` |
 | `ai.complete` | `{ messages, options? }` | `{ content }` | `host:ai` |
 | `settings.get` | `{ key }` | `{ value }` | `settings` |
 | `settings.set` | `{ key, value }` | `{}` | `settings` |
@@ -276,14 +298,27 @@ joplin.host_call(ptr: u32, len: u32) -> u64
 - 限额（宿主 MUST 施加，可配置）：响应体 ≤ 128 MiB、重定向 ≤ 5、`timeout_ms` 默认 30 000、上限 120 000。
 - **非 2xx 状态码照常以 `ok:true` 返回**（`status` 带回，错误语义留给插件——WebDAV 需要 404 判断）；连接失败/超时等网络错误才是 `{ok:false, code:"internal"}`。
 
+**`notes.*` / `ai.complete` 约定（0.3）**
+- **仅在 `command` 与 `ui` 分发上下文可用**：`hook.before_save` / `storage.*` 分发内调用一律返回 `{ok:false, code:"unsupported"}`（防写入重入与索引期死锁；后续版本可能放开只读子集）。
+- **写确认 = 提案回传**：宿主按插件托管一个「写入免确认」开关（§7，默认关）。
+  - 开关**关**（默认）：`notes.upsert`/`notes.create` MUST NOT 落盘；返回 `{note: 应用改动后的完整 note, pending: true}`，并把提案累积进本次触发调用的 HTTP 响应顶层 `pending_writes`（§9.5），由宿主 UI 确认后经普通笔记 API 落盘（before-save 钩子照常）。
+  - 开关**开**：宿主立即写入（**跳过 before-save 钩子**，防重入——两条路径的字节差异记录在案，§11）并返回 `{note, pending: false}`。
+  - 本次 wasm 调用最终失败（超限/trap/业务错误上抛）时，已累积的提案 MUST 一并丢弃。
+- pending 的 `create` 提案 `note.id` 为空串（id 在用户批准落盘时由宿主生成）；插件无法在 pending 模式下对新建笔记链式写入（记录在案）。
+- 只读模式：`notes.upsert`/`notes.create` → `{ok:false, code:"forbidden"}`。
+- `notes.get`：不存在 → `not_found`。`notes.search`：`limit` 默认 20、上限 100。`notes.list_folders`：按 `(title, id)` 排序。
+- `notes.create`：`parent_id` MUST 是已存在的笔记本，否则 `invalid`（比宿主 HTTP API 更严——插件不应静默产出孤儿笔记）。
+- `ai.complete`：`options = { model?, temperature?, max_tokens? }`（宿主钳制：temperature 0..=2，max_tokens 1..=32768；`model` 缺省用宿主配置）。一次性返回 `{content}`（流式仍后置，§12 决策 4 不变）。宿主 AI 未配置 → `{ok:false, code:"internal"}`（message 指明去设置页配置；不用 `unsupported`——那会被 SDK 误读为宿主太旧）。网络等待计入 IO 豁免（§11）。
+
 **数据形状**
 ```
 Note      = { id, title, body, parent_id, markup_language, created_time,
-              updated_time, is_todo, todo_completed, source_url }
+              updated_time, is_todo, todo_completed, is_conflict, source_url, order }
 NoteRef   = { id, title, parent_id }
 FolderRef = { id, title, parent_id }
 Message   = { role: "system"|"user"|"assistant", content: string }
 ```
+- `Note` = jasper-core `Note` 的 serde 形状，与 `hook.before_save` 的 note 完全一致；插件反序列化 MUST 忽略未知键（向前兼容）。
 - `markup_language`：1=Markdown，2=HTML。
 - `notes.upsert` 仅改传入的字段；其余元数据宿主**逐字保留**（复用 `serialize::update_note_md`）。
 
@@ -296,7 +331,7 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 | 能力 | 解锁的 host 方法 | 说明 |
 |---|---|---|
 | `notes:read` | `notes.get` / `notes.search` / `notes.list_folders` | 只读 |
-| `notes:write` | `notes.upsert` / `notes.create` | **默认每次写入弹 UI 确认**；用户可在该插件设置里开“免确认” |
+| `notes:write` | `notes.upsert` / `notes.create` | **默认每次写入以提案回传**（§6.5），宿主 UI 确认后落盘；「免确认」开关**由宿主托管**（插件面板按插件开启，宿主端点见 §9.5），MUST NOT 放进插件自身 `settings.schema`（否则插件可经 `settings` 能力自改绕过确认） |
 | `host:ai` | `ai.complete` | 密钥/端点在宿主，插件不可见 |
 | `settings` | `settings.get` / `settings.set` | 插件作用域 KV |
 | `host:http`（0.2） | `http.request` | 宿主**代理**的 HTTP(S) 出口（限额见 §6.5/§11）。安装/启用确认 MUST 显著提示「该插件可访问网络」。无域名白名单（存储端点来自用户配置）。 |
@@ -353,25 +388,30 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 --icon-file --icon-alert --icon-edit --icon-trash --icon-eye
 --icon-code --icon-rich --icon-attach --icon-clean --icon-cloud
 --icon-globe --icon-sun --icon-moon --icon-contrast --icon-palette
+--icon-chat --icon-send --icon-bot                        /* 0.3 新增 */
 ```
 - 图标经 CSS `mask` + `currentColor` 渲染：**单色、跟随文字色**；SVG 颜色无意义，只取 alpha。
 - 主题 SHOULD NOT 依赖未在此列出的内部 class 选择器（不稳定，不保证兼容）。
 - `--palette-*`（基础调色板）是实现细节，主题 MAY 覆盖但不在稳定契约内。
 
-### 9.2 widget 词汇表
+### 9.2 widget 词汇表（0.3 钉死事件契约）
 
-插件**只声明用哪个 widget + 给数据**，不写 HTML/JS/CSS。本版词汇表：
+插件**只声明用哪个 widget + 给数据**，不写 HTML/JS/CSS。本版词汇表与交互契约：
 
-| widget | 用途 | 关键 props |
+| widget | props | 交互契约 |
 |---|---|---|
-| `chat` | 消息流 + 输入框（AI 面板） | `messages: Message[]`, `placeholder?` |
-| `list` | 列表 | `items: {id,title,subtitle?,icon?}[]` |
-| `tree` | 树 | `nodes:{id,title,children?}[]` |
-| `form` | 表单（由 schema 或后端字段渲染） | `fields`(§10), `values` |
-| `markdown` | 渲染一段 markdown/HTML（经 DOMPurify） | `source: string` |
-| `button` | 动作按钮 | `label`, `icon?`, `command` |
+| `chat` | `placeholder?`, `command?`（动态模式；静态模式用 sidebar 的 `command`） | 消息列表由**前端持有**（会话内存，不落盘）。发送 → 调 command，`args = { messages: Message[]（含刚输入的 user 消息）, input: string, note_id: string\|null }`；result 含字符串 **`reply`** → 以 assistant 消息追加（markdown 渲染）；动态模式下 result 含 `ui` → 替换整棵树 |
+| `button` | `label`, `icon?`, `command`, `args?` | 点击 → command，`args = props.args ?? {}` 并入 `note_id` |
+| `form` | `fields`（§10 词汇）, `values?`, `submit_label?`, `command` | 前端按 §10 校验通过后提交 → command，`args = { values }` 并入 `note_id` |
+| `list` | `items: {id,title,subtitle?,icon?}[]`, `command?` | 点条目 → command，`args = { id }` 并入 `note_id`；无 `command` 则纯展示 |
+| `tree` | `nodes: {id,title,children?}[]`, `command?` | 点节点 → command，`args = { id }` 并入 `note_id`；无 `command` 则纯展示 |
+| `markdown` | `source: string` | 无交互；DOMPurify 净化 + `:/id` 资源改写后渲染 |
 
-未来按需扩词汇表（升 MINOR）。
+统一约定：
+- 侧边栏内一切命令调用 MUST 并入 `note_id`（当前选中笔记 id，可为 `null`）。
+- 命令 result 中：`ui`（UiNode）→ 替换面板树（动态模式）；`reply`（string）→ 追加进 chat；其余键宿主忽略（向前兼容）。
+- HTTP 响应顶层 `pending_writes`（§9.5）交给宿主确认弹窗，与 widget 无关。
+- 未来按需扩词汇表（升 MINOR）。
 
 ### 9.3 server-driven UI 声明树
 
@@ -383,12 +423,13 @@ UiNode = {
   "children": UiNode[]            // 可选
 }
 ```
-- 节点内的交互通过 `props.command`（指向 `contributes.command`）回调后端。
-- 宿主 MUST 只渲染已知 widget；未知 `type` MUST 安全忽略（不报错、不注入）。
+- 节点内的交互通过 `props.command`（指向 `contributes.command`，须 `target="backend"`）回调后端，args 形状按 §9.2 各 widget 契约。
+- 宿主 MUST 只渲染已知 widget；未知 `type` MUST 安全忽略——**连同其 `children` 一起跳过**（不报错、不注入）。
+- `children` 本版仅作纵向堆叠布局，无其它布局语义。
 
 ### 9.4 命令 / 侧边栏 / 工具栏 / 设置贡献
 
-- **侧边栏**：`contributes.sidebar` 在左栏加入口，点开渲染指定 `widget`（静态）或 `ui` 方法返回的树（动态）。
+- **侧边栏**：`contributes.sidebar` 在左栏加入口，点开渲染指定 `widget`（静态）或 `ui` 方法返回的树（动态，`view` 字段，§3.5）。jasper 的实现：入口按钮在左栏底部，面板在阅读区右侧第 4 栏 dock（约 320px，可关闭）——此为宿主实现说明，非契约。
 - **工具栏**：`contributes.toolbar` 把某命令放到 `note-toolbar` 或 `topbar`。
 - **命令**：`target="backend"` 调后端 `command`；`target="builtin"` 触发宿主内置动作（白名单，TBD）。
 - 显示图标/文字由全局按钮显示模式（已实现 `ui.svelte.ts` 的 `both|icon|text`）统一控制。
@@ -396,6 +437,22 @@ UiNode = {
   若返回的 `result` 含字符串字段 `body`，宿主用它**替换编辑器缓冲**（进入正常的自动保存链路）。
   其余 result 形状由宿主忽略（向前兼容）。宿主经 `POST /api/plugins/{id}/commands/{cmd}`（body `{ args }`）触发；
   只读模式下该端点被写方法守卫拦截。命令按 Normal 档限额执行（AI 类命令的网络等待经 host_call 豁免 CPU 墙钟）。
+
+### 9.5 宿主端点（0.3 新增/扩展；宿主实现约定）
+
+```
+POST /api/plugins/{id}/commands/{cmd}   响应扩为 { result, pending_writes }（0.3 向后兼容新增键；
+                                        pending_writes 恒在，无提案时为空数组）
+POST /api/plugins/{id}/ui/{view}        body { state? } → { ui: UiNode, pending_writes }；
+                                        view 未在该插件 contributes.sidebar 声明 / 插件禁用 → 404
+PUT  /api/plugins/{id}/auto-approve     body { enabled } → 刷新后的插件信息；写「免确认」开关（§7）
+GET/PUT /api/ai/config                  宿主级 AI 配置 { provider, base_url, api_key, model }
+                                        （provider ∈ anthropic|openai；密钥存宿主，插件永不可见）
+```
+
+- `pending_writes` 元素形状：`{ action: "update"|"create", plugin_id, note: {id,parent_id,title,body,…}, original: {title,body}|null }`（`create` 的 `original` 为 null、`note.id` 为空串）。
+- 只读模式：以上 POST/PUT 全部被写守卫拦截（403）——**只读下动态侧栏与 chat 均不可用**（记录为已知取舍）。
+- `GET /api/ai/config` 回显 `api_key`（与数据源密码同姿势，本机信任模型）；插件面的 `settings.schema` secret 不回显规则（§10）不适用于此。
 
 ---
 
@@ -406,9 +463,11 @@ UiNode = {
 [settings.schema]
 api_key = { type = "secret", label = "API Key" }
 model   = { type = "string", default = "claude-opus-4-8" }
-auto_approve_write = { type = "bool", default = false, label = "AI 改笔记免确认" }
 provider = { type = "select", options = ["claude", "openai"], default = "claude" }
 ```
+
+> 「写入免确认」这类**授权语义**的开关 MUST NOT 声明在此（0.3 起明确）：它由宿主托管（§7/§9.5），
+> 插件经 `settings` 能力可读写自己的 schema 值，放这里等于插件可自行绕过写确认。
 
 | `type` | 渲染 | 值类型 |
 |---|---|---|
@@ -445,7 +504,8 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 - 因此 SMB/NFS 这类裸 TCP 协议不是插件目标：在操作系统层挂载后用内置 `local` 数据源即可。
 
 **写入与外发**
-- `notes:write` 默认 UI 二次确认（§7）。
+- `notes:write` 默认**提案回传**（§6.5/§7）：插件调用不落盘，宿主 UI 确认后经普通笔记 API 落盘（before-save 钩子照常）；宿主托管的「免确认」开启时直写但**跳过钩子**（防重入）——同一插件写入在两条路径下可能产生不同字节，记录在案。
+- 插件写入与编辑器并发保存同一笔记 = 最后写赢（与两个并发 API 保存等价，0.3 不引入锁）。
 - `ai.complete` 的密钥/端点由宿主托管，插件不可见；宿主 SHOULD 对外发目标做 allowlist。
 
 **主题 CSS**
@@ -474,6 +534,17 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 6. **秘密回显不对称**（§3.9）：数据源配置回显、插件设置不回显。
 7. **in_use 守护**（§5）：活动数据源引用的插件禁止停用/卸载。
 8. **限额两档 + CPU-only 墙钟**（§11）。
+
+### 12.2 v0.3 决策（2026-07-02）
+
+1. **写确认 = 提案回传**（§6.5）：`notes.upsert/create` 默认不落盘、返回 `{note, pending:true}`，提案随触发调用的 HTTP 响应顶层 `pending_writes` 交前端确认，批准走普通笔记 API（钩子照常）。零新增服务端状态、不阻塞 wasm。
+2. **免确认开关宿主托管**（§7/§9.5）：按插件存宿主配置，`PUT /api/plugins/{id}/auto-approve` 写入；直写路径跳过 before-save 钩子（防重入）。§10 的旧示例 `auto_approve_write` 因此删除。
+3. **`ai.complete` 由宿主以 genai 库代理**：宿主级配置 `{provider: anthropic|openai, base_url?, api_key, model}`（`GET/PUT /api/ai/config`）；openai provider 走 chat-completions 协议 + 自定义 base_url（覆盖 Ollama/DeepSeek/中转）。一次性返回不变（v0.1 决策 4）。
+4. **notes/ai 仅 command/ui 上下文**（§6.5）：hooks/storage 分发内 `unsupported`。
+5. **sidebar 扩 `command`/`view`**（§3.5）：静态 widget 交互走 command、动态树走 ui 方法；入口左栏底部、面板右侧 dock（实现说明）。
+6. **widget 事件契约冻结**（§9.2）：chat 消息前端持有、`result.reply` 追加、`result.ui` 换树、一切命令并入 `note_id`。
+7. **pending create 无 id**（§6.5）：id 批准时生成，插件不可链式写。
+8. **只读模式**：commands/ui/auto-approve/ai-config 的写方法全拦（§9.5）。
 
 ---
 
