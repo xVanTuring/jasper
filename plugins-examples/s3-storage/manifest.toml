@@ -1,0 +1,22 @@
+id = "s3-storage"
+name = "S3 对象存储"
+version = "0.1.0"
+apiVersion = "0.2"
+description = "S3 兼容对象存储数据源（AWS S3 / MinIO / Cloudflare R2 等；path-style 访问）"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = ["host:http"]
+
+[[contributes.storage]]
+id = "s3"
+name = "S3 对象存储"
+icon = "cloud"
+
+[contributes.storage.config_schema]
+endpoint   = { type = "string", label = "端点 URL", required = true, placeholder = "http://127.0.0.1:9000 或 https://s3.us-east-1.amazonaws.com", description = "不要带默认端口（80/443）后缀；自建服务写完整地址" }
+region     = { type = "string", label = "区域 Region", default = "us-east-1" }
+bucket     = { type = "string", label = "Bucket", required = true, description = "不存在时会尝试创建（需权限）" }
+prefix     = { type = "string", label = "键前缀（可选）", placeholder = "notes/joplin", description = "留空 = bucket 根；多个库可共用一个 bucket" }
+access_key = { type = "string", label = "Access Key", required = true }
+secret_key = { type = "secret", label = "Secret Key", required = true }

@@ -34,5 +34,23 @@ services:
       - jasper_webdav_data:/data
     restart: unless-stopped
 
+  # S3 兼容对象存储（s3-storage 插件联调/集成测试用）。
+  # 凭据 minioadmin/minioadmin；桶不必预建——插件 init_new 会尽力 CreateBucket。
+  # S3-compatible object store for the s3-storage plugin (creds minioadmin/minioadmin;
+  # no need to pre-create buckets — the plugin's init_new attempts CreateBucket).
+  minio:
+    image: minio/minio:latest
+    container_name: jasper-minio-dev
+    command: ["server", "/data"]
+    ports:
+      - "9000:9000"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - jasper_minio_data:/data
+    restart: unless-stopped
+
 volumes:
   jasper_webdav_data:
+  jasper_minio_data:

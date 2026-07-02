@@ -43,6 +43,8 @@ plugins-examples/  示例插件（cdylib → wasm32-unknown-unknown；build-wasm
   trim-trailing/   before-save 去行尾空白（spec 附录 B 参考实现）
   testbed/         测试夹具（echo/spin/alloc_bomb/bad_json/call_http，喂宿主限额测试）
   webdav-storage/  存储 provider 参考实现：WebDAV over host:http（对照内置 webdav.rs）
+  s3-storage/      S3 兼容对象存储（AWS/MinIO/R2…）：纯 Rust SigV4（官方向量已知答案测试）、
+                   path-style、ListObjectsV2 分页、init_new 尽力 CreateBucket；时间来自宿主 time.now
 wasm/          浏览器 demo crate (jasper-wasm)：jasper-core + 内置演示库 → wasm-bindgen
   src/lib.rs / demo.rs   暴露 folders/notes/note/search（只读），内置纯文本演示库
 web/           Svelte 5 (runes) + Vite + TS 前端
@@ -207,7 +209,7 @@ GET    /api/plugins/{id}/assets/{path} 插件静态资产（仅 enabled；防路
 ## 测试
 
 三层，均在 CI（`.github/workflows/ci.yml`：`rust-test` / `web-unit` / `e2e`）跑：
-- **Rust 单元**：`cd core && cargo test`（parser/serialize/library；`--features serde` 再跑一遍含 serde 往返）+ `cd plugin-sdk && cargo test`（ABI 信封/存储路由，native）+ `cd server && cargo test`（config/storage/cache/webdav）**及** `cargo test --features plugins`（manifest/zip 安装/能力门控/限额/before-save/存储适配）。测试写在各 `.rs` 的 `#[cfg(test)] mod tests`。三类自动跳过（CI 安全）：`parser::parses_all_real_data` 缺 `JopinData/`；wasm 夹具测试缺 `plugins-examples/*/plugin.wasm`（先跑 `plugins-examples/build-wasm.sh`）；webdav 插件集成测试未设 `JASPER_TEST_WEBDAV_URL`（CI 起 docker-compose.dev.yml 后设 `http://127.0.0.1:8081/`）。
+- **Rust 单元**：`cd core && cargo test`（parser/serialize/library；`--features serde` 再跑一遍含 serde 往返）+ `cd plugin-sdk && cargo test`（ABI 信封/存储路由，native）+ `cd server && cargo test`（config/storage/cache/webdav）**及** `cargo test --features plugins`（manifest/zip 安装/能力门控/限额/before-save/存储适配）。测试写在各 `.rs` 的 `#[cfg(test)] mod tests`。三类自动跳过（CI 安全）：`parser::parses_all_real_data` 缺 `JopinData/`；wasm 夹具测试缺 `plugins-examples/*/plugin.wasm`（先跑 `plugins-examples/build-wasm.sh`）；存储插件集成测试未设环境变量——webdav 用 `JASPER_TEST_WEBDAV_URL=http://127.0.0.1:8081/`、s3 用 `JASPER_TEST_S3_URL=http://127.0.0.1:9000`（`docker compose -f docker-compose.dev.yml up -d` 同时起 hacdias/webdav 与 MinIO；MinIO 凭据 minioadmin/minioadmin，桶由插件 init_new 自动建）。
 - **前端单元**（`cd web && pnpm test`，Vitest + jsdom）：`src/**/*.test.ts` 与源码同目录。覆盖 `api`(parseResourceId/taskProgress)、`render`(markdown/`:/id`改写/HTML 净化)、`i18n`(t 插值/切换/zh-en 键与占位符对齐)、`milkdown/imageBlockAlt`(图片 alt 往返)、`schema`/`SchemaForm`(字段词汇校验+渲染)、`plugins`(探测含 SPA-fallback 坑/provider 过滤/主题 link 注入)。`pnpm check` 也会类型检查测试文件。
 - **全栈 e2e**（`cd web && pnpm e2e`，Playwright，真起 Rust 后端）：代码在 `web/e2e/`。`make-fixture.mjs` 生成最小 Joplin 库（字段对齐 `serialize.rs`）；`server.mjs` 是 `webServer` 启动器——每次重建临时数据源 + 隔离 `JASPER_CONFIG_DIR`（**否则会读到开发机指向 JopinData 的已存配置**），起 `server/target/debug/jasper` 且经 `JASPER_WEB_DIR` 托管 `web/dist`；`playwright.config.ts` 里把 `127.0.0.1` 加进 `NO_PROXY`（有代理环境时健康检查才连得上）、`webServer.env` 必须并入 `process.env`。specs 覆盖 加载/搜索/渲染/编辑写回、**富文本图片 alt 回归**，以及**插件流**（`plugins.spec.ts` 装 `e2e/fixtures/*.jplug`：主题自动启用→ThemePicker→卸载回落 + consent 弹窗；后端须带 `--features plugins` 构建，否则该组自动跳过；`wizard-plugin-source.spec.ts` 用 page.route 伪造 provider 断言向导 payload，无需真插件）。夹具由 `e2e/make-plugin-fixtures.py` 生成（zip 已入库）。前置：先 `pnpm build` + `cargo build --features plugins` + `pnpm e2e:install`（下载 Chromium）。
 

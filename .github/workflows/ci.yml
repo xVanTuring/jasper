@@ -36,6 +36,7 @@ jobs:
             plugins-examples/trim-trailing
             plugins-examples/testbed
             plugins-examples/webdav-storage
+            plugins-examples/s3-storage
       - name: Build example plugins (wasm fixtures)
         run: plugins-examples/build-wasm.sh
       - name: cargo test (core)
@@ -44,14 +45,19 @@ jobs:
       - name: cargo test (plugin-sdk)
         working-directory: plugin-sdk
         run: cargo test --locked
-      - name: Start WebDAV test server (plugin integration)
+      - name: cargo test (plugin-sdk examples, native)
+        run: |
+          cargo test --locked --manifest-path plugins-examples/s3-storage/Cargo.toml
+          cargo test --locked --manifest-path plugins-examples/webdav-storage/Cargo.toml
+      - name: Start WebDAV + MinIO test servers (plugin integration)
         run: docker compose -f docker-compose.dev.yml up -d
       - name: cargo test (server, default + plugins)
         working-directory: server
         env:
           JASPER_TEST_WEBDAV_URL: http://127.0.0.1:8081/
+          JASPER_TEST_S3_URL: http://127.0.0.1:9000
         run: cargo test --locked && cargo test --locked --features plugins
-      - name: Stop WebDAV test server
+      - name: Stop test servers
         if: ${{ always() }}
         run: docker compose -f docker-compose.dev.yml down -v
 
