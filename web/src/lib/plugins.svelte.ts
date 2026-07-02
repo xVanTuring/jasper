@@ -40,6 +40,27 @@ export function storageProviders(): StorageProvider[] {
 		)
 }
 
+/** 放到源码编辑器工具栏（note-toolbar）的插件 backend 命令。 */
+export interface EditorCommand {
+	pluginId: string
+	commandId: string
+	title: string
+	icon: string
+}
+
+export function editorCommands(): EditorCommand[] {
+	const out: EditorCommand[] = []
+	for (const p of plugins) {
+		if (!p.enabled || p.error) continue
+		for (const tb of p.contributes.toolbar) {
+			if (tb.location !== 'note-toolbar') continue
+			const cmd = p.contributes.command.find((c) => c.id === tb.command && c.target === 'backend')
+			if (cmd) out.push({ pluginId: p.id, commandId: cmd.id, title: cmd.title, icon: cmd.icon || 'rich' })
+		}
+	}
+	return out
+}
+
 /** 探测 + 拉取插件列表；同步主题 <link> 注入。demo 构建直接视为不可用。 */
 export async function loadPlugins(): Promise<void> {
 	if (IS_DEMO) {

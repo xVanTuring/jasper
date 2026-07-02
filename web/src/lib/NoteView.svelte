@@ -9,7 +9,9 @@
   import Editor from './Editor.svelte'
   import WysiwygEditor from './WysiwygEditor.svelte'
   import EditorToolbar from './EditorToolbar.svelte'
+  import Icon from './Icon.svelte'
   import type { EditorHandle } from './editor/types'
+  import { editorCommands } from './plugins.svelte'
 
   const ENGINE_KEY = 'jasper.editor'
   // 默认源码模式（无损、所见非所得关闭）；只有用户显式开过富文本才记为 'wysiwyg'。
@@ -96,6 +98,32 @@
     scheduleSave()
   }
 
+  // 插件 backend 命令（note-toolbar）：把当前正文交给命令，返回的 body 替换编辑缓冲。
+  // 仅源码模式暴露（富文本会整篇重排 markdown，替换正文语义不清）。
+  let runningCmd = $state<string | null>(null)
+  let cmdError = $state('')
+  async function runPluginCommand(pluginId: string, commandId: string) {
+    if (!detail || runningCmd) return
+    runningCmd = commandId
+    cmdError = ''
+    try {
+      const result = await api.runPluginCommand(pluginId, commandId, {
+        note_id: detail.id,
+        title,
+        body,
+      })
+      if (typeof result.body === 'string' && result.body !== body) {
+        body = result.body
+        sourceHandle?.setValue(body) // 同步编辑器视图
+        scheduleSave() // 走正常自动保存链路
+      }
+    } catch (e) {
+      cmdError = e instanceof Error ? e.message : `${e}`
+    } finally {
+      runningCmd = null
+    }
+  }
+
   async function remove() {
     if (!detail) return
     if (!confirm(t('note.confirmDelete', { title: title || t('common.untitled') }))) return
@@ -136,10 +164,28 @@
       <div class="left">
         {#if editMode && !readOnly}
           <EditorToolbar mode={engine} handle={sourceHandle} />
+          <!-- 插件贡献的编辑器命令（仅源码模式）：一键优化等 -->
+          {#if engine === 'source' && editorCommands().length}
+            <span class="sep"></span>
+            {#each editorCommands() as cmd (cmd.pluginId + ':' + cmd.commandId)}
+              <Button
+                variant="ghost"
+                iconOnly
+                icon={runningCmd === cmd.commandId ? 'clean' : cmd.icon}
+                label={cmd.title}
+                onclick={() => runPluginCommand(cmd.pluginId, cmd.commandId)}
+                disabled={!sourceHandle || runningCmd !== null}
+              />
+            {/each}
+          {/if}
         {/if}
         {#if editMode}
           <span class="save-state {saveState}">
-            {saveState === 'saving' ? t('note.saving') : saveState === 'saved' ? t('note.saved') : saveState === 'error' ? t('note.saveFailed') : ''}
+            {#if cmdError}
+              <span class="cmd-error" title={cmdError}><Icon name="alert" size={12} /> {t('plugins.cmdFailed')}</span>
+            {:else}
+              {saveState === 'saving' ? t('note.saving') : saveState === 'saved' ? t('note.saved') : saveState === 'error' ? t('note.saveFailed') : ''}
+            {/if}
           </span>
         {/if}
       </div>
@@ -232,6 +278,19 @@
   }
   .save-state.error {
     color: var(--danger);
+  }
+  .cmd-error {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: var(--danger);
+  }
+  .sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 18px;
+    background: var(--border);
+    margin: 0 3px;
   }
   .left {
     display: flex;

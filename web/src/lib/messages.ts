@@ -173,6 +173,7 @@ const zh = {
 	'plugins.cap.settings': '存取自身设置',
 	'plugins.cap.hostHttp': '通过本机代理访问网络',
 	'plugins.cap.hostHttpWarn': '注意：该插件可向任意网址发起 HTTP 请求。',
+	'plugins.cmdFailed': '插件命令失败',
 }
 
 const en: typeof zh = {
@@ -335,6 +336,7 @@ const en: typeof zh = {
 	'plugins.cap.settings': 'Store its own settings',
 	'plugins.cap.hostHttp': 'Network access via host proxy',
 	'plugins.cap.hostHttpWarn': 'Warning: this plugin can make HTTP requests to any URL.',
+	'plugins.cmdFailed': 'Plugin command failed',
 }
 
 export type MsgKey = keyof typeof zh

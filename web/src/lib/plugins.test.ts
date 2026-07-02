@@ -15,7 +15,7 @@ function pluginInfo(over: Partial<PluginInfo>): PluginInfo {
 		capabilities: [],
 		hooks: [],
 		error: null,
-		contributes: { theme: [], storage: [] },
+		contributes: { theme: [], storage: [], command: [], toolbar: [] },
 		settings_schema: {},
 		...over,
 	}
@@ -72,9 +72,9 @@ describe('storageProviders', () => {
 			'fetch',
 			vi.fn(async () =>
 				mockPluginsResp([
-					pluginInfo({ id: 'ok', contributes: { theme: [], storage: [storage] } }),
-					pluginInfo({ id: 'off', enabled: false, contributes: { theme: [], storage: [storage] } }),
-					pluginInfo({ id: 'bad', error: 'x', contributes: { theme: [], storage: [storage] } }),
+					pluginInfo({ id: 'ok', contributes: { theme: [], storage: [storage], command: [], toolbar: [] } }),
+					pluginInfo({ id: 'off', enabled: false, contributes: { theme: [], storage: [storage], command: [], toolbar: [] } }),
+					pluginInfo({ id: 'bad', error: 'x', contributes: { theme: [], storage: [storage], command: [], toolbar: [] } }),
 				]),
 			),
 		)
@@ -84,10 +84,57 @@ describe('storageProviders', () => {
 	})
 })
 
+describe('editorCommands', () => {
+	it('取 enabled 插件的 note-toolbar backend 命令', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				mockPluginsResp([
+					pluginInfo({
+						id: 'ai',
+						contributes: {
+							theme: [],
+							storage: [],
+							command: [{ id: 'polish', title: '优化', icon: 'rich', target: 'backend' }],
+							toolbar: [{ command: 'polish', location: 'note-toolbar' }],
+						},
+					}),
+					// 禁用的插件不计入
+					pluginInfo({
+						id: 'off',
+						enabled: false,
+						contributes: {
+							theme: [],
+							storage: [],
+							command: [{ id: 'x', title: 'X', icon: '', target: 'backend' }],
+							toolbar: [{ command: 'x', location: 'note-toolbar' }],
+						},
+					}),
+					// topbar 位置不进编辑器工具栏
+					pluginInfo({
+						id: 'top',
+						contributes: {
+							theme: [],
+							storage: [],
+							command: [{ id: 'y', title: 'Y', icon: '', target: 'backend' }],
+							toolbar: [{ command: 'y', location: 'topbar' }],
+						},
+					}),
+				]),
+			),
+		)
+		const store = await freshStore()
+		await store.loadPlugins()
+		const cmds = store.editorCommands()
+		expect(cmds.map((c) => c.pluginId)).toEqual(['ai'])
+		expect(cmds[0]).toMatchObject({ commandId: 'polish', title: '优化', icon: 'rich' })
+	})
+})
+
 describe('主题 <link> 注入', () => {
 	it('enabled 插件的主题注入、禁用后移除', async () => {
 		const theme = { id: 'oceanic', name: 'Oceanic', base: 'dark' as const, css: 'assets/o.css' }
-		const withTheme = [pluginInfo({ id: 'th', version: '2.0.0', contributes: { theme: [theme], storage: [] } })]
+		const withTheme = [pluginInfo({ id: 'th', version: '2.0.0', contributes: { theme: [theme], storage: [], command: [], toolbar: [] } })]
 		const fetchMock = vi.fn(async () => mockPluginsResp(withTheme))
 		vi.stubGlobal('fetch', fetchMock)
 		const store = await freshStore()

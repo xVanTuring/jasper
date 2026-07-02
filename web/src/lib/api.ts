@@ -93,9 +93,23 @@ export interface StorageContribution {
   config_schema: Schema
 }
 
+export interface CommandContribution {
+  id: string
+  title: string
+  icon: string // 图标令牌名，空 = 默认
+  target: 'backend' | 'builtin'
+}
+
+export interface ToolbarContribution {
+  command: string
+  location: 'note-toolbar' | 'topbar'
+}
+
 export interface PluginContributes {
   theme: ThemeContribution[]
   storage: StorageContribution[]
+  command: CommandContribution[]
+  toolbar: ToolbarContribution[]
 }
 
 export interface PluginInfo {
@@ -302,6 +316,23 @@ const httpApi = {
   // 插件资产 URL（主题 css 等）；?v=版本 破 no-cache 后的旧缓存
   pluginAssetUrl: (id: string, path: string, version: string) =>
     `/api/plugins/${id}/assets/${path}?v=${encodeURIComponent(version)}`,
+  // 执行插件 backend 命令（spec §9.4）。失败抛带服务端 message 的 Error。
+  runPluginCommand: async (
+    pluginId: string,
+    commandId: string,
+    args: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    const res = await fetch(`/api/plugins/${pluginId}/commands/${commandId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ args }),
+    })
+    const body = (await res.json().catch(() => null)) as
+      | { result?: Record<string, unknown>; error?: string; message?: string }
+      | null
+    if (!res.ok) throw new Error(body?.message || body?.error || `command -> ${res.status}`)
+    return body?.result ?? {}
+  },
 }
 
 // demo 模式只覆盖只读路径；写入/资源等仍是 httpApi（demo 站点里不会触发）。
