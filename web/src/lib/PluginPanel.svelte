@@ -1,13 +1,14 @@
 <script lang="ts">
-  // 插件管理面板（顶栏入口，仿 ResourcePanel）：
-  // 列表（contributes 徽标 / 错误徽标）· 启停（enable = 能力授权，弹 PluginConsent）
-  // · 安装 .jplug/.zip · 卸载 · 插件设置（SchemaForm 内联展开）。
+  // 插件管理面板（顶栏入口，仿 ResourcePanel）：两个 tab——
+  // 「已安装」：列表（contributes 徽标 / 错误徽标）· 启停（enable = 能力授权，弹 PluginConsent）
+  //            · 安装 .jplug/.zip · 卸载 · 插件设置（SchemaForm 内联展开）。
+  // 「市场」：拉 registry 静态索引 → 双语取词 → 兼容过滤 → 浏览器下载 .jplug 校验 sha256 → 装进宿主。
   // readOnly 时仅浏览（服务端 guard_read_only 反正也会硬拦写操作）。
   import { onMount } from 'svelte'
   import { fade, fly, scale } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
   import { api, type PluginInfo } from './api'
-  import { t } from './i18n.svelte'
+  import { getLocale, t } from './i18n.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
   import SchemaForm from './SchemaForm.svelte'
@@ -19,6 +20,15 @@
     setPluginEnabled,
     uninstallPlugin,
   } from './plugins.svelte'
+  import { pickText, type MarketEntry } from './market'
+  import {
+    entryState,
+    installFromMarket,
+    loadMarket,
+    marketEntries,
+    marketError,
+    marketLoading,
+  } from './market.svelte'
 
   let {
     onClose,
@@ -30,6 +40,7 @@
     readOnly?: boolean
   } = $props()
 
+  let tab = $state<'installed' | 'market'>('installed')
   let working = $state(false)
   let error = $state('')
   let fileInput: HTMLInputElement | null = $state(null)
@@ -147,6 +158,48 @@
     if (p.hooks.length) out.push(t('plugins.contrib.hooks', { n: p.hooks.length }))
     return out
   }
+
+  // ---------- 市场 ----------
+
+  function openTab(next: 'installed' | 'market') {
+    tab = next
+    error = ''
+    if (next === 'market') void loadMarket()
+  }
+
+  function capLabel(cap: string): string {
+    if (cap === 'settings') return t('plugins.cap.settings')
+    if (cap === 'host:http') return t('plugins.cap.hostHttp')
+    return cap
+  }
+
+  async function marketInstall(entry: MarketEntry) {
+    await run(async () => {
+      try {
+        const r = await installFromMarket(entry)
+        if (r.needs_consent) consentFor = r.plugin
+        tab = 'installed' // 启停/授权都在已安装 tab 里做
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : `${e}`
+        if (msg.includes('sha256 mismatch')) throw new Error(t('plugins.market.shaMismatch'))
+        if (msg.includes('version_conflict')) {
+          if (confirm(t('plugins.confirmForce'))) {
+            const r = await installFromMarket(entry, true)
+            if (r.needs_consent) consentFor = r.plugin
+            tab = 'installed'
+          }
+          return
+        }
+        throw e
+      }
+    })
+  }
+
+  function incompatText(entry: MarketEntry, reason: 'api' | 'host'): string {
+    return reason === 'api'
+      ? t('plugins.market.incompatibleApi', { v: entry.apiVersion })
+      : t('plugins.market.incompatibleHost', { v: entry.minHostVersion })
+  }
 </script>
 
 <svelte:window onkeydown={(e) => e.key === 'Escape' && !consentFor && onClose()} />
@@ -163,7 +216,28 @@
       <Button variant="ghost" iconOnly icon="close" label={t('common.close')} onclick={onClose} />
     </header>
 
-    {#if !readOnly}
+    <div class="tabs" role="tablist">
+      <button
+        role="tab"
+        class="tab"
+        class:active={tab === 'installed'}
+        aria-selected={tab === 'installed'}
+        onclick={() => openTab('installed')}
+      >
+        {t('plugins.tab.installed')}
+      </button>
+      <button
+        role="tab"
+        class="tab"
+        class:active={tab === 'market'}
+        aria-selected={tab === 'market'}
+        onclick={() => openTab('market')}
+      >
+        {t('plugins.tab.market')}
+      </button>
+    </div>
+
+    {#if tab === 'installed' && !readOnly}
       <div class="bar">
         <input
           type="file"
@@ -184,7 +258,71 @@
 
     {#if error}<div class="error"><Icon name="alert" size={14} /> {error}</div>{/if}
 
-    {#if pluginList().length === 0}
+    {#if tab === 'market'}
+      {#if marketLoading()}
+        <div class="empty">{t('plugins.market.loading')}</div>
+      {:else if marketError()}
+        <div class="error"><Icon name="alert" size={14} /> {t('plugins.market.error', { msg: marketError() })}</div>
+        <div class="bar retry">
+          <Button variant="default" label={t('plugins.market.retry')} onclick={() => loadMarket(true)} />
+        </div>
+      {:else if marketEntries().length === 0}
+        <div class="empty">{t('plugins.market.empty')}</div>
+      {:else}
+        <ul class="list">
+          {#each marketEntries() as entry, i (entry.id)}
+            {@const st = entryState(entry, pluginList())}
+            <li class="row" in:fly={{ y: 6, duration: 220, delay: Math.min(i * 16, 220), easing: cubicOut }}>
+              <div class="icon"><Icon name="plug" size={18} /></div>
+              <div class="info">
+                <div class="title-line">
+                  <span class="name" title={entry.id}>{pickText(entry.name, getLocale())}</span>
+                  <span class="version">v{entry.version}</span>
+                  {#each entry.capabilities as cap (cap)}
+                    <span class="badge" title={cap}>{capLabel(cap)}</span>
+                  {/each}
+                </div>
+                <div class="desc" title={pickText(entry.description, getLocale())}>
+                  {pickText(entry.description, getLocale())}
+                </div>
+                <div class="meta">
+                  {#if entry.author}<span>{entry.author}</span>{/if}
+                  {#if entry.repo}
+                    <a href={entry.repo} target="_blank" rel="noopener noreferrer">{t('plugins.market.repo')}</a>
+                  {/if}
+                </div>
+              </div>
+              <div class="actions">
+                {#if st.kind === 'incompatible'}
+                  <span class="state" title={incompatText(entry, st.compat.reason)}>
+                    {incompatText(entry, st.compat.reason)}
+                  </span>
+                {:else if st.kind === 'installed'}
+                  <span class="state">{t('plugins.market.installed')}</span>
+                {:else if readOnly}
+                  <span class="state">{t('plugins.market.readOnly')}</span>
+                {:else if st.kind === 'update'}
+                  <Button
+                    variant="primary"
+                    label={working ? t('plugins.market.installing') : t('plugins.market.update', { v: entry.version })}
+                    onclick={() => marketInstall(entry)}
+                    disabled={working}
+                  />
+                {:else}
+                  <Button
+                    variant="default"
+                    icon="plus"
+                    label={working ? t('plugins.market.installing') : t('plugins.market.install')}
+                    onclick={() => marketInstall(entry)}
+                    disabled={working}
+                  />
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {:else if pluginList().length === 0}
       <div class="empty">{t('plugins.empty')}</div>
     {:else}
       <ul class="list">
@@ -294,10 +432,48 @@
     margin: 0;
     font-size: 18px;
   }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-top: 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    appearance: none;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
   .bar {
     display: flex;
     justify-content: flex-end;
     margin: 12px 0 6px;
+  }
+  .bar.retry {
+    justify-content: center;
+  }
+  .meta {
+    display: flex;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .meta a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .meta a:hover {
+    text-decoration: underline;
   }
   .file-input {
     display: none;

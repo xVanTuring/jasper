@@ -110,6 +110,8 @@ struct StatusResp {
     notes: usize,
     folders: usize,
     read_only: bool,
+    /// 服务端版本（市场 UI 拿它做 minHostVersion 兼容过滤）
+    version: &'static str,
 }
 
 #[derive(Serialize)]
@@ -281,7 +283,7 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResp> {
         .map(|c| c.source_type)
         .unwrap_or_default();
     let read_only = state.read_only.load(Ordering::Relaxed);
-    Json(StatusResp { configured, source_type, notes, folders, read_only })
+    Json(StatusResp { configured, source_type, notes, folders, read_only, version: env!("CARGO_PKG_VERSION") })
 }
 
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<SourceConfig> {

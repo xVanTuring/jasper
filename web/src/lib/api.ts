@@ -62,6 +62,7 @@ export interface StatusResp {
   notes: number
   folders: number
   read_only: boolean // 服务端只读模式是否开启
+  version: string // 服务端版本（市场 UI 做 minHostVersion 兼容过滤）
 }
 
 export interface ConfigResult {
@@ -343,6 +344,7 @@ const demoApi = {
     notes: 0,
     folders: 0,
     read_only: true, // demo 天然只读
+    version: '0.0.0-demo',
   }),
   folders: async (): Promise<FolderNode[]> => JSON.parse((await wasmDemo()).folders()),
   notes: async (folderId: string): Promise<NoteSummary[]> =>

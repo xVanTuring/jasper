@@ -174,6 +174,21 @@ const zh = {
 	'plugins.cap.hostHttp': '通过本机代理访问网络',
 	'plugins.cap.hostHttpWarn': '注意：该插件可向任意网址发起 HTTP 请求。',
 	'plugins.cmdFailed': '插件命令失败',
+	'plugins.tab.installed': '已安装',
+	'plugins.tab.market': '市场',
+	'plugins.market.loading': '正在加载插件市场…',
+	'plugins.market.empty': '市场暂无插件。',
+	'plugins.market.error': '加载市场失败：{msg}',
+	'plugins.market.retry': '重试',
+	'plugins.market.install': '安装',
+	'plugins.market.installing': '安装中…',
+	'plugins.market.installed': '已安装',
+	'plugins.market.update': '更新到 v{v}',
+	'plugins.market.repo': '仓库',
+	'plugins.market.readOnly': '只读模式',
+	'plugins.market.incompatibleApi': '需要更新版本的 Jasper（插件 API {v}）',
+	'plugins.market.incompatibleHost': '需要 Jasper ≥ {v}',
+	'plugins.market.shaMismatch': '下载校验失败（sha256 不匹配），已中止安装',
 }
 
 const en: typeof zh = {
@@ -337,6 +352,21 @@ const en: typeof zh = {
 	'plugins.cap.hostHttp': 'Network access via host proxy',
 	'plugins.cap.hostHttpWarn': 'Warning: this plugin can make HTTP requests to any URL.',
 	'plugins.cmdFailed': 'Plugin command failed',
+	'plugins.tab.installed': 'Installed',
+	'plugins.tab.market': 'Market',
+	'plugins.market.loading': 'Loading plugin market…',
+	'plugins.market.empty': 'No plugins in the market yet.',
+	'plugins.market.error': 'Failed to load the market: {msg}',
+	'plugins.market.retry': 'Retry',
+	'plugins.market.install': 'Install',
+	'plugins.market.installing': 'Installing…',
+	'plugins.market.installed': 'Installed',
+	'plugins.market.update': 'Update to v{v}',
+	'plugins.market.repo': 'Repo',
+	'plugins.market.readOnly': 'Read-only',
+	'plugins.market.incompatibleApi': 'Needs a newer Jasper (plugin API {v})',
+	'plugins.market.incompatibleHost': 'Needs Jasper ≥ {v}',
+	'plugins.market.shaMismatch': 'Download verification failed (sha256 mismatch); install aborted',
 }
 
 export type MsgKey = keyof typeof zh
