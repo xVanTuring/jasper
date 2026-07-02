@@ -26,6 +26,34 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/plugins/{id}/settings", get(get_settings).put(put_settings))
         .route("/api/plugins/{id}/commands/{cmd}", post(run_command))
         .route("/api/plugins/{id}/assets/{*path}", get(asset))
+        // 宿主级 AI 配置（spec 0.3 §9.5）：host:ai 的密钥/端点，插件永不可见。
+        // PUT 在只读守卫之内自动被拦；GET 回显 api_key（与数据源密码同姿势，本机信任模型）。
+        .route("/api/ai/config", get(get_ai_config).put(put_ai_config))
+}
+
+async fn get_ai_config(State(state): State<Arc<AppState>>) -> Json<crate::config::AiConfig> {
+    Json(state.config.lock().unwrap().ai_config())
+}
+
+async fn put_ai_config(
+    State(state): State<Arc<AppState>>,
+    Json(cfg): Json<crate::config::AiConfig>,
+) -> Response {
+    if !cfg.provider.is_empty() && cfg.provider != "anthropic" && cfg.provider != "openai" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid", "message": "provider 须为 anthropic|openai（或留空表示未配置）" })),
+        )
+            .into_response();
+    }
+    match state.config.lock().unwrap().save_ai_config(&cfg) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "internal", "message": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 fn host_of(state: &Arc<AppState>) -> Result<Arc<PluginHost>, Response> {
@@ -392,6 +420,55 @@ mod tests {
         let (st, body) = send(state, "POST", "/api/plugins/install", b"not a zip".to_vec()).await;
         assert_eq!(st, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "bad_manifest");
+    }
+
+    #[tokio::test]
+    async fn ai_config_round_trip_and_validation() {
+        let (_dir, state) = state_with_host(false);
+        // 初始：全空
+        let (st, body) = send(state.clone(), "GET", "/api/ai/config", vec![]).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body["provider"], "");
+
+        // 非法 provider → 400
+        let (st, body) = send(
+            state.clone(),
+            "PUT",
+            "/api/ai/config",
+            br#"{"provider":"gemini","base_url":"","api_key":"k","model":"m"}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+
+        // 保存 + 回读（api_key 回显，与数据源密码同姿势）
+        let (st, _) = send(
+            state.clone(),
+            "PUT",
+            "/api/ai/config",
+            br#"{"provider":"openai","base_url":"http://127.0.0.1:11434/v1/","api_key":"sk-x","model":"qwen3"}"#
+                .to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+        let (_, body) = send(state, "GET", "/api/ai/config", vec![]).await;
+        assert_eq!(body["provider"], "openai");
+        assert_eq!(body["api_key"], "sk-x");
+        assert_eq!(body["model"], "qwen3");
+    }
+
+    #[tokio::test]
+    async fn ai_config_put_blocked_in_read_only() {
+        let (_dir, state) = state_with_host(true);
+        let (st, _) = send(
+            state.clone(),
+            "PUT",
+            "/api/ai/config",
+            br#"{"provider":"openai","base_url":"","api_key":"k","model":"m"}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, _) = send(state, "GET", "/api/ai/config", vec![]).await;
+        assert_eq!(st, StatusCode::OK);
     }
 
     /// 极简 stub HTTP 端点：任意请求都返回一段固定的响应体。

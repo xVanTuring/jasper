@@ -10,6 +10,8 @@ use axum::Router;
 use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "plugins")]
+mod ai;
+#[cfg(feature = "plugins")]
 mod hooks;
 #[cfg(feature = "plugins")]
 mod host;

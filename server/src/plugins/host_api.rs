@@ -31,6 +31,7 @@ pub fn handle(ctx: &mut HostCtx, method: &str, params: Value) -> Value {
         "notes.list_folders" => need(ctx, "notes:read").and_then(|_| notes_list_folders(ctx)),
         "notes.upsert" => need(ctx, "notes:write").and_then(|_| notes_upsert(ctx, &params)),
         "notes.create" => need(ctx, "notes:write").and_then(|_| notes_create(ctx, &params)),
+        "ai.complete" => need(ctx, "host:ai").and_then(|_| ai_complete(ctx, &params)),
         other => Err(("unsupported".into(), format!("宿主不支持方法: {other}"))),
     };
     match r {
@@ -307,4 +308,11 @@ fn notes_create(ctx: &mut HostCtx, params: &Value) -> HostResult {
     *io_time += started.elapsed();
     let saved = saved.map_err(|e| ("internal".to_string(), format!("写入失败: {e}")))?;
     Ok(json!({ "note": saved, "pending": false }))
+}
+
+/// `ai.complete`（spec 0.3 §6.5）：宿主代理的一次性补全，实现在 ai.rs（genai）。
+fn ai_complete(ctx: &mut HostCtx, params: &Value) -> HostResult {
+    let HostCtx { notes, io_time, .. } = ctx;
+    let n = notes_ctx(notes)?;
+    super::ai::complete(n, io_time, params)
 }

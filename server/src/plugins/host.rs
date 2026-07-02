@@ -842,6 +842,138 @@ mod tests {
         assert!(pending.lock().unwrap().is_empty());
     }
 
+    // ---------- ai.complete（spec 0.3 §6.5，genai）----------
+
+    const AI_MANIFEST: &str = "id = \"testbed\"\nname = \"T\"\nversion = \"1\"\napiVersion = \"0.3\"\n[backend]\nwasm = \"plugin.wasm\"\ncapabilities = [\"host:ai\"]\n";
+
+    fn ctx_with_ai(fx: &NotesFixture, ai: crate::config::AiConfig) -> NotesCtx {
+        let (mut ctx, _) = ctx_of(fx, false, false);
+        ctx.ai = ai;
+        ctx
+    }
+
+    /// 极简 HTTP stub：对每个连接回固定 JSON 后关闭；服务 `hits` 个连接后退出。
+    /// 顺带豁免本机代理（开发机常设 HTTP_PROXY；reqwest 默认吃环境代理，
+    /// 127.0.0.1 进代理会 502——与 e2e playwright 配置里的 NO_PROXY 同一坑）。
+    fn spawn_ai_stub(body: &'static str, hits: usize) -> String {
+        std::env::set_var("NO_PROXY", "127.0.0.1,localhost");
+        std::env::set_var("no_proxy", "127.0.0.1,localhost");
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(hits) {
+                let Ok(mut s) = stream else { continue };
+                s.set_read_timeout(Some(Duration::from_millis(500))).ok();
+                let mut req = Vec::new();
+                let mut buf = [0u8; 65536];
+                loop {
+                    match s.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            req.extend_from_slice(&buf[..n]);
+                            if let Some(pos) = req.windows(4).position(|w| w == b"\r\n\r\n") {
+                                let head = String::from_utf8_lossy(&req[..pos]).to_lowercase();
+                                let cl = head
+                                    .split("content-length:")
+                                    .nth(1)
+                                    .and_then(|s| s.split(['\r', '\n']).next())
+                                    .and_then(|s| s.trim().parse::<usize>().ok())
+                                    .unwrap_or(0);
+                                if req.len() >= pos + 4 + cl {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    #[test]
+    fn ai_complete_via_openai_stub() {
+        let Some((_dir, host)) = host_with_manifest(AI_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let base = spawn_ai_stub(
+            r#"{"id":"chatcmpl-x","object":"chat.completion","created":0,"model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","content":"stubbed-reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#,
+            4,
+        );
+        let ctx = ctx_with_ai(
+            &fx,
+            crate::config::AiConfig {
+                provider: "openai".into(),
+                base_url: format!("{base}/v1/"),
+                api_key: "sk-test".into(),
+                model: "gpt-test".into(),
+            },
+        );
+        let r = host
+            .dispatch_with_notes("testbed", "command", cmd("ai-echo", json!({"prompt": "hi"})), CallClass::Normal, Some(ctx))
+            .unwrap();
+        assert_eq!(r["content"], "stubbed-reply");
+    }
+
+    #[test]
+    fn ai_complete_via_anthropic_stub() {
+        let Some((_dir, host)) = host_with_manifest(AI_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let base = spawn_ai_stub(
+            r#"{"id":"msg_x","type":"message","role":"assistant","model":"claude-test","content":[{"type":"text","text":"anthropic-reply"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+            4,
+        );
+        let ctx = ctx_with_ai(
+            &fx,
+            crate::config::AiConfig {
+                provider: "anthropic".into(),
+                base_url: format!("{base}/v1/"),
+                api_key: "sk-ant-test".into(),
+                model: "claude-test".into(),
+            },
+        );
+        let r = host
+            .dispatch_with_notes("testbed", "command", cmd("ai-echo", json!({"prompt": "hi"})), CallClass::Normal, Some(ctx))
+            .unwrap();
+        assert_eq!(r["content"], "anthropic-reply");
+    }
+
+    #[test]
+    fn ai_unconfigured_is_internal_with_hint() {
+        let Some((_dir, host)) = host_with_manifest(AI_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let (ctx, _) = ctx_of(&fx, false, false); // AiConfig 默认 = 未配置
+        let err = host
+            .dispatch_with_notes("testbed", "command", cmd("ai-echo", json!({"prompt": "hi"})), CallClass::Normal, Some(ctx))
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, message } => {
+                assert_eq!(code, "internal");
+                assert!(message.contains("设置"), "message 应指引去设置页: {message}");
+            }
+            other => panic!("期望 internal，得到 {other}"),
+        }
+    }
+
+    #[test]
+    fn ai_without_capability_is_forbidden() {
+        let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
+        let fx = notes_fixture();
+        let (ctx, _) = ctx_of(&fx, false, false);
+        let err = host
+            .dispatch_with_notes("testbed", "command", cmd("ai-echo", json!({"prompt": "hi"})), CallClass::Normal, Some(ctx))
+            .unwrap_err();
+        match err {
+            CallError::Plugin { code, .. } => assert_eq!(code, "forbidden"),
+            other => panic!("期望 forbidden，得到 {other}"),
+        }
+    }
+
     #[test]
     fn ui_dispatch_returns_tree_and_reaches_notes() {
         let Some((_dir, host)) = host_with_manifest(NOTES_MANIFEST) else { return };
