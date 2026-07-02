@@ -340,9 +340,9 @@ pass = { type = "secret" }
         .is_err());
         // MAJOR 不支持
         assert!(parse("id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"1.0\"").is_err());
-        // minHostVersion 高于宿主
+        // minHostVersion 高于宿主（宿主版本是日期式 YYYY.M.D，「未来」要选到日期够不着的量级）
         assert!(parse(
-            "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.2\"\nminHostVersion = \"999.0.0\""
+            "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.2\"\nminHostVersion = \"999999.0.0\""
         )
         .is_err());
         // select 缺 options
