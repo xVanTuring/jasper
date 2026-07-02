@@ -44,10 +44,13 @@ use std::sync::{Arc, Mutex, RwLock};
 pub struct AppState {
     pub library: RwLock<Library>,
     pub storage: RwLock<Option<Arc<dyn StorageBackend>>>,
-    pub config: Mutex<ConfigStore>,
+    /// Arc 化以便与 PluginHost 共享同一配置库连接。
+    pub config: Arc<Mutex<ConfigStore>>,
     pub cache: crate::cache::CacheStore,
     /// 只读模式：为真时中间件拒绝一切写方法（/api/config 除外）。运行时可切换。
     pub read_only: AtomicBool,
+    /// 插件宿主（--features plugins；关闭或初始化失败时为 None）。
+    pub plugins: Option<Arc<crate::plugins::PluginHost>>,
 }
 
 fn storage_of(state: &Arc<AppState>) -> Option<Arc<dyn StorageBackend>> {
@@ -68,6 +71,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/resources", get(list_resources).post(upload_resource))
         .route("/api/resources/{id}", get(resource).put(rename_resource).delete(delete_resource))
         .route("/api/search", get(search))
+        // 插件管理路由（feature off = 空路由）。挂在只读守卫之内 → 只读时插件写操作同样被拦。
+        .merge(crate::plugins::api_router())
         // 只读守卫：只读模式下拦截一切写方法（/api/config 除外）。放在最内层，
         // 保证它能拿到 State 且早于任何 handler 运行。
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard_read_only))
@@ -132,6 +137,13 @@ struct ApplyConfigReq {
     webdav_user: String,
     #[serde(default)]
     webdav_pass: String,
+    /// source_type=="plugin"（插件存储 provider，spec 0.2）
+    #[serde(default)]
+    plugin_id: String,
+    #[serde(default)]
+    plugin_storage: String,
+    #[serde(default)]
+    plugin_config: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     read_only: bool,
     #[serde(default)]
@@ -280,15 +292,25 @@ async fn apply_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ApplyConfigReq>,
 ) -> Json<ConfigResult> {
-    let cfg = SourceConfig {
+    let mut cfg = SourceConfig {
         source_type: req.source_type,
         local_path: req.local_path,
         webdav_url: req.webdav_url,
         webdav_user: req.webdav_user,
         webdav_pass: req.webdav_pass,
+        plugin_id: req.plugin_id,
+        plugin_storage: req.plugin_storage,
+        plugin_config: serde_json::to_string(&req.plugin_config).unwrap_or_default(),
         read_only: req.read_only,
+        ..Default::default()
     };
-    let storage = match config::build_storage(&cfg) {
+    // 插件数据源：按贡献的 config_schema 校验/规范化，并算出缓存隔离键（不含 secret）
+    if cfg.source_type == "plugin" {
+        if let Err(e) = crate::plugins::prepare_plugin_source(&mut cfg, state.plugins.as_ref()) {
+            return Json(ConfigResult::err(e));
+        }
+    }
+    let storage = match config::build_storage(&cfg, state.plugins.as_ref()) {
         Ok(s) => s,
         Err(e) => return Json(ConfigResult::err(e)),
     };
@@ -615,11 +637,18 @@ async fn update_note(
     Path(id): Path<String>,
     Json(req): Json<UpdateNoteReq>,
 ) -> Result<Json<NoteDetail>, StatusCode> {
-    let original = {
+    let (original, hook_note) = {
         let lib = state.library.read().unwrap();
-        lib.note_raw(&id).map(|s| s.to_string()).ok_or(StatusCode::NOT_FOUND)?
+        let original = lib.note_raw(&id).map(|s| s.to_string()).ok_or(StatusCode::NOT_FOUND)?;
+        // 给 before-save 钩子的笔记形状：现有元数据 + 新标题/正文
+        let mut n = lib.note(&id).ok_or(StatusCode::NOT_FOUND)?.clone();
+        n.title = req.title.clone();
+        n.body = req.body.clone();
+        (original, n)
     };
-    let content = serialize::update_note_md(&original, &req.title, &req.body, serialize::now_ms())
+    // 插件 before-save 钩子（无插件时直通；插件失败回退原值，不丢数据）
+    let (title, body) = crate::plugins::before_save(&state.plugins, hook_note).await;
+    let content = serialize::update_note_md(&original, &title, &body, serialize::now_ms())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     write_item(&state, format!("{id}.md"), content.clone()).await?;
@@ -666,8 +695,24 @@ async fn create_note(
     Json(req): Json<CreateNoteReq>,
 ) -> Result<Json<NoteDetail>, StatusCode> {
     let id = serialize::new_id();
-    let content =
-        serialize::new_note_md(&id, &req.parent_id, &req.title, &req.body, req.is_todo, serialize::now_ms());
+    let now = serialize::now_ms();
+    // 插件 before-save 钩子：以「将要创建的笔记」形状调用（spec §8 也覆盖新建）
+    let hook_note = Note {
+        id: id.clone(),
+        parent_id: req.parent_id.clone(),
+        title: req.title.clone(),
+        body: req.body.clone(),
+        created_time: now,
+        updated_time: now,
+        markup_language: MarkupLanguage::Markdown,
+        is_todo: req.is_todo,
+        todo_completed: false,
+        is_conflict: false,
+        source_url: String::new(),
+        order: 0,
+    };
+    let (title, body) = crate::plugins::before_save(&state.plugins, hook_note).await;
+    let content = serialize::new_note_md(&id, &req.parent_id, &title, &body, req.is_todo, now);
 
     write_item(&state, format!("{id}.md"), content.clone()).await?;
 
@@ -804,9 +849,10 @@ mod tests {
         Arc::new(AppState {
             library: RwLock::new(Library::default()),
             storage: RwLock::new(None),
-            config: Mutex::new(ConfigStore::in_memory().unwrap()),
+            config: Arc::new(Mutex::new(ConfigStore::in_memory().unwrap())),
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(read_only),
+            plugins: None,
         })
     }
 

@@ -20,6 +20,7 @@ mod api;
 mod cache;
 mod config;
 mod indexer;
+mod plugins;
 mod storage;
 #[cfg(feature = "embed")]
 mod web_assets;
@@ -77,20 +78,25 @@ async fn main() -> Result<()> {
 
     println!("jasper 启动中…");
 
-    let config_store = ConfigStore::open()?;
+    // Arc 化：与插件宿主共享同一配置库连接
+    let config_store = Arc::new(Mutex::new(ConfigStore::open()?));
     // 增量缓存库；打开失败则退化为内存缓存（等同禁用缓存，不影响功能）。
     let cache_store = cache::CacheStore::open().unwrap_or_else(|e| {
         eprintln!("缓存库打开失败，本次禁用增量缓存: {e}");
         cache::CacheStore::in_memory().expect("内存缓存初始化失败")
     });
     // 已保存配置优先；否则用命令行/环境变量引导
-    let cfg = config_store.load().or_else(bootstrap_config);
+    let cfg = config_store.lock().unwrap().load().or_else(bootstrap_config);
+
+    // 插件宿主先于数据源初始化（"plugin" 数据源的 build_storage 需要它；
+    // 默认构建为 None，零开销）
+    let plugin_host = plugins::init(config_store.clone());
 
     let mut library = Library::default();
     let mut storage_opt: Option<Arc<dyn StorageBackend>> = None;
 
     if let Some(cfg) = &cfg {
-        match config::build_storage(cfg) {
+        match config::build_storage(cfg, plugin_host.as_ref()) {
             Ok(storage) => match indexer::build_cached(
                 storage.as_ref(),
                 &cache_store,
@@ -105,8 +111,9 @@ async fn main() -> Result<()> {
                     library = lib;
                     storage_opt = Some(storage);
                     // 引导成功则持久化，省得每次传参
-                    if config_store.load().is_none() {
-                        config_store.save(cfg).ok();
+                    let store = config_store.lock().unwrap();
+                    if store.load().is_none() {
+                        store.save(cfg).ok();
                     }
                 }
                 Err(e) => eprintln!("索引失败（进入未配置状态，可在浏览器重新配置）: {e}"),
@@ -127,9 +134,10 @@ async fn main() -> Result<()> {
     let state = Arc::new(AppState {
         library: RwLock::new(library),
         storage: RwLock::new(storage_opt),
-        config: Mutex::new(config_store),
+        config: config_store,
         cache: cache_store,
         read_only: AtomicBool::new(read_only),
+        plugins: plugin_host,
     });
 
     // 托管前端：SPA 回退到 index.html。开发期前端跑 Vite 即可。

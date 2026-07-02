@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct SourceConfig {
-    /// "local" | "webdav"
+    /// "local" | "webdav" | "plugin"（插件存储 provider，spec 0.2）
     pub source_type: String,
     #[serde(default)]
     pub local_path: String,
@@ -24,6 +24,19 @@ pub struct SourceConfig {
     pub webdav_user: String,
     #[serde(default)]
     pub webdav_pass: String,
+    /// source_type=="plugin" 时：提供 provider 的插件 id。
+    #[serde(default)]
+    pub plugin_id: String,
+    /// source_type=="plugin" 时：插件内的存储贡献 id（[[contributes.storage]].id）。
+    #[serde(default)]
+    pub plugin_storage: String,
+    /// source_type=="plugin" 时：数据源配置（JSON 对象文本，可含 secret，明文——与 webdav_pass 同姿势）。
+    #[serde(default)]
+    pub plugin_config: String,
+    /// apply 时按 config_schema 剔除 secret 字段后的规范化 JSON（键排序）。
+    /// 落库持久化，让 source_key() 保持纯函数（无需 manifest 即可算缓存键）。
+    #[serde(default)]
+    pub plugin_config_key: String,
     /// 只读模式：开启后拒绝一切写操作（应用级开关，随配置持久化）。
     #[serde(default)]
     pub read_only: bool,
@@ -54,6 +67,24 @@ impl ConfigStore {
             "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
             [],
         )?;
+        // 插件状态与插件作用域 KV（plugins feature 的路由使用；表无条件建好，成本可忽略）
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plugin_state (
+                id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL,
+                granted_caps TEXT NOT NULL DEFAULT ''
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS plugin_settings (
+                plugin_id TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                PRIMARY KEY (plugin_id, key)
+            )",
+            [],
+        )?;
         Ok(Self { conn })
     }
 
@@ -73,6 +104,10 @@ impl ConfigStore {
             webdav_url: get("webdav_url").unwrap_or_default(),
             webdav_user: get("webdav_user").unwrap_or_default(),
             webdav_pass: get("webdav_pass").unwrap_or_default(),
+            plugin_id: get("plugin_id").unwrap_or_default(),
+            plugin_storage: get("plugin_storage").unwrap_or_default(),
+            plugin_config: get("plugin_config").unwrap_or_default(),
+            plugin_config_key: get("plugin_config_key").unwrap_or_default(),
             read_only: get("read_only").map(|v| v == "true" || v == "1").unwrap_or(false),
         })
     }
@@ -90,13 +125,87 @@ impl ConfigStore {
         set("webdav_url", &cfg.webdav_url)?;
         set("webdav_user", &cfg.webdav_user)?;
         set("webdav_pass", &cfg.webdav_pass)?;
+        set("plugin_id", &cfg.plugin_id)?;
+        set("plugin_storage", &cfg.plugin_storage)?;
+        set("plugin_config", &cfg.plugin_config)?;
+        set("plugin_config_key", &cfg.plugin_config_key)?;
         set("read_only", if cfg.read_only { "true" } else { "false" })?;
+        Ok(())
+    }
+
+    // ---------- 插件状态 / 插件设置（spec §5 / §10）----------
+
+    /// 读插件持久化状态：`(enabled, 已授权能力)`。无记录返回 None。
+    pub fn plugin_state(&self, id: &str) -> Option<(bool, Vec<String>)> {
+        self.conn
+            .query_row(
+                "SELECT enabled, granted_caps FROM plugin_state WHERE id=?1",
+                [id],
+                |r| Ok((r.get::<_, i64>(0)? != 0, r.get::<_, String>(1)?)),
+            )
+            .ok()
+            .map(|(enabled, caps)| {
+                let caps = caps.split(',').filter(|s| !s.is_empty()).map(String::from).collect();
+                (enabled, caps)
+            })
+    }
+
+    pub fn set_plugin_state(&self, id: &str, enabled: bool, granted_caps: &[String]) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO plugin_state(id,enabled,granted_caps) VALUES(?1,?2,?3)
+             ON CONFLICT(id) DO UPDATE SET enabled=?2, granted_caps=?3",
+            rusqlite::params![id, enabled as i64, granted_caps.join(",")],
+        )?;
+        Ok(())
+    }
+
+    /// 删除插件的状态与全部设置（卸载时用）。
+    pub fn remove_plugin(&self, id: &str) -> Result<()> {
+        self.conn.execute("DELETE FROM plugin_state WHERE id=?1", [id])?;
+        self.conn.execute("DELETE FROM plugin_settings WHERE plugin_id=?1", [id])?;
+        Ok(())
+    }
+
+    /// 读插件作用域全部设置（value 为 JSON 文本）。
+    pub fn plugin_settings(&self, plugin_id: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        let Ok(mut stmt) = self.conn.prepare("SELECT key, value FROM plugin_settings WHERE plugin_id=?1")
+        else {
+            return out;
+        };
+        let rows = stmt.query_map([plugin_id], |r| Ok((r.get(0)?, r.get(1)?)));
+        if let Ok(rows) = rows {
+            out.extend(rows.flatten());
+        }
+        out
+    }
+
+    /// 写/删单个插件设置：`value_json = None` 删除该键。
+    pub fn set_plugin_setting(&self, plugin_id: &str, key: &str, value_json: Option<&str>) -> Result<()> {
+        match value_json {
+            Some(v) => {
+                self.conn.execute(
+                    "INSERT INTO plugin_settings(plugin_id,key,value) VALUES(?1,?2,?3)
+                     ON CONFLICT(plugin_id,key) DO UPDATE SET value=?3",
+                    rusqlite::params![plugin_id, key, v],
+                )?;
+            }
+            None => {
+                self.conn.execute(
+                    "DELETE FROM plugin_settings WHERE plugin_id=?1 AND key=?2",
+                    rusqlite::params![plugin_id, key],
+                )?;
+            }
+        }
         Ok(())
     }
 }
 
-/// 根据配置构造存储后端。
-pub fn build_storage(cfg: &SourceConfig) -> Result<Arc<dyn StorageBackend>> {
+/// 根据配置构造存储后端。`plugins`：插件宿主（"plugin" 数据源用；feature 关/未初始化传 None 即报错）。
+pub fn build_storage(
+    cfg: &SourceConfig,
+    plugins: Option<&Arc<crate::plugins::PluginHost>>,
+) -> Result<Arc<dyn StorageBackend>> {
     match cfg.source_type.as_str() {
         "local" => {
             if cfg.local_path.trim().is_empty() {
@@ -114,6 +223,7 @@ pub fn build_storage(cfg: &SourceConfig) -> Result<Arc<dyn StorageBackend>> {
                 (!cfg.webdav_pass.is_empty()).then_some(cfg.webdav_pass.as_str()),
             )))
         }
+        "plugin" => crate::plugins::build_plugin_storage(cfg, plugins),
         other => Err(anyhow!("未知数据源类型: {other}")),
     }
 }
@@ -132,11 +242,13 @@ fn config_db_path() -> Result<PathBuf> {
     Ok(config_base_dir()?.join("config.db"))
 }
 
-/// 数据源的稳定标识，用于隔离不同数据源的增量缓存（不含密码）。
+/// 数据源的稳定标识，用于隔离不同数据源的增量缓存（不含密码/secret）。
 pub fn source_key(cfg: &SourceConfig) -> String {
     match cfg.source_type.as_str() {
         "local" => format!("local:{}", cfg.local_path.trim()),
         "webdav" => format!("webdav:{}|{}", cfg.webdav_url.trim(), cfg.webdav_user),
+        // plugin_config_key = apply 时按 schema 剔除 secret 后的规范化 JSON（见 plugins::prepare_plugin_source）
+        "plugin" => format!("plugin:{}/{}|{}", cfg.plugin_id, cfg.plugin_storage, cfg.plugin_config_key),
         other => format!("{other}:"),
     }
 }
@@ -194,5 +306,42 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(source_key(&cfg), "demo:");
+    }
+
+    #[test]
+    fn source_key_plugin_uses_config_key_not_secrets() {
+        let cfg = SourceConfig {
+            source_type: "plugin".into(),
+            plugin_id: "webdav-storage".into(),
+            plugin_storage: "webdav".into(),
+            // apply 时算好的键（secret 已剔除）；原始 plugin_config 含密码但不参与
+            plugin_config: r#"{"pass":"s3cret","url":"https://x/"}"#.into(),
+            plugin_config_key: r#"{"url":"https://x/"}"#.into(),
+            ..Default::default()
+        };
+        let key = source_key(&cfg);
+        assert_eq!(key, r#"plugin:webdav-storage/webdav|{"url":"https://x/"}"#);
+        assert!(!key.contains("s3cret"));
+    }
+
+    #[test]
+    fn plugin_state_and_settings_round_trip() {
+        let store = ConfigStore::in_memory().unwrap();
+        // 状态
+        assert!(store.plugin_state("x").is_none());
+        store.set_plugin_state("x", true, &["host:http".into(), "settings".into()]).unwrap();
+        let (enabled, caps) = store.plugin_state("x").unwrap();
+        assert!(enabled);
+        assert_eq!(caps, ["host:http", "settings"]);
+        // 设置 KV（value 为 JSON 文本）
+        store.set_plugin_setting("x", "k", Some("{\"a\":1}")).unwrap();
+        assert_eq!(store.plugin_settings("x"), [("k".to_string(), "{\"a\":1}".to_string())]);
+        store.set_plugin_setting("x", "k", None).unwrap();
+        assert!(store.plugin_settings("x").is_empty());
+        // 卸载清理
+        store.set_plugin_setting("x", "k2", Some("1")).unwrap();
+        store.remove_plugin("x").unwrap();
+        assert!(store.plugin_state("x").is_none());
+        assert!(store.plugin_settings("x").is_empty());
     }
 }

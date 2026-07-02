@@ -24,15 +24,22 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5"
 # 单文件打包：把 web/dist 编译进二进制（仅 `--features embed` 时生效）
 rust-embed = { version = "8", optional = true, features = ["mime-guess"] }
+# 插件宿主（仅 `--features plugins` 时编译；默认构建零新增依赖）
+wasmi = { version = "1.1", optional = true }
+zip = { version = "8", optional = true, default-features = false, features = ["deflate"] }
+toml = { version = "1", optional = true }
 
 [dev-dependencies]
 # 仅测试用：oneshot 把请求灌进 Router 断言只读守卫行为。
 tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
 
 [features]
 # 开启后 web/dist 在编译期内嵌进二进制，运行时不再依赖磁盘上的前端目录。
 # 需在构建前先 `cd web && pnpm build`。默认关闭，开发/源码构建行为不变。
 embed = ["dep:rust-embed"]
+# 插件系统（spec 0.2）：wasmi 沙箱宿主 + zip 安装 + manifest 解析。
+plugins = ["dep:wasmi", "dep:zip", "dep:toml", "jasper-core/serde"]
 
 [profile.release]
 opt-level = "z"
