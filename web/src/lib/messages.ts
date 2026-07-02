@@ -70,6 +70,7 @@ const zh = {
 	'settings.connect': '连接',
 	'settings.readOnly': '只读模式',
 	'settings.readOnlyDesc': '开启后禁止一切修改（新建/编辑/删除/移动/上传），后端强制拦截，防止意外改动笔记仓库。',
+	'settings.providerMissing': '当前数据源由插件提供，但该插件已被停用或卸载。请先在插件面板恢复它，或改用其它数据源。',
 
 	// 笔记视图
 	'note.saving': '保存中…',
@@ -137,6 +138,41 @@ const zh = {
 	// API 错误（抛出后由界面显示）
 	'api.uploadFailed': '上传失败',
 	'api.deleteResFailed': '删除资源失败',
+
+	// 表单（SchemaForm，插件设置/数据源配置用）
+	'form.required': '必填',
+	'form.invalidNumber': '须为数字',
+	'form.invalidOption': '选项无效',
+	'form.secretSetPh': '已设置，留空保持不变',
+
+	// 插件面板 / 授权
+	'plugins.title': '插件',
+	'plugins.topbar': '插件',
+	'plugins.empty': '尚未安装插件。插件是一个 .jplug（zip）包，可提供主题、存储后端等能力。',
+	'plugins.install': '安装插件',
+	'plugins.installing': '安装中…',
+	'plugins.confirmForce': '已安装相同或更高版本，强制覆盖安装？',
+	'plugins.uninstall': '卸载',
+	'plugins.confirmUninstall': '卸载插件「{name}」？其状态与设置将一并清除。',
+	'plugins.enabled': '已启用',
+	'plugins.disabled': '已禁用',
+	'plugins.errorBadge': '错误',
+	'plugins.settings': '插件设置',
+	'plugins.settingsSaved': '已保存',
+	'plugins.contrib.themes': '主题 ×{n}',
+	'plugins.contrib.storage': '存储 ×{n}',
+	'plugins.contrib.hooks': '钩子 ×{n}',
+	'plugins.consent.title': '启用「{name}」？',
+	'plugins.consent.intro': '该插件的后端代码将在沙箱中运行，并申请以下能力：',
+	'plugins.consent.none': '不申请任何能力（纯计算，无笔记/网络访问）。',
+	'plugins.consent.accept': '启用',
+	'plugins.consent.keepDisabled': '保持禁用',
+	'plugins.cap.notesRead': '读取笔记',
+	'plugins.cap.notesWrite': '修改笔记',
+	'plugins.cap.hostAi': '调用 AI（密钥由本机托管，插件不可见）',
+	'plugins.cap.settings': '存取自身设置',
+	'plugins.cap.hostHttp': '通过本机代理访问网络',
+	'plugins.cap.hostHttpWarn': '注意：该插件可向任意网址发起 HTTP 请求。',
 }
 
 const en: typeof zh = {
@@ -203,6 +239,7 @@ const en: typeof zh = {
 	'settings.connect': 'Connect',
 	'settings.readOnly': 'Read-only mode',
 	'settings.readOnlyDesc': 'When on, all changes (create/edit/delete/move/upload) are disabled and enforced by the backend — preventing any accidental writes to your note library.',
+	'settings.providerMissing': 'The current data source is provided by a plugin that has been disabled or uninstalled. Re-enable it in the plugin panel, or switch to another source.',
 
 	'note.saving': 'Saving…',
 	'note.saved': 'Saved',
@@ -265,6 +302,39 @@ const en: typeof zh = {
 
 	'api.uploadFailed': 'Upload failed',
 	'api.deleteResFailed': 'Failed to delete resource',
+
+	'form.required': 'Required',
+	'form.invalidNumber': 'Must be a number',
+	'form.invalidOption': 'Invalid option',
+	'form.secretSetPh': 'Set — leave blank to keep',
+
+	'plugins.title': 'Plugins',
+	'plugins.topbar': 'Plugins',
+	'plugins.empty': 'No plugins installed. A plugin is a .jplug (zip) package providing themes, storage backends and more.',
+	'plugins.install': 'Install plugin',
+	'plugins.installing': 'Installing…',
+	'plugins.confirmForce': 'The same or a newer version is installed. Force reinstall?',
+	'plugins.uninstall': 'Uninstall',
+	'plugins.confirmUninstall': 'Uninstall plugin “{name}”? Its state and settings will be removed.',
+	'plugins.enabled': 'Enabled',
+	'plugins.disabled': 'Disabled',
+	'plugins.errorBadge': 'Error',
+	'plugins.settings': 'Plugin settings',
+	'plugins.settingsSaved': 'Saved',
+	'plugins.contrib.themes': 'Themes ×{n}',
+	'plugins.contrib.storage': 'Storage ×{n}',
+	'plugins.contrib.hooks': 'Hooks ×{n}',
+	'plugins.consent.title': 'Enable “{name}”?',
+	'plugins.consent.intro': 'Its backend code runs in a sandbox and requests these capabilities:',
+	'plugins.consent.none': 'Requests no capabilities (pure computation; no note/network access).',
+	'plugins.consent.accept': 'Enable',
+	'plugins.consent.keepDisabled': 'Keep disabled',
+	'plugins.cap.notesRead': 'Read notes',
+	'plugins.cap.notesWrite': 'Modify notes',
+	'plugins.cap.hostAi': 'Call AI (keys stay on this machine, invisible to the plugin)',
+	'plugins.cap.settings': 'Store its own settings',
+	'plugins.cap.hostHttp': 'Network access via host proxy',
+	'plugins.cap.hostHttpWarn': 'Warning: this plugin can make HTTP requests to any URL.',
 }
 
 export type MsgKey = keyof typeof zh

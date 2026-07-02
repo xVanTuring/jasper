@@ -6,6 +6,9 @@
   import { t } from './i18n.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
+  import SchemaForm from './SchemaForm.svelte'
+  import { defaultValues, validate, type FieldError } from './schema'
+  import { loadPlugins, pluginsLoaded, storageProviders, type StorageProvider } from './plugins.svelte'
 
   let {
     mode,
@@ -18,28 +21,70 @@
   } = $props()
 
   let libMode = $state<'existing' | 'new'>('existing')
-  let sourceType = $state<'local' | 'webdav'>('local')
+  // 'local' | 'webdav' | 插件 provider 键 'plugin:<插件id>:<贡献id>'
+  let sourceType = $state<string>('local')
   let localPath = $state('')
   let webdavUrl = $state('')
   let webdavUser = $state('')
   let webdavPass = $state('')
   let readOnly = $state(false)
+  // 插件数据源的表单值与校验错误（SchemaForm 驱动）
+  let pluginConfig = $state<Record<string, unknown>>({})
+  let formErrors = $state<Partial<Record<string, FieldError>>>({})
+  // 设置模式回显的 provider 键与配置（切换 provider 时用于恢复）
+  let prefillKey = $state('')
+  let prefillConfig: Record<string, unknown> = {}
 
   let submitting = $state(false)
   let error = $state('')
 
+  const providerKeyOf = (p: StorageProvider) => `plugin:${p.pluginId}:${p.contribution.id}`
+  const currentProvider = $derived(storageProviders().find((p) => providerKeyOf(p) === sourceType))
+  // 回显的 provider 已消失（插件被卸载/停用）→ 警告并禁提交
+  const prefillMissing = $derived(
+    prefillKey !== '' && pluginsLoaded() && !storageProviders().some((p) => providerKeyOf(p) === prefillKey),
+  )
+
+  function selectProvider(p: StorageProvider) {
+    const key = providerKeyOf(p)
+    if (sourceType === key) return
+    sourceType = key
+    formErrors = {}
+    pluginConfig =
+      key === prefillKey ? { ...prefillConfig } : defaultValues(p.contribution.config_schema)
+  }
+
+  // provider 图标：manifest 声明的令牌存在则用之，否则回落 plug
+  function providerIcon(p: StorageProvider): string {
+    const name = p.contribution.icon
+    if (!name) return 'plug'
+    const v = getComputedStyle(document.documentElement).getPropertyValue(`--icon-${name}`)
+    return v.trim() ? name : 'plug'
+  }
+
   onMount(async () => {
+    loadPlugins() // 幂等；保证 providers 可选（含设置页直开的场景）
     // 设置模式下预填当前配置
     if (mode === 'settings') {
       try {
         const c = await api.getConfig()
-        if (c.source_type === 'webdav') sourceType = 'webdav'
-        else if (c.source_type === 'local') sourceType = 'local'
         localPath = c.local_path
         webdavUrl = c.webdav_url
         webdavUser = c.webdav_user
         webdavPass = c.webdav_pass
         readOnly = c.read_only
+        if (c.source_type === 'webdav') sourceType = 'webdav'
+        else if (c.source_type === 'plugin') {
+          // 与 webdav_pass 同姿势：plugin_config（含 secret）由 GET /api/config 回显以支持预填
+          prefillKey = `plugin:${c.plugin_id}:${c.plugin_storage}`
+          try {
+            prefillConfig = JSON.parse(c.plugin_config || '{}')
+          } catch {
+            prefillConfig = {}
+          }
+          sourceType = prefillKey
+          pluginConfig = { ...prefillConfig }
+        } else if (c.source_type === 'local') sourceType = 'local'
       } catch {
         /* 忽略 */
       }
@@ -48,14 +93,38 @@
 
   async function submit() {
     error = ''
+    formErrors = {}
+    let pluginPayload: { plugin_id: string; plugin_storage: string; plugin_config: Record<string, unknown> } = {
+      plugin_id: '',
+      plugin_storage: '',
+      plugin_config: {},
+    }
+    let effectiveType = sourceType
+    if (sourceType.startsWith('plugin:')) {
+      const p = currentProvider
+      if (!p) {
+        error = t('settings.providerMissing')
+        return
+      }
+      const v = validate(p.contribution.config_schema, pluginConfig)
+      formErrors = v.errors
+      if (!v.ok) return
+      effectiveType = 'plugin'
+      pluginPayload = {
+        plugin_id: p.pluginId,
+        plugin_storage: p.contribution.id,
+        plugin_config: v.cleaned,
+      }
+    }
     submitting = true
     try {
       const res = await api.saveConfig({
-        source_type: sourceType,
+        source_type: effectiveType,
         local_path: localPath.trim(),
         webdav_url: webdavUrl.trim(),
         webdav_user: webdavUser,
         webdav_pass: webdavPass,
+        ...pluginPayload,
         read_only: readOnly,
         create_new: libMode === 'new',
       })
@@ -98,15 +167,24 @@
       {libMode === 'existing' ? t('settings.existingDesc') : t('settings.newDesc')}
     </p>
 
-    <!-- 本地 / WebDAV -->
-    <div class="seg">
+    <!-- 本地 / WebDAV / 插件 provider（动态） -->
+    <div class="seg seg-wrap">
       <button class:on={sourceType === 'local'} onclick={() => (sourceType = 'local')}>
         <Icon name="folder" size={14} /> {t('settings.local')}
       </button>
       <button class:on={sourceType === 'webdav'} onclick={() => (sourceType = 'webdav')}>
         <Icon name="cloud" size={14} /> {t('settings.webdav')}
       </button>
+      {#each storageProviders() as p (providerKeyOf(p))}
+        <button class:on={sourceType === providerKeyOf(p)} onclick={() => selectProvider(p)}>
+          <Icon name={providerIcon(p)} size={14} /> {p.contribution.name}
+        </button>
+      {/each}
     </div>
+
+    {#if prefillMissing && sourceType === prefillKey}
+      <div class="error"><Icon name="alert" size={14} /> {t('settings.providerMissing')}</div>
+    {/if}
 
     {#if sourceType === 'local'}
       <label>
@@ -118,7 +196,7 @@
         />
       </label>
       <p class="tip">{t('settings.localTip')}</p>
-    {:else}
+    {:else if sourceType === 'webdav'}
       <label>
         {t('settings.webdavUrl')}
         <input type="text" bind:value={webdavUrl} placeholder={t('settings.webdavUrlPh')} />
@@ -131,6 +209,14 @@
         {t('settings.password')}
         <input type="password" bind:value={webdavPass} autocomplete="current-password" />
       </label>
+    {:else if currentProvider}
+      <div class="plugin-form">
+        <SchemaForm
+          schema={currentProvider.contribution.config_schema}
+          bind:values={pluginConfig}
+          errors={formErrors}
+        />
+      </div>
     {/if}
 
     <label class="toggle">
@@ -150,7 +236,7 @@
         variant="primary"
         label={submitting ? t('settings.connecting') : libMode === 'new' ? t('settings.createConnect') : t('settings.connect')}
         onclick={submit}
-        disabled={submitting}
+        disabled={submitting || (prefillMissing && sourceType === prefillKey)}
       />
     </div>
   </div>
@@ -196,6 +282,16 @@
   .seg {
     display: flex;
     gap: 8px;
+    margin-top: 14px;
+  }
+  .seg-wrap {
+    flex-wrap: wrap;
+  }
+  .seg-wrap button {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 120px;
+  }
+  .plugin-form {
     margin-top: 14px;
   }
   .seg button {

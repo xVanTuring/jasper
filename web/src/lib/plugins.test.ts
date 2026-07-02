@@ -1,0 +1,105 @@
+// plugins.svelte.ts：探测（含 SPA-fallback 坑）、provider 过滤、主题 <link> 注入。
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { PluginInfo } from './api'
+
+function pluginInfo(over: Partial<PluginInfo>): PluginInfo {
+	return {
+		id: 'p',
+		name: 'P',
+		version: '1.0.0',
+		api_version: '0.2',
+		description: '',
+		author: '',
+		enabled: true,
+		has_backend: false,
+		capabilities: [],
+		hooks: [],
+		error: null,
+		contributes: { theme: [], storage: [] },
+		settings_schema: {},
+		...over,
+	}
+}
+
+function mockPluginsResp(plugins: PluginInfo[]) {
+	return new Response(JSON.stringify({ host: { version: '0.1.0', api_versions: ['0.1', '0.2'] }, plugins }), {
+		status: 200,
+		headers: { 'content-type': 'application/json' },
+	})
+}
+
+async function freshStore() {
+	vi.resetModules() // 模块级 rune 状态按用例隔离
+	return import('./plugins.svelte')
+}
+
+beforeEach(() => {
+	document.head.querySelectorAll('link[data-jasper-plugin-theme]').forEach((el) => el.remove())
+})
+
+describe('loadPlugins 探测', () => {
+	it('JSON 200 → 可用并暴露列表', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => mockPluginsResp([pluginInfo({ id: 'a' })])))
+		const store = await freshStore()
+		await store.loadPlugins()
+		expect(store.pluginsAvailable()).toBe(true)
+		expect(store.pluginList().map((p) => p.id)).toEqual(['a'])
+	})
+
+	it('SPA fallback（HTML 200）→ 不可用', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => new Response('<!doctype html>', { status: 200, headers: { 'content-type': 'text/html' } })),
+		)
+		const store = await freshStore()
+		await store.loadPlugins()
+		expect(store.pluginsAvailable()).toBe(false)
+		expect(store.pluginsLoaded()).toBe(true)
+	})
+
+	it('网络失败 → 不可用且不抛', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => Promise.reject(new Error('boom'))))
+		const store = await freshStore()
+		await store.loadPlugins()
+		expect(store.pluginsAvailable()).toBe(false)
+	})
+})
+
+describe('storageProviders', () => {
+	it('只取 enabled 且无 error 的插件的 storage 贡献', async () => {
+		const storage = { id: 's', name: 'S', icon: '', config_schema: {} }
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				mockPluginsResp([
+					pluginInfo({ id: 'ok', contributes: { theme: [], storage: [storage] } }),
+					pluginInfo({ id: 'off', enabled: false, contributes: { theme: [], storage: [storage] } }),
+					pluginInfo({ id: 'bad', error: 'x', contributes: { theme: [], storage: [storage] } }),
+				]),
+			),
+		)
+		const store = await freshStore()
+		await store.loadPlugins()
+		expect(store.storageProviders().map((p) => p.pluginId)).toEqual(['ok'])
+	})
+})
+
+describe('主题 <link> 注入', () => {
+	it('enabled 插件的主题注入、禁用后移除', async () => {
+		const theme = { id: 'oceanic', name: 'Oceanic', base: 'dark' as const, css: 'assets/o.css' }
+		const withTheme = [pluginInfo({ id: 'th', version: '2.0.0', contributes: { theme: [theme], storage: [] } })]
+		const fetchMock = vi.fn(async () => mockPluginsResp(withTheme))
+		vi.stubGlobal('fetch', fetchMock)
+		const store = await freshStore()
+		await store.loadPlugins()
+
+		const link = document.getElementById('plugin-theme-th-oceanic') as HTMLLinkElement
+		expect(link).toBeTruthy()
+		expect(link.getAttribute('href')).toBe('/api/plugins/th/assets/assets/o.css?v=2.0.0')
+
+		// 禁用后（列表刷新）link 应被移除
+		fetchMock.mockImplementation(async () => mockPluginsResp([{ ...withTheme[0], enabled: false }]))
+		await store.loadPlugins()
+		expect(document.getElementById('plugin-theme-th-oceanic')).toBeNull()
+	})
+})

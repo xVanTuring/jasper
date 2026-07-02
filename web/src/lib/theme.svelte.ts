@@ -1,9 +1,15 @@
 // 主题：用 Svelte 5 rune 存当前选择，应用到 <html data-theme>，localStorage 持久化。
-// 选择可为内置 auto|light|dark，或自定义主题 id（CUSTOM_THEMES，CSS 由 main.ts 打包内置）。
+// 选择可为内置 auto|light|dark、内置自定义主题（CUSTOM_THEMES），或插件贡献的主题
+// （由 plugins.svelte.ts 在插件列表加载后 registerPluginThemes 登记）。
 // auto 跟随系统并实时更新；自定义主题各自声明 base(light|dark) 供编辑器明暗参考。
 // 首屏无闪烁由 index.html 头部内联脚本负责（同一 localStorage 键）；这里是运行时来源。
+//
+// 插件主题的两个时序约定：
+// - load() 放宽校验：未知 id 也先照常应用 data-theme（插件 CSS 是异步 <link>，
+//   先挂属性可避免「先回落再跳变」的闪烁）；
+// - registerPluginThemes() 是唯一的收敛点：插件列表就绪后仍未知的 id 才回落 auto。
 
-export type ThemeSetting = string // 'auto' | 'light' | 'dark' | 自定义主题 id
+export type ThemeSetting = string // 'auto' | 'light' | 'dark' | 自定义/插件主题 id
 
 export interface CustomTheme {
 	id: string
@@ -11,7 +17,7 @@ export interface CustomTheme {
 	base: 'light' | 'dark'
 }
 
-// 内置示例主题（CSS 在 src/themes/*.css）。将来插件主题会动态登记+加载，这就是那张表的雏形。
+// 内置示例主题（CSS 在 src/themes/*.css，随包发布）。
 export const CUSTOM_THEMES: CustomTheme[] = [
 	{ id: 'nord', name: 'Nord', base: 'dark' },
 	{ id: 'solarized', name: 'Solarized Light', base: 'light' },
@@ -20,14 +26,22 @@ export const CUSTOM_THEMES: CustomTheme[] = [
 const BUILTINS = ['auto', 'light', 'dark']
 const STORE_KEY = 'jasper.theme'
 
-function isValid(s: string | null): s is ThemeSetting {
-	return !!s && (BUILTINS.includes(s) || CUSTOM_THEMES.some((t) => t.id === s))
+// 插件贡献的主题表（registerPluginThemes 维护；CSS <link> 由 plugins.svelte.ts 注入）
+let pluginThemeList = $state<CustomTheme[]>([])
+
+function allCustom(): CustomTheme[] {
+	return [...CUSTOM_THEMES, ...pluginThemeList]
+}
+
+function isKnown(s: string): boolean {
+	return BUILTINS.includes(s) || allCustom().some((t) => t.id === s)
 }
 
 function load(): ThemeSetting {
 	try {
 		const s = localStorage.getItem(STORE_KEY)
-		if (isValid(s)) return s
+		// 放宽：未知 id（可能是尚未加载的插件主题）也接受，收敛交给 registerPluginThemes
+		if (s) return s
 	} catch {
 		/* localStorage 不可用时忽略 */
 	}
@@ -64,7 +78,7 @@ export function getTheme(): ThemeSetting {
 export function resolvedTheme(): 'light' | 'dark' {
 	if (current === 'light' || current === 'dark') return current
 	if (current === 'auto') return darkQuery?.matches ? 'dark' : 'light'
-	return CUSTOM_THEMES.find((t) => t.id === current)?.base ?? 'light'
+	return allCustom().find((t) => t.id === current)?.base ?? 'light'
 }
 
 export function setTheme(s: ThemeSetting) {
@@ -77,12 +91,21 @@ export function setTheme(s: ThemeSetting) {
 	apply(s)
 }
 
-/** 可选主题 id 列表（内置 + 自定义），供主题选择器渲染。 */
-export function themeIds(): ThemeSetting[] {
-	return [...BUILTINS, ...CUSTOM_THEMES.map((t) => t.id)]
+/**
+ * 登记插件主题（整表替换；插件启停/卸载后由 plugins.svelte.ts 重新调用）。
+ * 收敛点：插件列表已知后，当前选择仍未知（来源插件被停用/卸载）→ 回落 auto。
+ */
+export function registerPluginThemes(themes: CustomTheme[]) {
+	pluginThemeList = themes
+	if (!isKnown(current)) setTheme('auto')
 }
 
-/** 自定义主题的显示名（内置主题返回 undefined，由调用方用 i18n 取名）。 */
+/** 可选主题 id 列表（内置 + 自定义 + 插件），供主题选择器渲染。 */
+export function themeIds(): ThemeSetting[] {
+	return [...BUILTINS, ...allCustom().map((t) => t.id)]
+}
+
+/** 自定义/插件主题的显示名（内置 auto/light/dark 返回 undefined，由调用方用 i18n 取名）。 */
 export function customThemeName(id: string): string | undefined {
-	return CUSTOM_THEMES.find((t) => t.id === id)?.name
+	return allCustom().find((t) => t.id === id)?.name
 }

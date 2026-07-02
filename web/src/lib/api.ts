@@ -1,5 +1,6 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
 import { t } from './i18n.svelte'
+import type { Schema } from './schema'
 
 // 拖拽（移动）用的 dataTransfer MIME：笔记 / 笔记本各一种，放置目标据此区分。
 export const NOTE_DND_TYPE = 'application/x-jasper-note-id'
@@ -43,11 +44,15 @@ export interface NoteDetail {
 }
 
 export interface SourceConfig {
-  source_type: string // 'local' | 'webdav'
+  source_type: string // 'local' | 'webdav' | 'plugin'
   local_path: string
   webdav_url: string
   webdav_user: string
   webdav_pass: string
+  // source_type === 'plugin'（插件存储 provider，spec 0.2）
+  plugin_id: string
+  plugin_storage: string
+  plugin_config: string // 服务端存 JSON 文本（GET /api/config 原样回显，含 secret，与 webdav_pass 同姿势）
   read_only: boolean // 只读模式：拒绝一切写操作
 }
 
@@ -66,8 +71,62 @@ export interface ConfigResult {
   folders: number
 }
 
-export interface ApplyConfigReq extends SourceConfig {
+// PUT /api/config 的请求体：plugin_config 以对象提交（服务端校验后规范化存储）。
+export interface ApplyConfigReq extends Omit<SourceConfig, 'plugin_config'> {
+  plugin_config: Record<string, unknown>
   create_new: boolean
+}
+
+// ---------- 插件（服务端 --features plugins；未编译时探测为不可用）----------
+
+export interface ThemeContribution {
+  id: string
+  name: string
+  base: 'light' | 'dark'
+  css: string // 包内相对路径，经 pluginAssetUrl 取
+}
+
+export interface StorageContribution {
+  id: string
+  name: string
+  icon: string // 图标令牌名（--icon-*），空 = 用默认 plug
+  config_schema: Schema
+}
+
+export interface PluginContributes {
+  theme: ThemeContribution[]
+  storage: StorageContribution[]
+}
+
+export interface PluginInfo {
+  id: string
+  name: string
+  version: string
+  api_version: string
+  description: string
+  author: string
+  enabled: boolean
+  has_backend: boolean
+  capabilities: string[]
+  hooks: string[]
+  error: string | null
+  contributes: PluginContributes
+  settings_schema: Schema
+}
+
+export interface PluginsResp {
+  host: { version: string; api_versions: string[] }
+  plugins: PluginInfo[]
+}
+
+export interface PluginInstallResult {
+  plugin: PluginInfo
+  needs_consent: boolean
+}
+
+export interface PluginSettingsResp {
+  values: Record<string, unknown>
+  secret_set: Record<string, boolean> // secret 不回显，仅标记「已设置」
 }
 
 export interface ResourceUpload {
@@ -195,6 +254,54 @@ const httpApi = {
     const res = await fetch(`/api/resources/${id}`, { method: 'DELETE' })
     if (!res.ok) throw new Error(`${t('api.deleteResFailed')} -> ${res.status}`)
   },
+
+  // ---------- 插件 ----------
+  // 探测坑：服务端未编译 plugins feature 时路由不存在，但 SPA fallback 会对
+  // GET /api/plugins 回 200 的 index.html —— 必须校验 content-type 才能判定不可用。
+  plugins: async (): Promise<PluginsResp | null> => {
+    try {
+      const res = await fetch('/api/plugins')
+      const ct = res.headers.get('content-type') ?? ''
+      if (!res.ok || !ct.includes('application/json')) return null
+      return (await res.json()) as PluginsResp
+    } catch {
+      return null
+    }
+  },
+  // 安装 .jplug/.zip：原始二进制作请求体（同资源上传惯例）。失败抛带服务端 message 的 Error。
+  installPlugin: async (file: Blob, force = false): Promise<PluginInstallResult> => {
+    const res = await fetch(`/api/plugins/install${force ? '?force=true' : ''}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: file,
+    })
+    const body = (await res.json().catch(() => null)) as
+      | (PluginInstallResult & { error?: string; message?: string })
+      | null
+    if (!res.ok) throw new Error(body?.message || body?.error || `install -> ${res.status}`)
+    return body as PluginInstallResult
+  },
+  deletePlugin: async (id: string) => {
+    const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+      throw new Error(body?.message || body?.error || `DELETE plugin -> ${res.status}`)
+    }
+  },
+  setPluginEnabled: (id: string, enabled: boolean) =>
+    sendJson<PluginInfo>(`/api/plugins/${id}/enable`, 'POST', { enabled }),
+  pluginSettings: (id: string) => getJson<PluginSettingsResp>(`/api/plugins/${id}/settings`),
+  savePluginSettings: async (id: string, values: Record<string, unknown>) => {
+    const res = await fetch(`/api/plugins/${id}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values }),
+    })
+    if (!res.ok) throw new Error(`PUT plugin settings -> ${res.status}`)
+  },
+  // 插件资产 URL（主题 css 等）；?v=版本 破 no-cache 后的旧缓存
+  pluginAssetUrl: (id: string, path: string, version: string) =>
+    `/api/plugins/${id}/assets/${path}?v=${encodeURIComponent(version)}`,
 }
 
 // demo 模式只覆盖只读路径；写入/资源等仍是 httpApi（demo 站点里不会触发）。

@@ -11,6 +11,8 @@
   import NoteView from './lib/NoteView.svelte'
   import Settings from './lib/Settings.svelte'
   import ResourcePanel from './lib/ResourcePanel.svelte'
+  import PluginPanel from './lib/PluginPanel.svelte'
+  import { loadPlugins, pluginsAvailable } from './lib/plugins.svelte'
 
   // 让 <html lang> 跟随当前语言（影响断词/无障碍等）
   $effect(() => {
@@ -33,6 +35,7 @@
   let configured = $state<boolean | null>(null)
   let showSettings = $state(false)
   let showResources = $state(false)
+  let showPlugins = $state(false)
   let showDemoBanner = $state(true)
   // 服务端只读模式（/api/status 返回）。与编译期 demo 只读合并成统一的写入闸门。
   let serverReadOnly = $state(false)
@@ -70,6 +73,8 @@
   onMount(checkStatus)
 
   async function checkStatus() {
+    // 插件列表并行加载（探测服务端是否编译 plugins feature；注入插件主题 CSS）
+    void loadPlugins()
     try {
       const s = await api.status()
       configured = s.configured
@@ -338,6 +343,9 @@
       <ThemePicker />
       {#if !IS_DEMO}
         <Button variant="ghost" iconOnly icon="image" label={t('topbar.resources')} onclick={() => (showResources = true)} />
+        {#if pluginsAvailable()}
+          <Button variant="ghost" iconOnly icon="plug" label={t('plugins.topbar')} onclick={() => (showPlugins = true)} />
+        {/if}
         <Button variant="ghost" iconOnly icon="settings" label={t('topbar.settings')} onclick={() => (showSettings = true)} />
       {/if}
     </div>
@@ -420,6 +428,10 @@
   <Settings mode="setup" onDone={onConfigured} />
 {:else if showSettings}
   <Settings mode="settings" onDone={onConfigured} onClose={() => (showSettings = false)} />
+{/if}
+
+{#if showPlugins}
+  <PluginPanel {readOnly} onClose={() => (showPlugins = false)} />
 {/if}
 
 {#if showResources}
