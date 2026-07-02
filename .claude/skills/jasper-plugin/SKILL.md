@@ -15,8 +15,8 @@ Jasper 插件 = 一个 zip 包（`.jplug`），含 `manifest.toml` + 可选 `plu
 |---|---|---|---|
 | 换肤/换图标 | `[[contributes.theme]]` | 否（纯 CSS） | 参见 spec 附录 A（本仓库无纯主题示例，见 `web/src/themes/`） |
 | 保存前改写正文 | `[backend] hooks=["before-save"]` | 是 | `trim-trailing/` |
-| 新文件后端（云盘/协议） | `[[contributes.storage]]` + `host:http` | 是 | `webdav-storage/`（HTTP 系）、`s3-storage/`（含 SigV4 签名） |
-| 编辑器工具栏按钮/一次性动作 | `[[contributes.command]]` + `[[contributes.toolbar]]` | 是 | `ai-polish/`（调 AI + 存密钥；provider 切 anthropic/openai 格式，是「多后端格式用一个 select 切换 + provider 感知纯函数」的范式） |
+| 新文件后端（云盘/协议） | `[[contributes.storage]]` + `host:http` | 是 | `webdav-storage/`（HTTP 系）；`s3-storage`（含 SigV4 签名，在 **jasper-plugins 仓库**） |
+| 编辑器工具栏按钮/一次性动作 | `[[contributes.command]]` + `[[contributes.toolbar]]` | 是 | `ai-polish`（在 **jasper-plugins 仓库**；调 AI + 存密钥；provider 切 anthropic/openai 格式，是「多后端格式用一个 select 切换 + provider 感知纯函数」的范式） |
 | 宿主测试夹具 | 手写 ABI | 是 | `testbed/`（不随发行分发） |
 
 **纯主题插件 MUST NOT 含 wasm**，宿主按零代码信任档加载。含 `[backend]` 的插件安装后**默认禁用**，用户在插件面板点启用=对 capabilities 的授权。
@@ -74,7 +74,7 @@ sdk::register! { before_save: before_save, command: command }
 
 1. **`getrandom` 编不过 wasm32**：SDK 已注册 panic 版 custom backend（`plugin-sdk/src/lib.rs` 的 `rand_shim`），插件继承即可。**推论**：插件不要调 `core::serialize::new_id()`（会 panic 本次调用）——**id 由宿主生成**，插件不自造。
 
-2. **`chrono` 默认 feature 拉进 wasm-bindgen → 沙箱无法实例化**。任何用 chrono 的插件 crate 必须 `default-features = false, features = ["std"]`（`webdav-storage`/`s3-storage` 都这么写）。同理别引入任何会带 `wasm-bindgen`/`js-sys` 的依赖。
+2. **`chrono` 默认 feature 拉进 wasm-bindgen → 沙箱无法实例化**。任何用 chrono 的插件 crate 必须 `default-features = false, features = ["std"]`（`webdav-storage` 与 jasper-plugins 的 `s3-storage` 都这么写）。同理别引入任何会带 `wasm-bindgen`/`js-sys` 的依赖。
 
 3. **沙箱没有系统时钟**：`SystemTime::now()` 和 `chrono::Utc::now()` 在 `wasm32-unknown-unknown` 都会 panic。需要当前时间（SigV4 等签名、时间戳）**只能用 `sdk::host::now_ms()`**（它经 host_call 走 `time.now`）。
 
@@ -96,10 +96,10 @@ sdk::register! { before_save: before_save, command: command }
 
 ## 测试配方（四层，全在 CI 跑）
 
-1. **native 单元**（`cargo test` 在插件目录）：把可测逻辑写成纯函数（请求组装、响应解析、config 规范化、签名算法）。**签名/协议类用已知答案测试**（`s3-storage` 用 AWS 官方 SigV4 向量）。host_call 在 native 下返回错误桩，所以别在单测里真调 host。
+1. **native 单元**（`cargo test` 在插件目录）：把可测逻辑写成纯函数（请求组装、响应解析、config 规范化、签名算法）。**签名/协议类用已知答案测试**（jasper-plugins 的 `s3-storage` 用 AWS 官方 SigV4 向量）。host_call 在 native 下默认返回错误桩；要在 native 集成测试里真调 host，dev-dependencies 开 SDK 的 **`native-host`** feature（http→ureq 真网络、time.now→系统钟、settings 用 `sdk::native_host::set_setting` 注入——ai-polish 的 stub 全链路与 s3-storage 的 MinIO round-trip 都这么跑，无沙箱语义：没有能力门控/限额）。
 2. **wasm 夹具**（server `--features plugins`）：需要 `plugin.wasm`，缺失时**自动跳过**（`if !plugin.wasm.exists() { eprintln!; return }`）。ABI 往返、限额、能力门控在这层。
-3. **stub 服务**（command/HTTP 插件）：起一个极简 TCP server 返回固定响应，插件经 `host:http` 打过去——`ai-polish` 的 `ai_polish_command_end_to_end` 是模板（装→启用→存 secret→调命令→断言）。
-4. **容器集成**（真实后端）：env-gated，未设环境变量则跳过。`webdav-storage` 用 `JASPER_TEST_WEBDAV_URL`（hacdias/webdav）、`s3-storage` 用 `JASPER_TEST_S3_URL`（MinIO）；`docker compose -f docker-compose.dev.yml up -d` 一起起。
+3. **stub 服务**（command/HTTP 插件）：起一个极简 TCP server 返回固定响应，插件经 `host:http` 打过去——宿主侧模板是 `routes.rs::backend_command_end_to_end`（testbed 的 relay 命令：装→启用→存 secret→调命令→断言）；插件侧模板是 jasper-plugins 里 ai-polish 的 `native_e2e`（native-host + 本地 stub）。
+4. **容器集成**（真实后端）：env-gated，未设环境变量则跳过。本仓库 `webdav-storage` 用 `JASPER_TEST_WEBDAV_URL`（hacdias/webdav，`docker compose -f docker-compose.dev.yml up -d`）；jasper-plugins 的 `s3-storage` 用 `JASPER_TEST_S3_URL`（MinIO，在那边的 compose/CI 里）。
 
 宿主侧的 manifest 校验/路由测试写在 `server/src/plugins/{manifest,routes,storage}.rs` 的 `#[cfg(test)]`。
 
