@@ -39,6 +39,8 @@ pub struct PluginInfo {
     pub error: Option<String>,
     pub contributes: manifest::Contributes,
     pub settings_schema: Schema,
+    /// notes:write 的「写入免确认」开关（宿主托管，spec 0.3 §7）。
+    pub write_auto_approve: bool,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -144,7 +146,8 @@ impl PluginHost {
         }
     }
 
-    fn info_of(p: &LoadedPlugin) -> PluginInfo {
+    fn info_of(&self, p: &LoadedPlugin) -> PluginInfo {
+        let write_auto_approve = self.config.lock().unwrap().plugin_write_auto_approve(&p.id);
         match &p.manifest {
             Some(m) => PluginInfo {
                 id: p.id.clone(),
@@ -160,6 +163,7 @@ impl PluginHost {
                 error: p.error.clone(),
                 contributes: m.contributes.clone(),
                 settings_schema: m.settings.schema.clone(),
+                write_auto_approve,
             },
             None => PluginInfo {
                 id: p.id.clone(),
@@ -175,12 +179,18 @@ impl PluginHost {
                 error: p.error.clone(),
                 contributes: Default::default(),
                 settings_schema: Default::default(),
+                write_auto_approve,
             },
         }
     }
 
     pub fn list_info(&self) -> Vec<PluginInfo> {
-        self.plugins.read().unwrap().values().map(Self::info_of).collect()
+        self.plugins.read().unwrap().values().map(|p| self.info_of(p)).collect()
+    }
+
+    /// 单个插件的信息（auto-approve 端点返回体用）。
+    pub fn info(&self, id: &str) -> Option<PluginInfo> {
+        self.plugins.read().unwrap().get(id).map(|p| self.info_of(p))
     }
 
     /// 当前数据源是否引用该插件（存储 provider in_use 守护）。
@@ -204,7 +214,7 @@ impl PluginHost {
             let _ = self.config.lock().unwrap().set_plugin_state(&id, true, &[]);
         }
         let loaded = self.load_one(id.clone(), dir, Ok(m));
-        let info = Self::info_of(&loaded);
+        let info = self.info_of(&loaded);
         self.plugins.write().unwrap().insert(id, loaded);
         Ok(info)
     }
@@ -254,7 +264,7 @@ impl PluginHost {
             .unwrap()
             .set_plugin_state(id, p.enabled, &p.granted_caps)
             .map_err(HostOpError::Other)?;
-        Ok(Self::info_of(p))
+        Ok(self.info_of(p))
     }
 
     /// 执行插件的 plugin_dispatch（阻塞；调用方负责 spawn_blocking / rayon 上下文）。

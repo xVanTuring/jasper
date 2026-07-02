@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// 宿主支持的插件 API 版本集合（spec §4）。
-pub const HOST_API_VERSIONS: &[&str] = &["0.1", "0.2"];
+pub const HOST_API_VERSIONS: &[&str] = &["0.1", "0.2", "0.3"];
+
+/// 内置 widget 词汇表（spec §9.2，0.3 冻结）。
+pub const WIDGET_TYPES: &[&str] = &["chat", "list", "tree", "form", "markdown", "button"];
 
 /// 设置/存储配置表单的字段定义（spec §10 词汇）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +77,21 @@ pub struct ToolbarContribution {
     pub location: String, // "note-toolbar" | "topbar"
 }
 
+/// 侧边栏面板贡献（spec §3.5，0.3 扩展）：静态 widget（交互经 `command`）
+/// 或动态树（`view` → dispatch `ui`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SidebarContribution {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub icon: String,
+    pub widget: String, // WIDGET_TYPES 之一
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Contributes {
     #[serde(default)]
@@ -84,6 +102,8 @@ pub struct Contributes {
     pub command: Vec<CommandContribution>,
     #[serde(default)]
     pub toolbar: Vec<ToolbarContribution>,
+    #[serde(default)]
+    pub sidebar: Vec<SidebarContribution>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -264,6 +284,46 @@ fn validate(m: &Manifest) -> Result<()> {
             bail!("toolbar.location 须为 note-toolbar|topbar");
         }
     }
+    // backend 命令 id 集合：sidebar.command 只能指向它们（spec §3.5，0.3）
+    let backend_cmds: std::collections::HashSet<&str> = m
+        .contributes
+        .command
+        .iter()
+        .filter(|c| c.target == "backend")
+        .map(|c| c.id.as_str())
+        .collect();
+    let mut sidebar_ids = std::collections::HashSet::new();
+    for sb in &m.contributes.sidebar {
+        if !is_valid_id(&sb.id) {
+            bail!("sidebar id 非法: {:?}", sb.id);
+        }
+        if !sidebar_ids.insert(sb.id.as_str()) {
+            bail!("sidebar id 重复: {}", sb.id);
+        }
+        if sb.title.trim().is_empty() {
+            bail!("sidebar {} 缺 title", sb.id);
+        }
+        if !WIDGET_TYPES.contains(&sb.widget.as_str()) {
+            bail!("sidebar {} 的 widget 未知: {:?}（支持: {:?}）", sb.id, sb.widget, WIDGET_TYPES);
+        }
+        if (sb.command.is_some() || sb.view.is_some()) && m.backend.is_none() {
+            bail!("sidebar {} 声明了 command/view，需要 [backend]", sb.id);
+        }
+        if let Some(cmd) = &sb.command {
+            if !backend_cmds.contains(cmd.as_str()) {
+                bail!("sidebar {} 引用了未声明的 backend 命令: {}", sb.id, cmd);
+            }
+        }
+        if let Some(view) = &sb.view {
+            if view.trim().is_empty() {
+                bail!("sidebar {} 的 view 不能为空串", sb.id);
+            }
+        }
+        // 静态 chat 的交互只能走 command（spec §3.5）
+        if sb.widget == "chat" && sb.view.is_none() && sb.command.is_none() {
+            bail!("sidebar {}：widget=chat 且无 view 时必须给 command", sb.id);
+        }
+    }
     validate_schema(&m.settings.schema, "settings.schema")?;
     Ok(())
 }
@@ -390,6 +450,84 @@ location = "note-toolbar"
             "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.2\"\n[[contributes.command]]\nid = \"c\"\ntitle = \"C\"\ntarget = \"backend\"\n"
         )
         .is_err());
+    }
+
+    #[test]
+    fn parses_sidebar_manifest_static_and_dynamic() {
+        let m = parse(
+            r#"
+id = "ai-chat"
+name = "AI 对话"
+version = "0.1.0"
+apiVersion = "0.3"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = ["notes:read", "host:ai"]
+
+[[contributes.command]]
+id = "chat"
+title = "发送"
+target = "backend"
+
+[[contributes.sidebar]]
+id = "chat-panel"
+title = "AI 对话"
+icon = "chat"
+widget = "chat"
+command = "chat"
+
+[[contributes.sidebar]]
+id = "tools"
+title = "工具箱"
+widget = "markdown"
+view = "main"
+"#,
+        )
+        .unwrap();
+        let sb = &m.contributes.sidebar;
+        assert_eq!(sb.len(), 2);
+        assert_eq!(sb[0].command.as_deref(), Some("chat"));
+        assert!(sb[0].view.is_none());
+        assert_eq!(sb[1].view.as_deref(), Some("main"));
+
+        let base = "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.3\"\n";
+        let backend = "[backend]\nwasm = \"plugin.wasm\"\n";
+        // widget 未知
+        assert!(parse(&format!(
+            "{base}{backend}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"S\"\nwidget = \"iframe\"\n"
+        ))
+        .is_err());
+        // chat 无 view 时缺 command
+        assert!(parse(&format!(
+            "{base}{backend}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"S\"\nwidget = \"chat\"\n"
+        ))
+        .is_err());
+        // command 引用未声明命令
+        assert!(parse(&format!(
+            "{base}{backend}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"S\"\nwidget = \"list\"\ncommand = \"nope\"\n"
+        ))
+        .is_err());
+        // command/view 需要 [backend]
+        assert!(parse(&format!(
+            "{base}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"S\"\nwidget = \"markdown\"\nview = \"v\"\n"
+        ))
+        .is_err());
+        // 纯展示 sidebar（无 command/view、非 chat）不需要 backend
+        assert!(parse(&format!(
+            "{base}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"S\"\nwidget = \"markdown\"\n"
+        ))
+        .is_ok());
+        // sidebar id 重复
+        assert!(parse(&format!(
+            "{base}{backend}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"A\"\nwidget = \"markdown\"\n[[contributes.sidebar]]\nid = \"s\"\ntitle = \"B\"\nwidget = \"markdown\"\n"
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn api_version_0_3_accepted() {
+        assert!(parse("id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.3\"").is_ok());
     }
 
     #[test]
