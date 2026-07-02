@@ -121,12 +121,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
-          # 只在 v* tag / 手动触发。semver tag 会自动补 `latest`（默认 flavor latest=auto）；
-          # 手动在分支上跑则打分支名 + sha 便于调试。
+          # 只在 v* tag / 手动触发。日期式 tag（v2026.7.2-1）的 `-N` 在 semver 里算预发布，
+          # latest=auto 不会补 latest——所以对 v* tag 显式打 latest；手动在分支上跑则打分支名 + sha 便于调试。
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=sha,format=short
 
       # 用各架构 digest 组装 manifest list，一次性打上 meta 生成的全部 tag
