@@ -155,8 +155,17 @@
     const out: string[] = []
     if (p.contributes.theme.length) out.push(t('plugins.contrib.themes', { n: p.contributes.theme.length }))
     if (p.contributes.storage.length) out.push(t('plugins.contrib.storage', { n: p.contributes.storage.length }))
+    if (p.contributes.sidebar.length) out.push(t('plugins.contrib.sidebar', { n: p.contributes.sidebar.length }))
     if (p.hooks.length) out.push(t('plugins.contrib.hooks', { n: p.hooks.length }))
     return out
+  }
+
+  // notes:write 的「写入免确认」开关（宿主托管，spec 0.3 §7/§9.5）
+  async function toggleAutoApprove(p: PluginInfo) {
+    await run(async () => {
+      await api.setPluginAutoApprove(p.id, !p.write_auto_approve)
+      await loadPlugins()
+    })
   }
 
   // ---------- 市场 ----------
@@ -341,6 +350,21 @@
                 {/each}
               </div>
               {#if p.description}<div class="desc">{p.description}</div>{/if}
+              {#if p.enabled && !readOnly && p.capabilities.includes('notes:write')}
+                <!-- 宿主托管的写入免确认（不进插件自身 settings，防插件自改绕过确认，spec 0.3 §7） -->
+                <label class="aa-toggle" title={t('plugins.autoApproveDesc')}>
+                  <input
+                    type="checkbox"
+                    checked={p.write_auto_approve}
+                    disabled={working}
+                    onchange={(e) => {
+                      e.currentTarget.checked = p.write_auto_approve
+                      void toggleAutoApprove(p)
+                    }}
+                  />
+                  <span>{t('plugins.autoApprove')}</span>
+                </label>
+              {/if}
             </div>
             <div class="actions">
               {#if Object.keys(p.settings_schema).length > 0}
@@ -549,6 +573,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .aa-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .aa-toggle input {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
   .actions {
     display: flex;

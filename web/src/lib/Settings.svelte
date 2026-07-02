@@ -2,13 +2,13 @@
   import { onMount } from 'svelte'
   import { fade, scale } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
-  import { api } from './api'
+  import { api, type AiConfig } from './api'
   import { t } from './i18n.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
   import SchemaForm from './SchemaForm.svelte'
   import { defaultValues, validate, type FieldError } from './schema'
-  import { loadPlugins, pluginsLoaded, storageProviders, type StorageProvider } from './plugins.svelte'
+  import { loadPlugins, pluginsAvailable, pluginsLoaded, storageProviders, type StorageProvider } from './plugins.svelte'
 
   let {
     mode,
@@ -90,6 +90,42 @@
       }
     }
   })
+
+  // ---------- 宿主级 AI 配置（host:ai，spec 0.3 §9.5）----------
+  // 独立于数据源表单，单独保存；仅设置模式且服务端带 plugins feature 时出现。
+  let aiCfg = $state<AiConfig>({ provider: '', base_url: '', api_key: '', model: '' })
+  let aiLoaded = $state(false)
+  let aiSaving = $state(false)
+  let aiSaved = $state(false)
+  let aiError = $state('')
+
+  $effect(() => {
+    if (mode === 'settings' && pluginsAvailable() && !aiLoaded) {
+      aiLoaded = true
+      void (async () => {
+        try {
+          aiCfg = await api.getAiConfig()
+        } catch {
+          aiError = t('settings.ai.loadFailed')
+        }
+      })()
+    }
+  })
+
+  async function saveAi() {
+    aiSaving = true
+    aiError = ''
+    aiSaved = false
+    try {
+      await api.saveAiConfig(aiCfg)
+      aiSaved = true
+      setTimeout(() => (aiSaved = false), 2000)
+    } catch (e) {
+      aiError = e instanceof Error ? e.message : `${e}`
+    } finally {
+      aiSaving = false
+    }
+  }
 
   async function submit() {
     error = ''
@@ -226,6 +262,42 @@
         <span class="toggle-desc">{t('settings.readOnlyDesc')}</span>
       </span>
     </label>
+
+    {#if mode === 'settings' && pluginsAvailable()}
+      <div class="ai-section">
+        <h3>{t('settings.ai.title')}</h3>
+        <p class="hint">{t('settings.ai.desc')}</p>
+        <label class="ai-field">
+          <span>{t('settings.ai.provider')}</span>
+          <select bind:value={aiCfg.provider}>
+            <option value="">{t('settings.ai.providerNone')}</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="openai">OpenAI API</option>
+          </select>
+        </label>
+        {#if aiCfg.provider}
+          <label class="ai-field">
+            <span>{t('settings.ai.baseUrl')}</span>
+            <input type="text" bind:value={aiCfg.base_url} placeholder={t('settings.ai.baseUrlPh')} />
+          </label>
+          <label class="ai-field">
+            <span>{t('settings.ai.apiKey')}</span>
+            <input type="password" bind:value={aiCfg.api_key} autocomplete="off" />
+          </label>
+          <label class="ai-field">
+            <span>{t('settings.ai.model')}</span>
+            <input type="text" bind:value={aiCfg.model} placeholder={t('settings.ai.modelPh')} />
+          </label>
+        {/if}
+        {#if aiError}
+          <div class="error"><Icon name="alert" size={14} /> {aiError}</div>
+        {/if}
+        <div class="ai-actions">
+          {#if aiSaved}<span class="saved">{t('settings.ai.saved')}</span>{/if}
+          <Button label={t('settings.ai.save')} onclick={saveAi} disabled={aiSaving} />
+        </div>
+      </div>
+    {/if}
 
     {#if error}
       <div class="error"><Icon name="alert" size={14} /> {error}</div>
@@ -380,6 +452,54 @@
     font-size: 11px;
     color: var(--text-dim);
     line-height: 1.4;
+  }
+  .ai-section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .ai-section h3 {
+    margin: 0;
+    font-size: 14px;
+  }
+  .ai-section .hint {
+    margin: 4px 0 10px;
+  }
+  .ai-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .ai-field span {
+    color: var(--text-dim);
+  }
+  .ai-field input,
+  .ai-field select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+  }
+  .ai-field input:focus,
+  .ai-field select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .ai-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .ai-actions .saved {
+    color: var(--success);
+    font-size: 12px;
   }
   .error {
     margin-top: 14px;
