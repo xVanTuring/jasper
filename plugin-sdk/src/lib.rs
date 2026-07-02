@@ -1,6 +1,6 @@
 //! # jasper-plugin-sdk
 //!
-//! Jasper 后端插件（wasm，spec 0.2）的 Rust SDK：封装 ABI（spec §6），
+//! Jasper 后端插件（wasm，spec 0.3）的 Rust SDK：封装 ABI（spec §6），
 //! 作者只写业务函数/类型，用 [`register!`] 一行接入。
 //!
 //! ```ignore
@@ -14,7 +14,7 @@
 //!
 //! sdk::register! { before_save: before_save }
 //! // 或：sdk::register! { storage: MyStorage }（impl sdk::storage::Storage）
-//! // 或两者都挂：sdk::register! { before_save: before_save, storage: MyStorage }
+//! // 或组合任意子集：sdk::register! { before_save: before_save, command: run, ui: render }
 //! ```
 //!
 //! 插件 crate 须为 `crate-type = ["cdylib"]`，目标 `wasm32-unknown-unknown`。
@@ -45,35 +45,39 @@ mod rand_shim {
 /// - `before_save`：`fn(Note) -> Result<Note, String>`
 /// - `storage`：impl [`storage::Storage`] 的类型
 /// - `command`：`fn(&str /* 命令 id */, Value /* args */) -> Result<Value, PluginError>`
+/// - `ui`：`fn(&str /* view */, Value /* state */) -> Result<Value, PluginError>`（返回 UiNode 树，spec §9.3）
 #[macro_export]
 macro_rules! register {
     ( $($rest:tt)* ) => {
-        $crate::__register_accum! { hook = (), storage = (), command = (); $($rest)* }
+        $crate::__register_accum! { hook = (), storage = (), command = (), ui = (); $($rest)* }
     };
 }
 
-// 累积器：按键收集三个可选槽位，与书写顺序无关。
+// 累积器：按键收集四个可选槽位，与书写顺序无关。
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __register_accum {
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); before_save: $f:path $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($f), storage = ($($s)?), command = ($($c)?); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); before_save: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($f), storage = ($($s)?), command = ($($c)?), ui = ($($u)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); storage: $t:ty $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($($h)?), storage = ($t), command = ($($c)?); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); storage: $t:ty $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($t), command = ($($c)?), ui = ($($u)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); command: $f:path $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($f); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); command: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($f), ui = ($($u)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); ) => {
-        $crate::__register_dispatch! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?) }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); ui: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($f); $($($rest)*)? }
+    };
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); ) => {
+        $crate::__register_dispatch! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($($u)?) }
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __register_dispatch {
-    ( hook = ($($hook:path)?), storage = ($($st:ty)?), command = ($($cmd:path)?) ) => {
+    ( hook = ($($hook:path)?), storage = ($($st:ty)?), command = ($($cmd:path)?), ui = ($($ui:path)?) ) => {
         // 业务路由：storage.* 方法族优先，其余按 method 匹配。native 下仅供测试。
         #[allow(dead_code)]
         fn __jasper_dispatch(
@@ -113,6 +117,21 @@ macro_rules! __register_dispatch {
                             $crate::serde_json::Value,
                         ) -> ::std::result::Result<$crate::serde_json::Value, $crate::PluginError> = $cmd;
                         run(&id, args)
+                    }
+                )?
+                $(
+                    "ui" => {
+                        let view = params
+                            .get("view")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let state = params.get("state").cloned().unwrap_or($crate::serde_json::Value::Null);
+                        let render: fn(
+                            &str,
+                            $crate::serde_json::Value,
+                        ) -> ::std::result::Result<$crate::serde_json::Value, $crate::PluginError> = $ui;
+                        render(&view, state)
                     }
                 )?
                 other => Err($crate::PluginError::unsupported(format!("未知方法: {other}"))),
@@ -175,6 +194,41 @@ mod tests {
         assert_eq!(r["note"]["body"], "x\ny");
 
         let e = __jasper_dispatch("nope", json!(null)).unwrap_err();
+        assert_eq!(e.code, "unsupported");
+    }
+}
+
+#[cfg(test)]
+mod ui_slot_tests {
+    use crate::PluginError;
+    use serde_json::{json, Value};
+
+    fn run(id: &str, args: Value) -> Result<Value, PluginError> {
+        Ok(json!({ "echoed": { "id": id, "args": args } }))
+    }
+
+    fn render(view: &str, state: Value) -> Result<Value, PluginError> {
+        Ok(json!({
+            "type": "markdown",
+            "props": { "source": format!("view={view}") },
+            "children": [ { "type": "button", "props": { "label": "go", "command": "x", "state": state } } ],
+        }))
+    }
+
+    crate::register! { command: run, ui: render }
+
+    #[test]
+    fn dispatch_routes_ui_and_command() {
+        let r = __jasper_dispatch("ui", json!({ "view": "main", "state": { "n": 1 } })).unwrap();
+        assert_eq!(r["type"], "markdown");
+        assert_eq!(r["props"]["source"], "view=main");
+        assert_eq!(r["children"][0]["props"]["state"]["n"], 1);
+
+        let r = __jasper_dispatch("command", json!({ "id": "c1", "args": { "a": 2 } })).unwrap();
+        assert_eq!(r["echoed"]["id"], "c1");
+
+        // 未挂 before_save → 该方法落到 unsupported
+        let e = __jasper_dispatch("hook.before_save", json!({ "note": null })).unwrap_err();
         assert_eq!(e.code, "unsupported");
     }
 }

@@ -3,6 +3,8 @@
 
 use crate::rt::{call_host, PluginError};
 use base64::Engine as _;
+use jasper_core::model::Note;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
@@ -96,4 +98,148 @@ pub fn http_request(req: &HttpRequest) -> Result<HttpResponse, PluginError> {
         None => Vec::new(),
     };
     Ok(HttpResponse { status, headers, body })
+}
+
+// ---- notes.*（能力 notes:read / notes:write，spec 0.3）----
+// 仅在 command / ui 分发上下文可用；hooks/storage 分发内调用返回 code="unsupported"（spec §6.5）。
+
+/// 搜索结果条目（spec §6.5 NoteRef）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteRef {
+    pub id: String,
+    pub title: String,
+    pub parent_id: String,
+}
+
+/// 笔记本条目（spec §6.5 FolderRef）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderRef {
+    pub id: String,
+    pub title: String,
+    pub parent_id: String,
+}
+
+/// `notes.get`：按 id 取完整笔记（能力 `notes:read`）。不存在 → code="not_found"。
+pub fn notes_get(id: &str) -> Result<Note, PluginError> {
+    let r = call_host("notes.get", json!({ "id": id }))?;
+    parse_note(&r)
+}
+
+/// `notes.search`：标题/正文全文搜索（能力 `notes:read`）。`limit` 缺省宿主取 20、上限 100。
+pub fn notes_search(query: &str, limit: Option<u32>) -> Result<Vec<NoteRef>, PluginError> {
+    let mut params = json!({ "query": query });
+    if let Some(l) = limit {
+        params["limit"] = json!(l);
+    }
+    let r = call_host("notes.search", params)?;
+    serde_json::from_value(r.get("notes").cloned().unwrap_or(Value::Null))
+        .map_err(|e| PluginError::internal(format!("notes.search 响应解析失败: {e}")))
+}
+
+/// `notes.list_folders`：全部笔记本（能力 `notes:read`），宿主按 (title, id) 排序。
+pub fn notes_list_folders() -> Result<Vec<FolderRef>, PluginError> {
+    let r = call_host("notes.list_folders", json!({}))?;
+    serde_json::from_value(r.get("folders").cloned().unwrap_or(Value::Null))
+        .map_err(|e| PluginError::internal(format!("notes.list_folders 响应解析失败: {e}")))
+}
+
+/// `notes.upsert`/`notes.create` 的结果。`pending=true` = 提案已交宿主 UI 确认、
+/// **尚未落盘**（spec §6.5 写确认=提案回传）；插件不应把它当成写入成功。
+#[derive(Debug, Clone)]
+pub struct UpsertResult {
+    pub note: Note,
+    pub pending: bool,
+}
+
+/// `notes.upsert`：改标题/正文（能力 `notes:write`）。`None` 字段保持原值；
+/// 其余元数据宿主逐字保留。默认走提案回传（见 [`UpsertResult`]）。
+pub fn notes_upsert(id: &str, title: Option<&str>, body: Option<&str>) -> Result<UpsertResult, PluginError> {
+    let mut params = json!({ "id": id });
+    if let Some(t) = title {
+        params["title"] = json!(t);
+    }
+    if let Some(b) = body {
+        params["body"] = json!(b);
+    }
+    let r = call_host("notes.upsert", params)?;
+    parse_upsert(&r)
+}
+
+/// `notes.create`：新建笔记（能力 `notes:write`）。`parent_id` 必须是已存在笔记本（否则 invalid）。
+/// `pending=true` 时 `note.id` 为空串——id 由宿主在用户批准时生成，无法链式写入。
+pub fn notes_create(parent_id: &str, title: Option<&str>, body: Option<&str>) -> Result<UpsertResult, PluginError> {
+    let mut params = json!({ "parent_id": parent_id });
+    if let Some(t) = title {
+        params["title"] = json!(t);
+    }
+    if let Some(b) = body {
+        params["body"] = json!(b);
+    }
+    let r = call_host("notes.create", params)?;
+    parse_upsert(&r)
+}
+
+fn parse_note(r: &Value) -> Result<Note, PluginError> {
+    serde_json::from_value(r.get("note").cloned().unwrap_or(Value::Null))
+        .map_err(|e| PluginError::internal(format!("note 解析失败: {e}")))
+}
+
+fn parse_upsert(r: &Value) -> Result<UpsertResult, PluginError> {
+    Ok(UpsertResult {
+        note: parse_note(r)?,
+        pending: r.get("pending").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+// ---- ai.complete（能力 host:ai，spec 0.3）----
+
+/// 对话消息（spec §6.5 Message）；`role` ∈ system|user|assistant。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+impl Message {
+    pub fn system(content: impl Into<String>) -> Self {
+        Self { role: "system".into(), content: content.into() }
+    }
+    pub fn user(content: impl Into<String>) -> Self {
+        Self { role: "user".into(), content: content.into() }
+    }
+    pub fn assistant(content: impl Into<String>) -> Self {
+        Self { role: "assistant".into(), content: content.into() }
+    }
+}
+
+/// `ai.complete` 的可选项；`model` 缺省用宿主配置。宿主钳制 temperature 0..=2、max_tokens 1..=32768。
+#[derive(Debug, Clone, Default)]
+pub struct AiOptions {
+    pub model: Option<String>,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u64>,
+}
+
+/// `ai.complete`：宿主代理的一次性补全（能力 `host:ai`）。密钥/端点在宿主，插件不可见；
+/// 宿主未配置 AI → code="internal"（message 指明去设置页配置）。网络等待不计插件 CPU 墙钟。
+pub fn ai_complete(messages: &[Message], options: Option<&AiOptions>) -> Result<String, PluginError> {
+    let mut params = json!({ "messages": messages });
+    if let Some(o) = options {
+        let mut opts = json!({});
+        if let Some(m) = &o.model {
+            opts["model"] = json!(m);
+        }
+        if let Some(t) = o.temperature {
+            opts["temperature"] = json!(t);
+        }
+        if let Some(mt) = o.max_tokens {
+            opts["max_tokens"] = json!(mt);
+        }
+        params["options"] = opts;
+    }
+    let r = call_host("ai.complete", params)?;
+    r.get("content")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string())
+        .ok_or_else(|| PluginError::internal("ai.complete 响应缺 content"))
 }

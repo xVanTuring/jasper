@@ -1,23 +1,33 @@
 //! 测试用宿主替身（仅 native + `feature = "native-host"`）：让插件的集成测试
 //! 不进 wasm 沙箱也能走 host_call——`http.request` 用 ureq 发真网络请求、
-//! `time.now` 用系统时钟、settings 是线程本地 map（用 [`set_setting`] 注入）。
+//! `time.now` 用系统时钟、settings 是线程本地 map（用 [`set_setting`] 注入）；
+//! `notes.*` 是线程本地内存笔记库（[`put_note`]/[`put_folder`] 注入、
+//! [`set_write_pending`] 模拟写确认）、`ai.complete` 回预置文本（[`set_ai_reply`]）。
 //!
 //! ⚠ 只供插件自己的测试：没有能力门控、没有限额、没有沙箱，安全语义与真宿主不同；
 //! 各方法的参数/返回形状与宿主 host_api 逐字一致（见 host.rs 的封装）。
-//! settings 存储是 thread_local——cargo test 每个测试独立线程，天然隔离；
+//! 全部存储是 thread_local——cargo test 每个测试独立线程，天然隔离；
 //! 测试内自行跨线程时注意各线程各有一份。
 
 use crate::rt::PluginError;
 use base64::Engine as _;
 use serde_json::{json, Value};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 thread_local! {
 	static SETTINGS: RefCell<BTreeMap<String, Value>> = RefCell::new(BTreeMap::new());
+	// notes.*/ai.complete 替身状态（spec 0.3）：内存笔记库 + 预置 AI 回复 + 写确认开关
+	static NOTES: RefCell<BTreeMap<String, Value>> = RefCell::new(BTreeMap::new());
+	static FOLDERS: RefCell<Vec<Value>> = RefCell::new(Vec::new());
+	static AI_REPLY: RefCell<Option<String>> = RefCell::new(None);
+	static WRITE_PENDING: Cell<bool> = const { Cell::new(false) };
 }
+
+/// notes.create 直写模式下替身分配的固定假 id（32hex；真 id 由宿主生成）。
+pub const FAKE_CREATED_ID: &str = "0123456789abcdef0123456789abcdef";
 
 /// 测试注入：预置一个 settings 键值（等价于用户在设置页填好）。
 pub fn set_setting(key: &str, value: Value) {
@@ -27,6 +37,54 @@ pub fn set_setting(key: &str, value: Value) {
 /// 测试清场：清空本线程的 settings。
 pub fn clear_settings() {
 	SETTINGS.with(|s| s.borrow_mut().clear());
+}
+
+/// 组一个 core Note 形状的 JSON（与宿主 notes.get 返回逐字段一致），供 [`put_note`] 与断言用。
+pub fn make_note(id: &str, parent_id: &str, title: &str, body: &str) -> Value {
+	json!({
+		"id": id,
+		"parent_id": parent_id,
+		"title": title,
+		"body": body,
+		"created_time": 1_700_000_000_000_i64,
+		"updated_time": 1_700_000_000_000_i64,
+		"markup_language": 1,
+		"is_todo": false,
+		"todo_completed": false,
+		"is_conflict": false,
+		"source_url": "",
+		"order": 0,
+	})
+}
+
+/// 测试注入：预置一条笔记（core Note 形状 JSON，见 [`make_note`]），键 = note["id"]。
+pub fn put_note(note: Value) {
+	let id = note.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+	NOTES.with(|n| n.borrow_mut().insert(id, note));
+}
+
+/// 测试注入：预置一个笔记本。
+pub fn put_folder(id: &str, title: &str, parent_id: &str) {
+	FOLDERS.with(|f| {
+		f.borrow_mut().push(json!({ "id": id, "title": title, "parent_id": parent_id }));
+	});
+}
+
+/// 测试清场：清空本线程的笔记与笔记本。
+pub fn clear_notes() {
+	NOTES.with(|n| n.borrow_mut().clear());
+	FOLDERS.with(|f| f.borrow_mut().clear());
+}
+
+/// 测试注入：预置 ai.complete 的回复（缺省 "(stub reply)"）。
+pub fn set_ai_reply(reply: &str) {
+	AI_REPLY.with(|r| *r.borrow_mut() = Some(reply.to_string()));
+}
+
+/// 测试注入：写确认开关。true = 模拟宿主「需确认」——upsert/create 不改内存库、
+/// 返回 pending:true（宿主语义见 spec §6.5）；默认 false = 直写。
+pub fn set_write_pending(pending: bool) {
+	WRITE_PENDING.with(|w| w.set(pending));
 }
 
 /// `call_host` 的 native 实现入口（rt.rs 在 feature 开启时路由到这里）。
@@ -63,6 +121,115 @@ pub fn call(method: &str, params: Value) -> Result<Value, PluginError> {
 			Ok(json!({}))
 		}
 		"http.request" => http_request(&params),
+		"notes.get" => {
+			let id = params
+				.get("id")
+				.and_then(Value::as_str)
+				.ok_or_else(|| PluginError::invalid("notes.get 缺 id"))?;
+			NOTES
+				.with(|n| n.borrow().get(id).cloned())
+				.map(|note| json!({ "note": note }))
+				.ok_or_else(|| PluginError::not_found(format!("笔记不存在: {id}")))
+		}
+		"notes.search" => {
+			let q = params
+				.get("query")
+				.and_then(Value::as_str)
+				.ok_or_else(|| PluginError::invalid("notes.search 缺 query"))?
+				.to_lowercase();
+			let limit = params
+				.get("limit")
+				.and_then(Value::as_u64)
+				.unwrap_or(20)
+				.clamp(1, 100) as usize;
+			let notes: Vec<Value> = NOTES.with(|n| {
+				n.borrow()
+					.values()
+					.filter(|note| {
+						let title = note.get("title").and_then(Value::as_str).unwrap_or("");
+						let body = note.get("body").and_then(Value::as_str).unwrap_or("");
+						title.to_lowercase().contains(&q) || body.to_lowercase().contains(&q)
+					})
+					.take(limit)
+					.map(|note| {
+						json!({
+							"id": note["id"],
+							"title": note["title"],
+							"parent_id": note["parent_id"],
+						})
+					})
+					.collect()
+			});
+			Ok(json!({ "notes": notes }))
+		}
+		"notes.list_folders" => {
+			let mut folders = FOLDERS.with(|f| f.borrow().clone());
+			folders.sort_by(|a, b| {
+				let key = |v: &Value| {
+					(
+						v.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
+						v.get("id").and_then(Value::as_str).unwrap_or("").to_string(),
+					)
+				};
+				key(a).cmp(&key(b))
+			});
+			Ok(json!({ "folders": folders }))
+		}
+		"notes.upsert" => {
+			let id = params
+				.get("id")
+				.and_then(Value::as_str)
+				.ok_or_else(|| PluginError::invalid("notes.upsert 缺 id"))?;
+			let mut note = NOTES
+				.with(|n| n.borrow().get(id).cloned())
+				.ok_or_else(|| PluginError::not_found(format!("笔记不存在: {id}")))?;
+			if let Some(t) = params.get("title").and_then(Value::as_str) {
+				note["title"] = json!(t);
+			}
+			if let Some(b) = params.get("body").and_then(Value::as_str) {
+				note["body"] = json!(b);
+			}
+			let pending = WRITE_PENDING.with(Cell::get);
+			if !pending {
+				put_note(note.clone());
+			}
+			Ok(json!({ "note": note, "pending": pending }))
+		}
+		"notes.create" => {
+			let parent_id = params
+				.get("parent_id")
+				.and_then(Value::as_str)
+				.ok_or_else(|| PluginError::invalid("notes.create 缺 parent_id"))?;
+			let parent_ok = FOLDERS.with(|f| {
+				f.borrow().iter().any(|v| v.get("id").and_then(Value::as_str) == Some(parent_id))
+			});
+			if !parent_ok {
+				return Err(PluginError::invalid(format!("笔记本不存在: {parent_id}")));
+			}
+			let title = params.get("title").and_then(Value::as_str).unwrap_or("");
+			let body = params.get("body").and_then(Value::as_str).unwrap_or("");
+			let pending = WRITE_PENDING.with(Cell::get);
+			// pending 提案的 id 为空串（真 id 由宿主在批准时生成，spec §6.5）
+			let note = make_note(if pending { "" } else { FAKE_CREATED_ID }, parent_id, title, body);
+			if !pending {
+				put_note(note.clone());
+			}
+			Ok(json!({ "note": note, "pending": pending }))
+		}
+		"ai.complete" => {
+			let ok = params
+				.get("messages")
+				.and_then(Value::as_array)
+				.map(|m| !m.is_empty())
+				.unwrap_or(false);
+			if !ok {
+				return Err(PluginError::invalid("ai.complete 需要非空 messages"));
+			}
+			let reply = AI_REPLY
+				.with(|r| r.borrow().clone())
+				.unwrap_or_else(|| "(stub reply)".to_string());
+			Ok(json!({ "content": reply }))
+		}
 		other => Err(PluginError::unsupported(format!("native-host 未实现方法 {other}"))),
 	}
 }
@@ -141,5 +308,67 @@ mod tests {
 	#[test]
 	fn unknown_method_is_unsupported() {
 		assert_eq!(call("nope", json!({})).unwrap_err().code, "unsupported");
+	}
+
+	#[test]
+	fn notes_read_paths_through_host_wrappers() {
+		clear_notes();
+		put_folder("f".repeat(32).as_str(), "收件箱", "");
+		put_note(make_note(&"a".repeat(32), &"f".repeat(32), "购物清单", "牛奶 面包"));
+		put_note(make_note(&"b".repeat(32), &"f".repeat(32), "旅行", "机票"));
+
+		let note = crate::host::notes_get(&"a".repeat(32)).unwrap();
+		assert_eq!(note.title, "购物清单");
+		assert_eq!(crate::host::notes_get(&"9".repeat(32)).unwrap_err().code, "not_found");
+
+		let hits = crate::host::notes_search("牛奶", None).unwrap();
+		assert_eq!(hits.len(), 1);
+		assert_eq!(hits[0].title, "购物清单");
+
+		let folders = crate::host::notes_list_folders().unwrap();
+		assert_eq!(folders.len(), 1);
+		assert_eq!(folders[0].title, "收件箱");
+	}
+
+	#[test]
+	fn notes_write_respects_pending_switch() {
+		clear_notes();
+		put_folder(&"f".repeat(32), "收件箱", "");
+		put_note(make_note(&"a".repeat(32), &"f".repeat(32), "t", "old"));
+
+		// 直写（默认）：内存库更新、pending=false
+		set_write_pending(false);
+		let r = crate::host::notes_upsert(&"a".repeat(32), None, Some("new")).unwrap();
+		assert!(!r.pending);
+		assert_eq!(crate::host::notes_get(&"a".repeat(32)).unwrap().body, "new");
+
+		let created = crate::host::notes_create(&"f".repeat(32), Some("新笔记"), None).unwrap();
+		assert!(!created.pending);
+		assert_eq!(created.note.id, FAKE_CREATED_ID);
+
+		// 提案模式：不落库、pending=true、create 无 id
+		set_write_pending(true);
+		let r = crate::host::notes_upsert(&"a".repeat(32), None, Some("newer")).unwrap();
+		assert!(r.pending);
+		assert_eq!(crate::host::notes_get(&"a".repeat(32)).unwrap().body, "new");
+		let created = crate::host::notes_create(&"f".repeat(32), Some("x"), None).unwrap();
+		assert!(created.pending);
+		assert_eq!(created.note.id, "");
+		set_write_pending(false);
+
+		// parent 不存在 → invalid
+		assert_eq!(crate::host::notes_create(&"9".repeat(32), None, None).unwrap_err().code, "invalid");
+	}
+
+	#[test]
+	fn ai_complete_returns_injected_reply() {
+		set_ai_reply("你好，这是替身回复");
+		let msgs = [crate::host::Message::user("hi")];
+		assert_eq!(crate::host::ai_complete(&msgs, None).unwrap(), "你好，这是替身回复");
+		assert_eq!(
+			crate::host::ai_complete(&[], None).unwrap_err().code,
+			"invalid",
+			"空 messages 应报 invalid"
+		);
 	}
 }
