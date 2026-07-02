@@ -189,6 +189,42 @@ const zh = {
 	'plugins.market.incompatibleApi': '需要更新版本的 Jasper（插件 API {v}）',
 	'plugins.market.incompatibleHost': '需要 Jasper ≥ {v}',
 	'plugins.market.shaMismatch': '下载校验失败（sha256 不匹配），已中止安装',
+
+	// 插件侧边栏 / widget（spec 0.3）
+	'plugins.contrib.sidebar': '面板 ×{n}',
+	'plugins.sidebar.loadFailed': '面板加载失败：{msg}',
+	'plugins.autoApprove': '笔记写入免确认',
+	'plugins.autoApproveDesc': '开启后该插件的笔记写入不再弹确认框，直接落盘（跳过保存前钩子）。',
+	'chat.placeholder': '输入消息…',
+	'chat.send': '发送',
+	'chat.busy': '思考中…',
+	'chat.empty': '开始对话吧。',
+	'form.submit': '提交',
+
+	// 插件写提案确认（pending_writes）
+	'pw.titleUpdate': '插件「{name}」请求修改笔记',
+	'pw.titleCreate': '插件「{name}」请求新建笔记',
+	'pw.note': '笔记：{title}',
+	'pw.folder': '目标笔记本：{id}',
+	'pw.diffTitle': '改动预览',
+	'pw.approve': '应用',
+	'pw.reject': '拒绝',
+	'pw.applyFailed': '应用失败：{msg}',
+	'pw.queue': '还有 {n} 项待确认',
+
+	// 设置页 AI 段（host:ai）
+	'settings.ai.title': 'AI',
+	'settings.ai.desc': '供申请 host:ai 能力的插件使用；密钥只存本机，插件不可见。',
+	'settings.ai.provider': '提供方',
+	'settings.ai.providerNone': '未配置',
+	'settings.ai.baseUrl': 'Base URL（可选）',
+	'settings.ai.baseUrlPh': '留空用官方端点；OpenAI 兼容可指 Ollama/DeepSeek 等',
+	'settings.ai.apiKey': 'API Key',
+	'settings.ai.model': '默认模型',
+	'settings.ai.modelPh': '如 claude-opus-4-8 / gpt-4o-mini / qwen3',
+	'settings.ai.save': '保存 AI 配置',
+	'settings.ai.saved': '已保存',
+	'settings.ai.loadFailed': '读取 AI 配置失败',
 }
 
 const en: typeof zh = {
@@ -367,6 +403,43 @@ const en: typeof zh = {
 	'plugins.market.incompatibleApi': 'Needs a newer Jasper (plugin API {v})',
 	'plugins.market.incompatibleHost': 'Needs Jasper ≥ {v}',
 	'plugins.market.shaMismatch': 'Download verification failed (sha256 mismatch); install aborted',
+
+	// Plugin sidebar / widgets (spec 0.3)
+	'plugins.contrib.sidebar': 'Panels ×{n}',
+	'plugins.sidebar.loadFailed': 'Panel failed to load: {msg}',
+	'plugins.autoApprove': 'Write without confirmation',
+	'plugins.autoApproveDesc':
+		'When on, note writes from this plugin apply immediately without a confirmation dialog (skips before-save hooks).',
+	'chat.placeholder': 'Type a message…',
+	'chat.send': 'Send',
+	'chat.busy': 'Thinking…',
+	'chat.empty': 'Start the conversation.',
+	'form.submit': 'Submit',
+
+	// Plugin write proposals (pending_writes)
+	'pw.titleUpdate': 'Plugin "{name}" wants to modify a note',
+	'pw.titleCreate': 'Plugin "{name}" wants to create a note',
+	'pw.note': 'Note: {title}',
+	'pw.folder': 'Target notebook: {id}',
+	'pw.diffTitle': 'Preview of changes',
+	'pw.approve': 'Apply',
+	'pw.reject': 'Reject',
+	'pw.applyFailed': 'Apply failed: {msg}',
+	'pw.queue': '{n} more pending',
+
+	// Settings AI section (host:ai)
+	'settings.ai.title': 'AI',
+	'settings.ai.desc': 'Used by plugins with the host:ai capability; the key stays on this machine and is never exposed to plugins.',
+	'settings.ai.provider': 'Provider',
+	'settings.ai.providerNone': 'Not configured',
+	'settings.ai.baseUrl': 'Base URL (optional)',
+	'settings.ai.baseUrlPh': 'Empty = official endpoint; OpenAI-compatible can point to Ollama/DeepSeek etc.',
+	'settings.ai.apiKey': 'API Key',
+	'settings.ai.model': 'Default model',
+	'settings.ai.modelPh': 'e.g. claude-opus-4-8 / gpt-4o-mini / qwen3',
+	'settings.ai.save': 'Save AI config',
+	'settings.ai.saved': 'Saved',
+	'settings.ai.loadFailed': 'Failed to load AI config',
 }
 
 export type MsgKey = keyof typeof zh

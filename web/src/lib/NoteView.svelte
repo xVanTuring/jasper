@@ -12,6 +12,7 @@
   import Icon from './Icon.svelte'
   import type { EditorHandle } from './editor/types'
   import { editorCommands } from './plugins.svelte'
+  import { enqueuePendingWrites } from './pendingWrites.svelte'
 
   const ENGINE_KEY = 'jasper.editor'
   // 默认源码模式（无损、所见非所得关闭）；只有用户显式开过富文本才记为 'wysiwyg'。
@@ -107,11 +108,13 @@
     runningCmd = commandId
     cmdError = ''
     try {
-      const result = await api.runPluginCommand(pluginId, commandId, {
+      const r = await api.runPluginCommand(pluginId, commandId, {
         note_id: detail.id,
         title,
         body,
       })
+      enqueuePendingWrites(r.pending_writes) // 写提案交全局确认队列（spec 0.3 §9.5）
+      const result = r.result
       if (typeof result.body === 'string' && result.body !== body) {
         body = result.body
         sourceHandle?.setValue(body) // 同步编辑器视图

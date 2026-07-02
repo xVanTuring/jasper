@@ -1,7 +1,14 @@
 // 插件前端宿主：插件列表状态（rune）+ 主题贡献注入（<link>）+ 管理动作。
 // 服务端未编译 plugins feature / demo 构建时整体不可用（pluginsAvailable() === false）。
 
-import { api, IS_DEMO, type PluginInfo, type PluginInstallResult, type StorageContribution } from './api'
+import {
+	api,
+	IS_DEMO,
+	type PluginInfo,
+	type PluginInstallResult,
+	type SidebarContribution,
+	type StorageContribution,
+} from './api'
 import { registerPluginThemes } from './theme.svelte'
 
 /** 设置向导可选的存储 provider（enabled 且无 error 的插件的 contributes.storage 摊平）。 */
@@ -35,6 +42,25 @@ export function storageProviders(): StorageProvider[] {
 			p.contributes.storage.map((s) => ({
 				pluginId: p.id,
 				pluginVersion: p.version,
+				contribution: s,
+			})),
+		)
+}
+
+/** 侧边栏面板入口（enabled 且无 error 的插件的 contributes.sidebar 摊平，spec §3.5）。 */
+export interface SidebarEntry {
+	pluginId: string
+	pluginName: string
+	contribution: SidebarContribution
+}
+
+export function sidebarContributions(): SidebarEntry[] {
+	return plugins
+		.filter((p) => p.enabled && !p.error)
+		.flatMap((p) =>
+			p.contributes.sidebar.map((s) => ({
+				pluginId: p.id,
+				pluginName: p.name,
 				contribution: s,
 			})),
 		)

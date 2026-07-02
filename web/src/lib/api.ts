@@ -106,11 +106,22 @@ export interface ToolbarContribution {
   location: 'note-toolbar' | 'topbar'
 }
 
+// 侧边栏面板贡献（spec §3.5，0.3）：静态 widget（交互经 command）或动态树（view → ui 端点）。
+export interface SidebarContribution {
+  id: string
+  title: string
+  icon: string // 图标令牌名，空 = 默认 plug
+  widget: string // chat | list | tree | form | markdown | button
+  command?: string
+  view?: string
+}
+
 export interface PluginContributes {
   theme: ThemeContribution[]
   storage: StorageContribution[]
   command: CommandContribution[]
   toolbar: ToolbarContribution[]
+  sidebar: SidebarContribution[]
 }
 
 export interface PluginInfo {
@@ -127,6 +138,49 @@ export interface PluginInfo {
   error: string | null
   contributes: PluginContributes
   settings_schema: Schema
+  write_auto_approve: boolean // notes:write 的「写入免确认」（宿主托管，spec 0.3 §7）
+}
+
+// ---------- server-driven UI / 写提案 / AI（spec 0.3）----------
+
+// UiNode 声明树（spec §9.3）：{type, props, children}，未知 type 前端安全忽略（连 children）。
+export interface UiNode {
+  type: string
+  props: Record<string, unknown>
+  children?: UiNode[]
+}
+
+// 写提案（spec §9.5 pending_writes 元素）：插件的 notes.upsert/create 默认不落盘，
+// 由前端弹 diff 确认，同意后走普通 PUT/POST /api/notes*。
+export interface PendingWrite {
+  action: 'update' | 'create'
+  plugin_id: string
+  note: { id: string; parent_id: string; title: string; body: string }
+  original: { title: string; body: string } | null // create 为 null
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+// 宿主级 AI 配置（GET/PUT /api/ai/config；密钥存本机、插件不可见）。
+export interface AiConfig {
+  provider: '' | 'anthropic' | 'openai'
+  base_url: string
+  api_key: string
+  model: string
+}
+
+// 命令/ui 端点的响应：0.3 起响应恒带 pending_writes（无提案 = 空数组）。
+export interface PluginCommandResp {
+  result: Record<string, unknown>
+  pending_writes: PendingWrite[]
+}
+
+export interface PluginUiResp {
+  ui: UiNode
+  pending_writes: PendingWrite[]
 }
 
 export interface PluginsResp {
@@ -318,21 +372,51 @@ const httpApi = {
   pluginAssetUrl: (id: string, path: string, version: string) =>
     `/api/plugins/${id}/assets/${path}?v=${encodeURIComponent(version)}`,
   // 执行插件 backend 命令（spec §9.4）。失败抛带服务端 message 的 Error。
+  // 0.3 起返回完整响应（result + pending_writes）——调用方须把 pending_writes 交给确认队列。
   runPluginCommand: async (
     pluginId: string,
     commandId: string,
     args: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> => {
+  ): Promise<PluginCommandResp> => {
     const res = await fetch(`/api/plugins/${pluginId}/commands/${commandId}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ args }),
     })
     const body = (await res.json().catch(() => null)) as
-      | { result?: Record<string, unknown>; error?: string; message?: string }
+      | (Partial<PluginCommandResp> & { error?: string; message?: string })
       | null
     if (!res.ok) throw new Error(body?.message || body?.error || `command -> ${res.status}`)
-    return body?.result ?? {}
+    return { result: body?.result ?? {}, pending_writes: body?.pending_writes ?? [] }
+  },
+  // server-driven UI：取插件某 view 的声明树（spec §9.5）。
+  pluginUi: async (pluginId: string, view: string, state: unknown = null): Promise<PluginUiResp> => {
+    const res = await fetch(`/api/plugins/${pluginId}/ui/${view}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ state }),
+    })
+    const body = (await res.json().catch(() => null)) as
+      | (Partial<PluginUiResp> & { error?: string; message?: string })
+      | null
+    if (!res.ok || !body?.ui) throw new Error(body?.message || body?.error || `ui -> ${res.status}`)
+    return { ui: body.ui, pending_writes: body.pending_writes ?? [] }
+  },
+  // notes:write 的「写入免确认」开关（宿主托管，spec §9.5）。
+  setPluginAutoApprove: (id: string, enabled: boolean) =>
+    sendJson<PluginInfo>(`/api/plugins/${id}/auto-approve`, 'PUT', { enabled }),
+  // 宿主级 AI 配置（api_key 回显，与数据源密码同姿势）。
+  getAiConfig: () => getJson<AiConfig>('/api/ai/config'),
+  saveAiConfig: async (cfg: AiConfig) => {
+    const res = await fetch('/api/ai/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cfg),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
+      throw new Error(body?.message || body?.error || `PUT ai config -> ${res.status}`)
+    }
   },
 }
 

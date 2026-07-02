@@ -96,3 +96,8 @@ export function renderNote(detail: NoteDetail): string {
   const raw = detail.markup_language === 2 ? detail.body : md.render(detail.body)
   return DOMPurify.sanitize(rewriteResourceRefs(raw), SANITIZE_OPTS)
 }
+
+/** 渲染一段 markdown 为安全 HTML（chat 消息 / markdown widget 用）：同一净化与 :/id 改写管线。 */
+export function renderMarkdown(source: string): string {
+  return DOMPurify.sanitize(rewriteResourceRefs(md.render(source || '')), SANITIZE_OPTS)
+}

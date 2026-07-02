@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderNote } from './render'
+import { renderMarkdown, renderNote } from './render'
 import type { NoteDetail } from './api'
 
 const ID = '0123456789abcdef0123456789abcdef'
@@ -60,5 +60,19 @@ describe('renderNote (HTML note, markup_language=2)', () => {
 		const html = renderNote(note('<img src=x onerror=alert(1)><script>alert(2)</script>', 2))
 		expect(html).not.toContain('onerror')
 		expect(html.toLowerCase()).not.toContain('<script')
+	})
+})
+
+describe('renderMarkdown (chat / markdown widget)', () => {
+	it('renders markdown with the same sanitize + :/id pipeline', () => {
+		const html = renderMarkdown(`**bold** ![img](:/${ID})`)
+		expect(html).toContain('<strong>bold</strong>')
+		expect(html).toContain(`src="/api/resources/${ID}"`)
+	})
+
+	it('sanitizes dangerous markup and tolerates empty input', () => {
+		const html = renderMarkdown('<img src=x onerror=alert(1)>')
+		expect(html).not.toContain('onerror')
+		expect(renderMarkdown('')).toBe('')
 	})
 })
