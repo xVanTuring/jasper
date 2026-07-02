@@ -2,7 +2,8 @@
 //! 不进 wasm 沙箱也能走 host_call——`http.request` 用 ureq 发真网络请求、
 //! `time.now` 用系统时钟、settings 是线程本地 map（用 [`set_setting`] 注入）；
 //! `notes.*` 是线程本地内存笔记库（[`put_note`]/[`put_folder`] 注入、
-//! [`set_write_pending`] 模拟写确认）、`ai.complete` 回预置文本（[`set_ai_reply`]）。
+//! [`set_write_pending`] 模拟写确认）、`ai.complete` 回预置文本（[`set_ai_reply`]
+//! 固定回复 / [`push_ai_reply`] 逐轮队列；[`last_ai_messages`] 供断言提示词）。
 //!
 //! ⚠ 只供插件自己的测试：没有能力门控、没有限额、没有沙箱，安全语义与真宿主不同；
 //! 各方法的参数/返回形状与宿主 host_api 逐字一致（见 host.rs 的封装）。
@@ -23,6 +24,8 @@ thread_local! {
 	static NOTES: RefCell<BTreeMap<String, Value>> = RefCell::new(BTreeMap::new());
 	static FOLDERS: RefCell<Vec<Value>> = RefCell::new(Vec::new());
 	static AI_REPLY: RefCell<Option<String>> = RefCell::new(None);
+	static AI_REPLY_QUEUE: RefCell<std::collections::VecDeque<String>> = RefCell::new(std::collections::VecDeque::new());
+	static AI_LAST_MESSAGES: RefCell<Option<Value>> = RefCell::new(None);
 	static WRITE_PENDING: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -79,6 +82,17 @@ pub fn clear_notes() {
 /// 测试注入：预置 ai.complete 的回复（缺省 "(stub reply)"）。
 pub fn set_ai_reply(reply: &str) {
 	AI_REPLY.with(|r| *r.borrow_mut() = Some(reply.to_string()));
+}
+
+/// 测试注入：入队一条 ai.complete 回复（FIFO，先于 [`set_ai_reply`] 的固定回复消费）。
+/// 工具循环/多轮对话类插件用它模拟逐轮不同的模型输出；队列耗尽后回落固定回复。
+pub fn push_ai_reply(reply: &str) {
+	AI_REPLY_QUEUE.with(|q| q.borrow_mut().push_back(reply.to_string()));
+}
+
+/// 最近一次 ai.complete 收到的 messages（断言插件组装的提示词/回喂内容用）。
+pub fn last_ai_messages() -> Option<Value> {
+	AI_LAST_MESSAGES.with(|m| m.borrow().clone())
 }
 
 /// 测试注入：写确认开关。true = 模拟宿主「需确认」——upsert/create 不改内存库、
@@ -225,8 +239,10 @@ pub fn call(method: &str, params: Value) -> Result<Value, PluginError> {
 			if !ok {
 				return Err(PluginError::invalid("ai.complete 需要非空 messages"));
 			}
-			let reply = AI_REPLY
-				.with(|r| r.borrow().clone())
+			AI_LAST_MESSAGES.with(|m| *m.borrow_mut() = params.get("messages").cloned());
+			let reply = AI_REPLY_QUEUE
+				.with(|q| q.borrow_mut().pop_front())
+				.or_else(|| AI_REPLY.with(|r| r.borrow().clone()))
 				.unwrap_or_else(|| "(stub reply)".to_string());
 			Ok(json!({ "content": reply }))
 		}
@@ -370,5 +386,18 @@ mod tests {
 			"invalid",
 			"空 messages 应报 invalid"
 		);
+	}
+
+	#[test]
+	fn ai_reply_queue_pops_fifo_then_falls_back() {
+		set_ai_reply("固定回复");
+		push_ai_reply("第一轮");
+		push_ai_reply("第二轮");
+		let msgs = [crate::host::Message::user("hi")];
+		assert_eq!(crate::host::ai_complete(&msgs, None).unwrap(), "第一轮");
+		assert_eq!(crate::host::ai_complete(&msgs, None).unwrap(), "第二轮");
+		assert_eq!(crate::host::ai_complete(&msgs, None).unwrap(), "固定回复", "队列耗尽回落固定回复");
+		let recorded = last_ai_messages().expect("应记录最近一次 messages");
+		assert_eq!(recorded[0]["content"], "hi");
 	}
 }
