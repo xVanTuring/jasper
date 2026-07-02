@@ -42,7 +42,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub struct AppState {
-    pub library: RwLock<Library>,
+    /// Arc 化以便把引用递进插件 dispatch（wasmi Store 拥有 ctx、spawn_blocking 要 'static）。
+    pub library: Arc<RwLock<Library>>,
     pub storage: RwLock<Option<Arc<dyn StorageBackend>>>,
     /// Arc 化以便与 PluginHost 共享同一配置库连接。
     pub config: Arc<Mutex<ConfigStore>>,
@@ -849,7 +850,7 @@ mod tests {
     // 无存储的最小 AppState（守卫在 handler 之前运行，故无需真实数据源）。
     fn state_with_read_only(read_only: bool) -> Arc<AppState> {
         Arc::new(AppState {
-            library: RwLock::new(Library::default()),
+            library: Arc::new(RwLock::new(Library::default())),
             storage: RwLock::new(None),
             config: Arc::new(Mutex::new(ConfigStore::in_memory().unwrap())),
             cache: crate::cache::CacheStore::in_memory().unwrap(),

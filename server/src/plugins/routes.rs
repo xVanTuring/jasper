@@ -306,7 +306,7 @@ mod tests {
         let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
         let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
         let state = Arc::new(AppState {
-            library: RwLock::new(Library::default()),
+            library: Arc::new(RwLock::new(Library::default())),
             storage: RwLock::new(None),
             config,
             cache: crate::cache::CacheStore::in_memory().unwrap(),
@@ -484,7 +484,7 @@ token = { type = "secret" }
         let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
         let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
         let state = Arc::new(AppState {
-            library: RwLock::new(Library::default()),
+            library: Arc::new(RwLock::new(Library::default())),
             storage: RwLock::new(None),
             config,
             cache: crate::cache::CacheStore::in_memory().unwrap(),

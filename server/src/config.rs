@@ -42,6 +42,21 @@ pub struct SourceConfig {
     pub read_only: bool,
 }
 
+/// 宿主级 AI 配置（spec 0.3 §9.5）：密钥/端点归宿主，插件经 `ai.complete` 使用、永不可见。
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct AiConfig {
+    /// "anthropic" | "openai"（openai = chat-completions 兼容协议，配 base_url 可指 Ollama/DeepSeek/中转）
+    #[serde(default)]
+    pub provider: String,
+    /// 空 = 该 provider 官方端点
+    #[serde(default)]
+    pub base_url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub model: String,
+}
+
 pub struct ConfigStore {
     conn: Connection,
 }
@@ -159,10 +174,12 @@ impl ConfigStore {
         Ok(())
     }
 
-    /// 删除插件的状态与全部设置（卸载时用）。
+    /// 删除插件的状态与全部设置（卸载时用），连带宿主托管的免确认开关。
     pub fn remove_plugin(&self, id: &str) -> Result<()> {
         self.conn.execute("DELETE FROM plugin_state WHERE id=?1", [id])?;
         self.conn.execute("DELETE FROM plugin_settings WHERE plugin_id=?1", [id])?;
+        self.conn
+            .execute("DELETE FROM settings WHERE key=?1", [auto_approve_key(id)])?;
         Ok(())
     }
 
@@ -199,6 +216,54 @@ impl ConfigStore {
         }
         Ok(())
     }
+
+    // ---------- 宿主级 AI 配置 / 写入免确认开关（spec 0.3 §7 / §9.5）----------
+
+    fn setting(&self, key: &str) -> Option<String> {
+        self.conn
+            .query_row("SELECT value FROM settings WHERE key=?1", [key], |r| r.get(0))
+            .ok()
+    }
+
+    fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO settings(key,value) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET value=?2",
+            rusqlite::params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// 读宿主级 AI 配置；未配置的键为空串（provider 为空 = 未配置）。
+    pub fn ai_config(&self) -> AiConfig {
+        AiConfig {
+            provider: self.setting("ai_provider").unwrap_or_default(),
+            base_url: self.setting("ai_base_url").unwrap_or_default(),
+            api_key: self.setting("ai_api_key").unwrap_or_default(),
+            model: self.setting("ai_model").unwrap_or_default(),
+        }
+    }
+
+    pub fn save_ai_config(&self, cfg: &AiConfig) -> Result<()> {
+        self.set_setting("ai_provider", &cfg.provider)?;
+        self.set_setting("ai_base_url", &cfg.base_url)?;
+        self.set_setting("ai_api_key", &cfg.api_key)?;
+        self.set_setting("ai_model", &cfg.model)?;
+        Ok(())
+    }
+
+    /// 「写入免确认」开关（notes:write，按插件，默认关）。宿主托管——**不放** plugin_settings：
+    /// 插件经 `settings` 能力可读写自己的设置，放那儿等于插件可自行绕过写确认。
+    pub fn plugin_write_auto_approve(&self, id: &str) -> bool {
+        self.setting(&auto_approve_key(id)).map(|v| v == "true").unwrap_or(false)
+    }
+
+    pub fn set_plugin_write_auto_approve(&self, id: &str, on: bool) -> Result<()> {
+        self.set_setting(&auto_approve_key(id), if on { "true" } else { "false" })
+    }
+}
+
+fn auto_approve_key(plugin_id: &str) -> String {
+    format!("plugin_write_auto_approve:{plugin_id}")
 }
 
 /// 根据配置构造存储后端。`plugins`：插件宿主（"plugin" 数据源用；feature 关/未初始化传 None 即报错）。
@@ -255,7 +320,7 @@ pub fn source_key(cfg: &SourceConfig) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{source_key, ConfigStore, SourceConfig};
+    use super::{source_key, AiConfig, ConfigStore, SourceConfig};
 
     #[test]
     fn read_only_round_trips() {
@@ -343,5 +408,39 @@ mod tests {
         store.remove_plugin("x").unwrap();
         assert!(store.plugin_state("x").is_none());
         assert!(store.plugin_settings("x").is_empty());
+    }
+
+    #[test]
+    fn ai_config_round_trip() {
+        let store = ConfigStore::in_memory().unwrap();
+        // 未配置：全空
+        let cfg = store.ai_config();
+        assert!(cfg.provider.is_empty() && cfg.api_key.is_empty());
+        store
+            .save_ai_config(&AiConfig {
+                provider: "openai".into(),
+                base_url: "http://127.0.0.1:11434/v1".into(),
+                api_key: "sk-test".into(),
+                model: "qwen3".into(),
+            })
+            .unwrap();
+        let cfg = store.ai_config();
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.base_url, "http://127.0.0.1:11434/v1");
+        assert_eq!(cfg.api_key, "sk-test");
+        assert_eq!(cfg.model, "qwen3");
+    }
+
+    #[test]
+    fn write_auto_approve_defaults_off_and_uninstall_cleans() {
+        let store = ConfigStore::in_memory().unwrap();
+        assert!(!store.plugin_write_auto_approve("p"));
+        store.set_plugin_write_auto_approve("p", true).unwrap();
+        assert!(store.plugin_write_auto_approve("p"));
+        // 与数据源配置互不串键
+        assert!(store.load().is_none());
+        // 卸载清理开关
+        store.remove_plugin("p").unwrap();
+        assert!(!store.plugin_write_auto_approve("p"));
     }
 }

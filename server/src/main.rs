@@ -132,7 +132,7 @@ async fn main() -> Result<()> {
     }
 
     let state = Arc::new(AppState {
-        library: RwLock::new(library),
+        library: Arc::new(RwLock::new(library)),
         storage: RwLock::new(storage_opt),
         config: config_store,
         cache: cache_store,

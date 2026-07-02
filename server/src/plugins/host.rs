@@ -258,12 +258,25 @@ impl PluginHost {
     }
 
     /// 执行插件的 plugin_dispatch（阻塞；调用方负责 spawn_blocking / rayon 上下文）。
+    /// 无 notes/ai 上下文——hooks/storage 调用方走这里（spec 0.3 §6.5）。
     pub fn dispatch(
         &self,
         plugin_id: &str,
         method: &str,
         params: Value,
         class: CallClass,
+    ) -> Result<Value, CallError> {
+        self.dispatch_with_notes(plugin_id, method, params, class, None)
+    }
+
+    /// 同 [`dispatch`]，但携带 notes/ai 调用上下文（command/ui 路由用，spec 0.3）。
+    pub fn dispatch_with_notes(
+        &self,
+        plugin_id: &str,
+        method: &str,
+        params: Value,
+        class: CallClass,
+        notes: Option<runtime::NotesCtx>,
     ) -> Result<Value, CallError> {
         let (module, caps) = {
             let map = self.plugins.read().unwrap();
@@ -287,6 +300,7 @@ impl PluginHost {
             config: self.config.clone(),
             http: self.http.clone(),
             http_response_cap: self.limits.http_response_cap,
+            notes,
         };
         runtime::call_dispatch(&self.engine, &module, ctx, method, params, class, &self.limits)
     }

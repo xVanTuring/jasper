@@ -95,7 +95,7 @@ mod tests {
         host.set_enabled("broken-hook", true).unwrap();
 
         let state = Arc::new(AppState {
-            library: RwLock::new(Library::default()),
+            library: Arc::new(RwLock::new(Library::default())),
             storage: RwLock::new(None),
             config,
             cache: crate::cache::CacheStore::in_memory().unwrap(),

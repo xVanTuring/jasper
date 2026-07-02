@@ -6,10 +6,12 @@
 //!   核对 fuel 总预算与 **CPU 墙钟**（elapsed − host_call 内的 IO 时间）后续燃或中止。
 
 use super::host_api;
-use crate::config::ConfigStore;
+use crate::config::{AiConfig, ConfigStore};
+use crate::library::Library;
+use crate::storage::StorageBackend;
 use anyhow::{anyhow, Context, Result};
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use wasmi::{Caller, Config, Engine, Extern, Linker, Module, Store, StoreLimits, StoreLimitsBuilder, TypedResumableCall};
 
@@ -67,6 +69,23 @@ impl std::fmt::Display for CallError {
 
 impl std::error::Error for CallError {}
 
+/// notes:* / host:ai 的调用上下文（spec 0.3 §6.5）：仅 command / ui 分发提供，
+/// hooks/storage 分发为 None → 对应 host_call 返回 unsupported。
+pub struct NotesCtx {
+    pub library: Arc<RwLock<Library>>,
+    /// dispatch 时的存储快照（数据源未配置 = None → 写入报错）。
+    pub storage: Option<Arc<dyn StorageBackend>>,
+    pub read_only: bool,
+    /// 宿主托管的「写入免确认」开关（按插件）：关 = 提案回传，开 = 直写（跳过 before-save 钩子）。
+    pub auto_approve: bool,
+    /// tokio 运行时句柄：ai.complete（genai 为 async）在阻塞线程里 block_on 用。
+    pub handle: tokio::runtime::Handle,
+    /// 宿主级 AI 配置快照。
+    pub ai: AiConfig,
+    /// 本次调用累积的写提案（WriteProposal JSON）；路由层持 clone、调用后 drain 进 HTTP 响应。
+    pub pending: Arc<Mutex<Vec<Value>>>,
+}
+
 /// 宿主上下文：挂在 Store 数据上，host_call 从这里拿能力/配置/HTTP 出口。
 pub struct HostCtx {
     pub plugin_id: String,
@@ -78,6 +97,8 @@ pub struct HostCtx {
     pub config: Arc<Mutex<ConfigStore>>,
     pub http: ureq::Agent,
     pub http_response_cap: usize,
+    /// notes/ai 上下文（仅 command/ui 分发，spec 0.3）。
+    pub notes: Option<NotesCtx>,
 }
 
 impl HostCtx {
