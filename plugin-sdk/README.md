@@ -44,6 +44,23 @@ Build with `cargo build --release --target wasm32-unknown-unknown`, then zip
 - `sdk::core` — re-export of [`jasper-core`](https://crates.io/crates/jasper-core)
   model types crossing the ABI
 
+## Testing your plugin natively
+
+Plain unit tests just work (`cargo test` — the ABI exports are wasm-only).
+For integration tests that need host APIs, enable the **`native-host`** feature
+in dev-dependencies: `host_call` is then served by a local stand-in —
+`http.request` performs real HTTP via ureq, `time.now` uses the system clock,
+and settings live in a thread-local map you can seed with
+`sdk::native_host::set_setting`:
+
+```toml
+[dev-dependencies]
+jasper-plugin-sdk = { version = "0.2", features = ["native-host"] }
+```
+
+This is a test double, not the sandbox: no capability gating, no fuel/memory
+limits. It never affects the wasm build.
+
 ## Gotchas
 
 - Don't pull dependencies that drag in `wasm-bindgen` (e.g. `chrono` with default

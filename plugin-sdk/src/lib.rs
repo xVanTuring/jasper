@@ -20,6 +20,8 @@
 //! 插件 crate 须为 `crate-type = ["cdylib"]`，目标 `wasm32-unknown-unknown`。
 
 pub mod host;
+#[cfg(all(not(target_arch = "wasm32"), feature = "native-host"))]
+pub mod native_host;
 pub mod rt;
 pub mod storage;
 

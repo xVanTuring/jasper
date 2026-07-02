@@ -123,18 +123,27 @@ pub fn write_out(bytes: &[u8]) -> u64 {
     pack(ptr as u32, bytes.len() as u32)
 }
 
-/// 插件 → 宿主调用（spec §6.3）。仅 wasm 环境可用；native 下直接报错（供单测桩用）。
+/// 插件 → 宿主调用（spec §6.3）。仅 wasm 环境可用；native 下直接报错（供单测桩用），
+/// 除非开 `native-host` feature——则路由到本地宿主替身（见 native_host.rs，仅测试用）。
 pub fn call_host(method: &str, params: Value) -> Result<Value, PluginError> {
-    let req = serde_json::to_vec(&serde_json::json!({ "method": method, "params": params }))
-        .map_err(|e| PluginError::internal(format!("host 请求序列化失败: {e}")))?;
-    let packed = raw_host_call(&req)?;
-    let (ptr, len) = unpack(packed);
-    let bytes = unsafe { std::slice::from_raw_parts(ptr as usize as *const u8, len as usize) }.to_vec();
-    // 响应缓冲区由宿主经 plugin_alloc 写入，插件读完释放（spec §6.3）
-    free(ptr as usize, len as usize);
-    let resp: Resp = serde_json::from_slice(&bytes)
-        .map_err(|e| PluginError::internal(format!("host 响应 JSON 解析失败: {e}")))?;
-    resp.into_result()
+    #[cfg(all(not(target_arch = "wasm32"), feature = "native-host"))]
+    {
+        crate::native_host::call(method, params)
+    }
+    #[cfg(not(all(not(target_arch = "wasm32"), feature = "native-host")))]
+    {
+        let req = serde_json::to_vec(&serde_json::json!({ "method": method, "params": params }))
+            .map_err(|e| PluginError::internal(format!("host 请求序列化失败: {e}")))?;
+        let packed = raw_host_call(&req)?;
+        let (ptr, len) = unpack(packed);
+        let bytes =
+            unsafe { std::slice::from_raw_parts(ptr as usize as *const u8, len as usize) }.to_vec();
+        // 响应缓冲区由宿主经 plugin_alloc 写入，插件读完释放（spec §6.3）
+        free(ptr as usize, len as usize);
+        let resp: Resp = serde_json::from_slice(&bytes)
+            .map_err(|e| PluginError::internal(format!("host 响应 JSON 解析失败: {e}")))?;
+        resp.into_result()
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -190,6 +199,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "native-host"))]
     fn native_host_call_errors_cleanly() {
         let err = call_host("log", json!({})).unwrap_err();
         assert_eq!(err.code, "internal");

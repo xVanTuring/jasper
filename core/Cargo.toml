@@ -1,6 +1,6 @@
 [package]
 name = "jasper-core"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "Joplin sync-format core: model, parser, serializer, in-memory index (no IO; portable to WASM)"
 license = "MIT OR Apache-2.0"
