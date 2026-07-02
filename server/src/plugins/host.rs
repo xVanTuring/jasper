@@ -397,6 +397,18 @@ impl PluginHost {
                 .unwrap_or(false)
     }
 
+    /// ui 端点守卫：view 须在该插件的 contributes.sidebar 里声明（spec §3.5/§9.5）。
+    pub fn has_ui_view(&self, plugin_id: &str, view: &str) -> bool {
+        let map = self.plugins.read().unwrap();
+        let Some(p) = map.get(plugin_id) else { return false };
+        p.enabled
+            && p.module.is_some()
+            && p.manifest
+                .as_ref()
+                .map(|m| m.contributes.sidebar.iter().any(|s| s.view.as_deref() == Some(view)))
+                .unwrap_or(false)
+    }
+
     /// 插件目录（资产托管用）；返回前须确认 enabled。
     pub fn asset_root(&self, plugin_id: &str) -> Option<PathBuf> {
         let map = self.plugins.read().unwrap();

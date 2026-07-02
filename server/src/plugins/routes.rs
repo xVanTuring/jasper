@@ -25,6 +25,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/plugins/{id}/enable", post(enable))
         .route("/api/plugins/{id}/settings", get(get_settings).put(put_settings))
         .route("/api/plugins/{id}/commands/{cmd}", post(run_command))
+        .route("/api/plugins/{id}/ui/{view}", post(ui_view))
+        .route("/api/plugins/{id}/auto-approve", axum::routing::put(put_auto_approve))
         .route("/api/plugins/{id}/assets/{*path}", get(asset))
         // 宿主级 AI 配置（spec 0.3 §9.5）：host:ai 的密钥/端点，插件永不可见。
         // PUT 在只读守卫之内自动被拦；GET 回显 api_key（与数据源密码同姿势，本机信任模型）。
@@ -212,6 +214,43 @@ struct RunCommandReq {
 /// POST /api/plugins/{id}/commands/{cmd} —— 执行 backend 命令（spec §6.5 `command`）。
 /// 返回插件的 result 原样；插件业务错误按 code 映射 HTTP 状态。
 /// 写方法 → 只读模式下被 guard_read_only 自动拦截。
+/// command/ui 分发的 notes/ai 上下文（spec 0.3 §6.5）：快照 AppState 各件 + 空提案累积器。
+fn notes_ctx_of(state: &Arc<AppState>, plugin_id: &str) -> super::runtime::NotesCtx {
+    let (auto_approve, ai) = {
+        let cfg = state.config.lock().unwrap();
+        (cfg.plugin_write_auto_approve(plugin_id), cfg.ai_config())
+    };
+    super::runtime::NotesCtx {
+        library: state.library.clone(),
+        storage: state.storage.read().unwrap().clone(),
+        read_only: state.read_only.load(std::sync::atomic::Ordering::Relaxed),
+        auto_approve,
+        handle: tokio::runtime::Handle::current(),
+        ai,
+        pending: Arc::new(std::sync::Mutex::new(Vec::new())),
+    }
+}
+
+/// 统一的 dispatch 错误 → HTTP 状态映射（command 与 ui 共用）。
+fn dispatch_error(e: super::runtime::CallError) -> Response {
+    match e {
+        super::runtime::CallError::Plugin { code, message } => {
+            let status = match code.as_str() {
+                "forbidden" => StatusCode::FORBIDDEN,
+                "not_found" => StatusCode::NOT_FOUND,
+                "invalid" => StatusCode::BAD_REQUEST,
+                _ => StatusCode::BAD_GATEWAY, // 插件内部/上游失败（如 AI 端点报错）
+            };
+            (status, Json(json!({ "error": code, "message": message }))).into_response()
+        }
+        e => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "internal", "message": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 async fn run_command(
     State(state): State<Arc<AppState>>,
     Path((id, cmd)): Path<(String, String)>,
@@ -228,28 +267,94 @@ async fn run_command(
         )
             .into_response();
     }
+    let ctx = notes_ctx_of(&state, &id);
+    let pending = ctx.pending.clone();
     let params = json!({ "id": cmd, "args": req.args });
     let r = tokio::task::spawn_blocking(move || {
-        host.dispatch(&id, "command", params, super::runtime::CallClass::Normal)
+        host.dispatch_with_notes(&id, "command", params, super::runtime::CallClass::Normal, Some(ctx))
     })
     .await;
     match r {
-        Ok(Ok(result)) => Json(json!({ "result": result })).into_response(),
-        Ok(Err(super::runtime::CallError::Plugin { code, message })) => {
-            let status = match code.as_str() {
-                "forbidden" => StatusCode::FORBIDDEN,
-                "not_found" => StatusCode::NOT_FOUND,
-                "invalid" => StatusCode::BAD_REQUEST,
-                _ => StatusCode::BAD_GATEWAY, // 插件内部/上游失败（如 AI 端点报错）
-            };
-            (status, Json(json!({ "error": code, "message": message }))).into_response()
+        // pending_writes 恒在（无提案 = 空数组）；调用失败时提案随 ctx 一起丢弃（spec §6.5）
+        Ok(Ok(result)) => {
+            let writes = std::mem::take(&mut *pending.lock().unwrap());
+            Json(json!({ "result": result, "pending_writes": writes })).into_response()
         }
-        Ok(Err(e)) => (
+        Ok(Err(e)) => dispatch_error(e),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct UiViewReq {
+    #[serde(default)]
+    state: Value,
+}
+
+/// POST /api/plugins/{id}/ui/{view}（spec §9.5）：取 server-driven UI 声明树。
+/// POST（携带 state）→ 只读模式下被写守卫拦截（已知取舍，spec §9.5）。
+async fn ui_view(
+    State(state): State<Arc<AppState>>,
+    Path((id, view)): Path<(String, String)>,
+    Json(req): Json<UiViewReq>,
+) -> Response {
+    let host = match host_of(&state) {
+        Ok(h) => h,
+        Err(r) => return r,
+    };
+    if !host.has_ui_view(&id, &view) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "not_found", "message": "插件未启用或未声明该 view" })),
+        )
+            .into_response();
+    }
+    let ctx = notes_ctx_of(&state, &id);
+    let pending = ctx.pending.clone();
+    let params = json!({ "view": view, "state": req.state });
+    let r = tokio::task::spawn_blocking(move || {
+        host.dispatch_with_notes(&id, "ui", params, super::runtime::CallClass::Normal, Some(ctx))
+    })
+    .await;
+    match r {
+        Ok(Ok(ui)) => {
+            let writes = std::mem::take(&mut *pending.lock().unwrap());
+            Json(json!({ "ui": ui, "pending_writes": writes })).into_response()
+        }
+        Ok(Err(e)) => dispatch_error(e),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct AutoApproveReq {
+    enabled: bool,
+}
+
+/// PUT /api/plugins/{id}/auto-approve（spec §9.5）：notes:write 的「写入免确认」开关。
+/// 宿主托管（不进插件 settings，防插件自改）；返回刷新后的插件信息。
+async fn put_auto_approve(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<AutoApproveReq>,
+) -> Response {
+    let host = match host_of(&state) {
+        Ok(h) => h,
+        Err(r) => return r,
+    };
+    let Some(_) = host.info(&id) else {
+        return (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response();
+    };
+    if let Err(e) = state.config.lock().unwrap().set_plugin_write_auto_approve(&id, req.enabled) {
+        return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": "internal", "message": e.to_string() })),
         )
-            .into_response(),
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            .into_response();
+    }
+    match host.info(&id) {
+        Some(info) => Json(info).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
@@ -629,6 +734,144 @@ token = { type = "secret" }
             "POST",
             "/api/plugins/testbed/commands/relay",
             b"{\"args\":{}}".to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+    }
+
+    /// pending_writes 全链路 + ui 端点 + auto-approve 开关（spec 0.3 §9.5）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ui_and_pending_writes_full_chain() {
+        let examples =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/testbed");
+        if !examples.join("plugin.wasm").exists() {
+            eprintln!("跳过：testbed/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            return;
+        }
+
+        // 装 testbed（notes 能力 + write-note 命令 + 动态 sidebar view）
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("testbed");
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::copy(examples.join("plugin.wasm"), dst.join("plugin.wasm")).unwrap();
+        std::fs::write(
+            dst.join("manifest.toml"),
+            r#"
+id = "testbed"
+name = "Testbed"
+version = "0.1.0"
+apiVersion = "0.3"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = ["notes:read", "notes:write"]
+
+[[contributes.command]]
+id = "write-note"
+title = "Write"
+target = "backend"
+
+[[contributes.sidebar]]
+id = "tools"
+title = "工具"
+widget = "markdown"
+view = "main"
+"#,
+        )
+        .unwrap();
+
+        // 真实数据源：本地临时目录 + 预置库（1 笔记本 1 笔记）
+        let folder_id = "f".repeat(32);
+        let note_id = "a".repeat(32);
+        let contents = vec![
+            crate::serialize::new_folder_md(&folder_id, "", "收件箱", 1_700_000_000_000),
+            crate::serialize::new_note_md(&note_id, &folder_id, "标题", "原始正文", false, 1_700_000_000_000),
+        ];
+        let source_dir = tempfile::tempdir().unwrap();
+        std::fs::write(source_dir.path().join(format!("{folder_id}.md")), &contents[0]).unwrap();
+        std::fs::write(source_dir.path().join(format!("{note_id}.md")), &contents[1]).unwrap();
+        let (lib, _) = Library::from_contents(contents);
+
+        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
+        let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
+        let state = Arc::new(AppState {
+            library: Arc::new(RwLock::new(lib)),
+            storage: RwLock::new(Some(Arc::new(crate::storage::local::LocalStorage::new(
+                source_dir.path(),
+            )))),
+            config,
+            cache: crate::cache::CacheStore::in_memory().unwrap(),
+            read_only: AtomicBool::new(false),
+            plugins: Some(host),
+        });
+        let (st, _) =
+            send(state.clone(), "POST", "/api/plugins/testbed/enable", b"{\"enabled\":true}".to_vec()).await;
+        assert_eq!(st, StatusCode::OK);
+
+        // 默认（免确认关）：命令返回提案，盘不动
+        let req = format!(r#"{{"args":{{"id":"{note_id}","body":"插件改写"}}}}"#);
+        let (st, body) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/testbed/commands/write-note",
+            req.clone().into_bytes(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["pending"], true);
+        let writes = body["pending_writes"].as_array().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0]["action"], "update");
+        assert_eq!(writes[0]["plugin_id"], "testbed");
+        assert_eq!(writes[0]["note"]["body"], "插件改写");
+        assert_eq!(writes[0]["original"]["body"], "原始正文");
+        let disk = std::fs::read_to_string(source_dir.path().join(format!("{note_id}.md"))).unwrap();
+        assert!(disk.contains("原始正文"), "提案不落盘");
+
+        // 开免确认（宿主托管端点）→ 返回刷新后的 PluginInfo
+        let (st, body) = send(
+            state.clone(),
+            "PUT",
+            "/api/plugins/testbed/auto-approve",
+            b"{\"enabled\":true}".to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["write_auto_approve"], true);
+        // 未知插件 → 404
+        let (st, _) =
+            send(state.clone(), "PUT", "/api/plugins/nope/auto-approve", b"{\"enabled\":true}".to_vec()).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+
+        // 再写：直写落盘，pending_writes 空
+        let (st, body) =
+            send(state.clone(), "POST", "/api/plugins/testbed/commands/write-note", req.into_bytes()).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["pending"], false);
+        assert_eq!(body["pending_writes"].as_array().unwrap().len(), 0);
+        let disk = std::fs::read_to_string(source_dir.path().join(format!("{note_id}.md"))).unwrap();
+        assert!(disk.contains("插件改写"), "免确认应直写: {disk:?}");
+
+        // ui 端点：声明过的 view 返回树；未声明的 404
+        let (st, body) =
+            send(state.clone(), "POST", "/api/plugins/testbed/ui/main", b"{\"state\":null}".to_vec()).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["ui"]["type"], "markdown");
+        assert_eq!(body["ui"]["children"][0]["type"], "button");
+        assert_eq!(body["pending_writes"].as_array().unwrap().len(), 0);
+        let (st, _) =
+            send(state.clone(), "POST", "/api/plugins/testbed/ui/nope", b"{}".to_vec()).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+
+        // 只读：ui / auto-approve 均被写守卫拦截
+        state.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (st, _) = send(state.clone(), "POST", "/api/plugins/testbed/ui/main", b"{}".to_vec()).await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+        let (st, _) = send(
+            state.clone(),
+            "PUT",
+            "/api/plugins/testbed/auto-approve",
+            b"{\"enabled\":false}".to_vec(),
         )
         .await;
         assert_eq!(st, StatusCode::FORBIDDEN);
