@@ -15,8 +15,13 @@ pub fn format_iso(ms: i64) -> String {
 }
 
 /// 当前时间（Unix 毫秒）。
+/// 用 std 而非 chrono::Utc::now()：省掉 chrono 的 clock/wasmbind feature，
+/// 插件沙箱（wasm32-unknown-unknown）才能零 wasm-bindgen 依赖地编译 core。
 pub fn now_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("系统时钟早于 Unix 纪元")
+        .as_millis() as i64
 }
 
 /// 生成一个新的 32 位十六进制条目 ID。

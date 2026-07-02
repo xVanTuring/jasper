@@ -6,5 +6,15 @@ description = "Joplin sync-format core: model, parser, serializer, in-memory ind
 
 [dependencies]
 anyhow = "1"
-chrono = "0.4"
+# 关默认 feature：去掉 wasmbind（wasm32 下会拉 wasm-bindgen，插件沙箱无法实例化）；
+# 格式化/解析只需 std（now_ms 已改用 std::time，不需要 clock）
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 getrandom = "0.2"
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+# 可选：给模型类型加 Serialize/Deserialize（插件 ABI 用；默认关，wasm demo/默认构建不受影响）
+serde = ["dep:serde"]
+
+[dev-dependencies]
+serde_json = "1"
