@@ -93,3 +93,8 @@ The server scans the sync directory, parses every `<id>.md` item into an in-memo
 ## Tech stack
 
 Rust · axum · rusqlite · rayon · ureq — Svelte 5 (runes) · Vite · TypeScript · CodeMirror 6 · markdown-it · KaTeX · highlight.js · DOMPurify.
+
+## License
+
+The application (server, web UI, WASM demo) is licensed under **AGPL-3.0-or-later** (see [LICENSE](LICENSE)).
+[`core/`](core) (jasper-core), [`plugin-sdk/`](plugin-sdk) (jasper-plugin-sdk) and [`plugins-examples/`](plugins-examples) are **MIT OR Apache-2.0** — plugins statically link the SDK and copy from the examples, so those parts stay permissive for plugin authors.

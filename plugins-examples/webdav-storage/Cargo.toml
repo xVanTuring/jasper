@@ -2,6 +2,8 @@
 name = "webdav-storage"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
 description = "示例存储插件：以插件形式接入 WebDAV（对照 server/src/storage/webdav.rs 的参考实现）"
 
 [lib]

@@ -3,6 +3,9 @@ name = "jasper"
 version = "0.1.0"
 edition = "2021"
 description = "Lightweight read-only Joplin client — local HTTP server + browser UI"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/xVanTuring/jasper"
+publish = false
 
 [dependencies]
 jasper-core = { path = "../core" }

@@ -2,6 +2,8 @@
 name = "s3-storage"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
 description = "示例存储插件：S3 兼容对象存储（AWS S3 / MinIO / R2…），SigV4 over host:http"
 
 [lib]

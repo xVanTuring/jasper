@@ -2,6 +2,8 @@
 name = "trim-trailing"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
 description = "示例插件：保存前去除每行行尾空白（spec 附录 B）"
 
 [lib]

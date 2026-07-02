@@ -1,11 +1,17 @@
 [package]
 name = "jasper-plugin-sdk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Jasper plugin SDK: ABI glue (plugin_dispatch/host_call), typed host wrappers, storage trait (spec 0.2)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xVanTuring/jasper"
+readme = "README.md"
+keywords = ["jasper", "joplin", "plugin", "wasm", "sdk"]
+categories = ["wasm", "api-bindings"]
 
 [dependencies]
-jasper-core = { path = "../core", features = ["serde"] }
+# path+version 双写：本地开发走 path，crates.io 发布走 version（minor 对齐 spec apiVersion）
+jasper-core = { path = "../core", version = "0.2", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"

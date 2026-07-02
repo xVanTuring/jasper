@@ -1,8 +1,13 @@
 [package]
 name = "jasper-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Joplin sync-format core: model, parser, serializer, in-memory index (no IO; portable to WASM)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xVanTuring/jasper"
+readme = "README.md"
+keywords = ["joplin", "notes", "markdown", "parser"]
+categories = ["parser-implementations", "text-processing"]
 
 [dependencies]
 anyhow = "1"

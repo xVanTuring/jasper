@@ -1,0 +1,54 @@
+# 发布 jasper-core + jasper-plugin-sdk 到 crates.io。
+# 触发：推 `crates-v*` tag（如 crates-v0.2.0；与 docker.yml 的 `v*` 应用发版互不干扰）。
+# 前置：仓库 secret `CRATES_IO_TOKEN`（crates.io API token，scope: publish-new + publish-update）。
+# 两个 crate 版本必须与 tag 一致（下面有校验）；先发 core 再发 sdk（sdk 依赖 core，
+# cargo publish 会等 index 可见后返回，所以顺序执行即可）。
+# 幂等：某个 crate 该版本已在 crates.io 上则跳过（部分失败后重跑 workflow 安全）。
+name: publish-crates
+
+on:
+  push:
+    tags: ["crates-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify tag matches crate versions
+        run: |
+          ver="${GITHUB_REF_NAME#crates-v}"
+          for d in core plugin-sdk; do
+            got=$(grep -m1 '^version = ' "$d/Cargo.toml" | cut -d'"' -f2)
+            if [ "$got" != "$ver" ]; then
+              echo "::error::$d/Cargo.toml version is $got but tag says $ver"
+              exit 1
+            fi
+          done
+
+      - name: Publish jasper-core
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          ver="${GITHUB_REF_NAME#crates-v}"
+          if curl -sfA jasper-ci "https://crates.io/api/v1/crates/jasper-core/$ver" >/dev/null; then
+            echo "jasper-core $ver already published — skipping"
+          else
+            cd core && cargo publish
+          fi
+
+      - name: Publish jasper-plugin-sdk
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          ver="${GITHUB_REF_NAME#crates-v}"
+          if curl -sfA jasper-ci "https://crates.io/api/v1/crates/jasper-plugin-sdk/$ver" >/dev/null; then
+            echo "jasper-plugin-sdk $ver already published — skipping"
+          else
+            cd plugin-sdk && cargo publish
+          fi

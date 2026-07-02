@@ -93,3 +93,8 @@ docker compose up --build   # 然后访问 http://localhost:27583/
 ## 技术栈
 
 Rust · axum · rusqlite · rayon · ureq —— Svelte 5 (runes) · Vite · TypeScript · CodeMirror 6 · markdown-it · KaTeX · highlight.js · DOMPurify。
+
+## 许可协议
+
+应用本体（server、web 前端、WASM demo）采用 **AGPL-3.0-or-later**（见 [LICENSE](LICENSE)）。
+[`core/`](core)（jasper-core）、[`plugin-sdk/`](plugin-sdk)（jasper-plugin-sdk）与 [`plugins-examples/`](plugins-examples) 采用 **MIT OR Apache-2.0** —— 插件会把 SDK 静态链接进产物、且通常从示例复制起步，这几部分保持宽松协议以免向插件作者传染 copyleft。

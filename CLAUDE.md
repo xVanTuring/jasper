@@ -197,6 +197,8 @@ POST   /api/plugins/{id}/commands/{cmd} 执行 backend 命令 { args } → { res
 ## 约定与注意点（gotchas）
 
 - **提交信息**：commit message **一律用英文**（后续提交遵循此约定；正文/PR 描述可中文）。
+- **许可协议**：应用本体（server/web/wasm）AGPL-3.0-or-later（根 LICENSE 带子目录例外前言）；`core/`、`plugin-sdk/`、`plugins-examples/` 是 **MIT OR Apache-2.0**（各目录有 LICENSE-MIT/LICENSE-APACHE）——插件静态链接 SDK、从示例复制起步，这三处**绝不能混入 AGPL 代码**；上游 `joplin/` 是 AGPL，只作格式参考，**任何目录都不得从中复制代码**。
+- **crates.io 发布**：`jasper-core` + `jasper-plugin-sdk` 已发布（SDK 版本 **minor 对齐 spec apiVersion**：0.2.x ↔ apiVersion 0.2）。发版：两个 Cargo.toml 版本同步改 → 推 `crates-v<版本>` tag → `publish-crates.yml` 先 core 后 sdk（幂等，重跑安全；需仓库 secret `CRATES_IO_TOKEN`）。SDK 对 core 的依赖 **path+version 双写**，本地走 path、发布走 version。server/wasm/示例插件均 `publish = false`。
 - Rust：tab 缩进、单引号、避免 `any`、注释用 `//`；网络/磁盘 IO 在 axum handler 里走 `spawn_blocking`；`ConfigStore`(rusqlite) 用 `Mutex` 包裹。
 - 前端：Svelte 5 **runes**（`$state/$props/$derived/$effect`），事件用 `onclick=` 不是 `on:click`；`NoteView` 按笔记 id 以 `{#key}` 重挂载（先取详情再切 id）。
 - **多语言**：自建轻量 i18n（无第三方包）。新增/改文案要**同时**写 `messages.ts` 的 `zh` 和 `en`（漏键编译报错）。组件里用 `t('key', {插值})`；模板内调用 `t()` 会读 `i18n.svelte.ts` 的 rune→切换语言即时重渲染。纯 `.ts`（如 api.ts）里调 `t()` 取当时语言即可。顶栏「中/EN」按钮切换，localStorage 持久化。
