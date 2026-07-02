@@ -1,10 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { slide } from 'svelte/transition'
-  import { api, IS_DEMO, FOLDER_DND_TYPE, type FolderNode, type NoteSummary, type NoteDetail } from './lib/api'
+  import {
+    api,
+    IS_DEMO,
+    FOLDER_DND_TYPE,
+    type FolderNode,
+    type NoteSummary,
+    type NoteDetail,
+    type PendingWrite,
+  } from './lib/api'
   import { draggingFolder } from './lib/dnd.svelte'
   import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
   import Button from './lib/Button.svelte'
+  import Icon from './lib/Icon.svelte'
   import ThemePicker from './lib/ThemePicker.svelte'
   import FolderTree from './lib/FolderTree.svelte'
   import NoteList from './lib/NoteList.svelte'
@@ -12,7 +21,9 @@
   import Settings from './lib/Settings.svelte'
   import ResourcePanel from './lib/ResourcePanel.svelte'
   import PluginPanel from './lib/PluginPanel.svelte'
-  import { loadPlugins, pluginsAvailable } from './lib/plugins.svelte'
+  import PluginSidebar from './lib/PluginSidebar.svelte'
+  import PendingWriteDialog from './lib/PendingWriteDialog.svelte'
+  import { loadPlugins, pluginsAvailable, sidebarContributions, type SidebarEntry } from './lib/plugins.svelte'
 
   // 让 <html lang> 跟随当前语言（影响断词/无障碍等）
   $effect(() => {
@@ -37,6 +48,41 @@
   let showResources = $state(false)
   let showPlugins = $state(false)
   let showDemoBanner = $state(true)
+
+  // 插件侧边栏（右侧 dock，spec §3.5/§9.4）：当前打开的面板；插件被禁用/卸载后自动关闭
+  let dockEntry = $state<SidebarEntry | null>(null)
+  $effect(() => {
+    if (
+      dockEntry &&
+      !sidebarContributions().some(
+        (e) => e.pluginId === dockEntry!.pluginId && e.contribution.id === dockEntry!.contribution.id,
+      )
+    ) {
+      dockEntry = null
+    }
+  })
+  function toggleDock(entry: SidebarEntry) {
+    dockEntry =
+      dockEntry?.pluginId === entry.pluginId && dockEntry.contribution.id === entry.contribution.id
+        ? null
+        : entry
+  }
+
+  // 插件写提案获批落盘后：受影响的打开笔记强制重挂载取新内容，列表/树跟着刷新
+  async function onPluginWriteApplied(w: PendingWrite) {
+    try {
+      if (w.action === 'update' && selectedNoteId === w.note.id) {
+        const id = w.note.id
+        selectedNoteId = null
+        detail = null
+        await selectNote(id)
+      }
+      if (w.action === 'create') folders = await api.folders()
+      await refreshList()
+    } catch {
+      /* 忽略 */
+    }
+  }
   // 服务端只读模式（/api/status 返回）。与编译期 demo 只读合并成统一的写入闸门。
   let serverReadOnly = $state(false)
   const readOnly = $derived(IS_DEMO || serverReadOnly)
@@ -365,7 +411,7 @@
     <div class="error" transition:slide={{ duration: 200 }}>{error}</div>
   {/if}
 
-  <div class="panes">
+  <div class="panes" class:with-dock={dockEntry != null}>
     <aside class="sidebar">
       <div class="pane-title">
         <span>{t('pane.notebooks')}</span>
@@ -394,6 +440,23 @@
         onMoveFolder={readOnly ? undefined : moveFolder}
         onRenameFolder={readOnly ? undefined : renameFolder}
       />
+      <!-- 插件面板入口（左栏底部，spec §9.4）；只读下命令端点全被拦，一并隐藏 -->
+      {#if !readOnly && sidebarContributions().length}
+        <div class="plugin-entries">
+          {#each sidebarContributions() as entry (entry.pluginId + '/' + entry.contribution.id)}
+            <button
+              class="plugin-entry"
+              class:active={dockEntry?.pluginId === entry.pluginId &&
+                dockEntry.contribution.id === entry.contribution.id}
+              title={entry.pluginName}
+              onclick={() => toggleDock(entry)}
+            >
+              <Icon name={entry.contribution.icon || 'plug'} size={14} />
+              <span class="entry-title">{entry.contribution.title}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
     </aside>
 
     <section class="notelist">
@@ -421,8 +484,23 @@
         />
       {/key}
     </main>
+
+    {#if dockEntry}
+      <aside class="dock">
+        {#key dockEntry.pluginId + '/' + dockEntry.contribution.id}
+          <PluginSidebar
+            entry={dockEntry}
+            noteId={selectedNoteId}
+            onClose={() => (dockEntry = null)}
+            onNotesChanged={refreshList}
+          />
+        {/key}
+      </aside>
+    {/if}
   </div>
 </div>
+
+<PendingWriteDialog onApplied={onPluginWriteApplied} />
 
 {#if configured === false}
   <Settings mode="setup" onDone={onConfigured} />
@@ -527,12 +605,65 @@
     flex: 1;
     min-height: 0;
   }
+  /* 插件面板 dock：在阅读区右侧挤出第四栏（spec §9.4，约 320px） */
+  .panes.with-dock {
+    grid-template-columns: 250px 300px 1fr 320px;
+  }
+  .dock {
+    border-left: 1px solid var(--border);
+    overflow: hidden;
+    min-height: 0;
+    background: var(--bg-side);
+  }
   .sidebar {
     border-right: 1px solid var(--border);
     overflow-y: auto;
     overflow-x: hidden;
     padding: 0 0 12px;
     background: var(--bg-side);
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar :global(> *) {
+    flex: 0 0 auto;
+  }
+  /* 插件入口钉在左栏底部 */
+  .plugin-entries {
+    margin-top: auto;
+    padding: 8px 8px 0;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .plugin-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 8px;
+    border: none;
+    background: none;
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  .plugin-entry:hover {
+    background: var(--hover);
+  }
+  .plugin-entry.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .entry-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .notelist {
     border-right: 1px solid var(--border);
