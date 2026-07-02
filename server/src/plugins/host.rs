@@ -361,6 +361,18 @@ impl PluginHost {
             .cloned()
     }
 
+    /// 该插件是否有已启用的 backend 命令 `cmd`（commands 端点的前置校验）。
+    pub fn has_backend_command(&self, plugin_id: &str, cmd: &str) -> bool {
+        let map = self.plugins.read().unwrap();
+        let Some(p) = map.get(plugin_id) else { return false };
+        p.enabled
+            && p.module.is_some()
+            && p.manifest
+                .as_ref()
+                .map(|m| m.contributes.command.iter().any(|c| c.id == cmd && c.target == "backend"))
+                .unwrap_or(false)
+    }
+
     /// 插件目录（资产托管用）；返回前须确认 enabled。
     pub fn asset_root(&self, plugin_id: &str) -> Option<PathBuf> {
         let map = self.plugins.read().unwrap();

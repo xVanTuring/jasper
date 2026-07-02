@@ -24,6 +24,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/plugins/{id}", delete(uninstall))
         .route("/api/plugins/{id}/enable", post(enable))
         .route("/api/plugins/{id}/settings", get(get_settings).put(put_settings))
+        .route("/api/plugins/{id}/commands/{cmd}", post(run_command))
         .route("/api/plugins/{id}/assets/{*path}", get(asset))
 }
 
@@ -171,6 +172,56 @@ async fn put_settings(
     match host.set_settings(&id, &req.values) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => op_error(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct RunCommandReq {
+    #[serde(default)]
+    args: Value,
+}
+
+/// POST /api/plugins/{id}/commands/{cmd} —— 执行 backend 命令（spec §6.5 `command`）。
+/// 返回插件的 result 原样；插件业务错误按 code 映射 HTTP 状态。
+/// 写方法 → 只读模式下被 guard_read_only 自动拦截。
+async fn run_command(
+    State(state): State<Arc<AppState>>,
+    Path((id, cmd)): Path<(String, String)>,
+    Json(req): Json<RunCommandReq>,
+) -> Response {
+    let host = match host_of(&state) {
+        Ok(h) => h,
+        Err(r) => return r,
+    };
+    if !host.has_backend_command(&id, &cmd) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "not_found", "message": "插件未启用或无此 backend 命令" })),
+        )
+            .into_response();
+    }
+    let params = json!({ "id": cmd, "args": req.args });
+    let r = tokio::task::spawn_blocking(move || {
+        host.dispatch(&id, "command", params, super::runtime::CallClass::Normal)
+    })
+    .await;
+    match r {
+        Ok(Ok(result)) => Json(json!({ "result": result })).into_response(),
+        Ok(Err(super::runtime::CallError::Plugin { code, message })) => {
+            let status = match code.as_str() {
+                "forbidden" => StatusCode::FORBIDDEN,
+                "not_found" => StatusCode::NOT_FOUND,
+                "invalid" => StatusCode::BAD_REQUEST,
+                _ => StatusCode::BAD_GATEWAY, // 插件内部/上游失败（如 AI 端点报错）
+            };
+            (status, Json(json!({ "error": code, "message": message }))).into_response()
+        }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "internal", "message": e.to_string() })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -341,5 +392,192 @@ mod tests {
         let (st, body) = send(state, "POST", "/api/plugins/install", b"not a zip".to_vec()).await;
         assert_eq!(st, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "bad_manifest");
+    }
+
+    /// 极简 stub AI 端点：任意 POST 都返回一段固定的 Messages API 响应。
+    fn spawn_stub_ai(response_json: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { break };
+                // 读到头结束 + 按 Content-Length 读完请求体（防 ureq 阻塞在写）
+                let mut buf = Vec::new();
+                let mut tmp = [0u8; 4096];
+                let (mut header_end, mut content_len) = (0usize, 0usize);
+                loop {
+                    let Ok(n) = s.read(&mut tmp) else { break };
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&tmp[..n]);
+                    if header_end == 0 {
+                        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            header_end = pos + 4;
+                            let head = String::from_utf8_lossy(&buf[..pos]);
+                            content_len = head
+                                .lines()
+                                .find(|l| l.to_ascii_lowercase().starts_with("content-length:"))
+                                .and_then(|l| l.split(':').nth(1))
+                                .and_then(|v| v.trim().parse().ok())
+                                .unwrap_or(0);
+                        }
+                    }
+                    if header_end > 0 && buf.len() >= header_end + content_len {
+                        break;
+                    }
+                }
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_json.len(),
+                    response_json
+                );
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    /// ai-polish 全链路：装插件 → 启用（授权 settings+host:http）→ 存 API 参数（secret 不回显）
+    /// → POST commands/polish → wasm 经 host:http 调 stub AI → 返回优化正文。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ai_polish_command_end_to_end() {
+        let examples =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/ai-polish");
+        if !examples.join("plugin.wasm").exists() {
+            eprintln!("跳过：ai-polish/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            return;
+        }
+        let stub = spawn_stub_ai(
+            r#"{"content":[{"type":"text","text":"优化后的正文"}],"stop_reason":"end_turn"}"#,
+        );
+
+        // 装好插件（直接落目录再建宿主）
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("ai-polish");
+        std::fs::create_dir_all(&dst).unwrap();
+        for f in ["manifest.toml", "plugin.wasm"] {
+            std::fs::copy(examples.join(f), dst.join(f)).unwrap();
+        }
+        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
+        let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
+        let state = Arc::new(AppState {
+            library: RwLock::new(Library::default()),
+            storage: RwLock::new(None),
+            config,
+            cache: crate::cache::CacheStore::in_memory().unwrap(),
+            read_only: AtomicBool::new(false),
+            plugins: Some(host),
+        });
+
+        // 未启用时命令 404
+        let (st, _) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/ai-polish/commands/polish",
+            b"{\"args\":{}}".to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+
+        // 启用（= 能力授权）
+        let (st, body) =
+            send(state.clone(), "POST", "/api/plugins/ai-polish/enable", b"{\"enabled\":true}".to_vec()).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+
+        // 未配置 key → 插件返回 invalid → 400，带可读提示
+        let (st, body) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/ai-polish/commands/polish",
+            r#"{"args":{"note_id":"x","title":"t","body":"原文内容"}}"#.to_string().into_bytes(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("API Key"));
+
+        // 存 AI 参数（api_url 指向 stub）
+        let settings =
+            serde_json::json!({ "values": { "api_url": stub, "api_key": "sk-test", "model": "claude-opus-4-8" } });
+        let (st, _) = send(
+            state.clone(),
+            "PUT",
+            "/api/plugins/ai-polish/settings",
+            settings.to_string().into_bytes(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+        // secret 不回显
+        let (_, body) = send(state.clone(), "GET", "/api/plugins/ai-polish/settings", vec![]).await;
+        assert!(body["values"].get("api_key").is_none());
+        assert_eq!(body["secret_set"]["api_key"], true);
+
+        // 触发命令 → 优化后的正文
+        let (st, body) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/ai-polish/commands/polish",
+            r#"{"args":{"note_id":"x","title":"t","body":"原文内容，有一些病句。。"}}"#.to_string().into_bytes(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["body"], "优化后的正文");
+
+        // 只读模式下命令被写方法守卫拦截
+        state.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (st, _) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/ai-polish/commands/polish",
+            b"{\"args\":{}}".to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+    }
+
+    /// ai-polish 的 OpenAI 格式路径：provider=openai → 打 OpenAI Chat Completions 形状的 stub。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ai_polish_openai_format() {
+        let examples =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/ai-polish");
+        if !examples.join("plugin.wasm").exists() {
+            eprintln!("跳过：ai-polish/plugin.wasm 未构建");
+            return;
+        }
+        let stub = spawn_stub_ai(
+            r#"{"choices":[{"message":{"role":"assistant","content":"openai 优化后"},"finish_reason":"stop"}]}"#,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("ai-polish");
+        std::fs::create_dir_all(&dst).unwrap();
+        for f in ["manifest.toml", "plugin.wasm"] {
+            std::fs::copy(examples.join(f), dst.join(f)).unwrap();
+        }
+        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
+        let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
+        let state = Arc::new(AppState {
+            library: RwLock::new(Library::default()),
+            storage: RwLock::new(None),
+            config,
+            cache: crate::cache::CacheStore::in_memory().unwrap(),
+            read_only: AtomicBool::new(false),
+            plugins: Some(host),
+        });
+        send(state.clone(), "POST", "/api/plugins/ai-polish/enable", b"{\"enabled\":true}".to_vec()).await;
+        let settings = serde_json::json!({ "values": {
+            "provider": "openai", "api_url": stub, "api_key": "sk-test", "model": "gpt-4o"
+        } });
+        let (st, _) = send(state.clone(), "PUT", "/api/plugins/ai-polish/settings", settings.to_string().into_bytes()).await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+        let (st, body) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/ai-polish/commands/polish",
+            r#"{"args":{"note_id":"x","title":"t","body":"原文"}}"#.to_string().into_bytes(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["body"], "openai 优化后");
     }
 }

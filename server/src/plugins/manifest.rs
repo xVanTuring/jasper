@@ -57,12 +57,33 @@ pub struct StorageContribution {
     pub config_schema: Schema,
 }
 
+/// 命令贡献（spec §3.4）。`target = "backend"` 时经 wasm 的 `command` 方法执行。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandContribution {
+    pub id: String,
+    pub title: String,
+    #[serde(default)]
+    pub icon: String,
+    pub target: String, // "backend" | "builtin"
+}
+
+/// 工具栏贡献（spec §3.6）：把某命令放到指定位置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolbarContribution {
+    pub command: String,
+    pub location: String, // "note-toolbar" | "topbar"
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Contributes {
     #[serde(default)]
     pub theme: Vec<ThemeContribution>,
     #[serde(default)]
     pub storage: Vec<StorageContribution>,
+    #[serde(default)]
+    pub command: Vec<CommandContribution>,
+    #[serde(default)]
+    pub toolbar: Vec<ToolbarContribution>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -214,6 +235,35 @@ fn validate(m: &Manifest) -> Result<()> {
         }
         validate_schema(&s.config_schema, &format!("存储贡献 {}", s.id))?;
     }
+    let mut cmd_ids = std::collections::HashSet::new();
+    for c in &m.contributes.command {
+        // 命令 id 允许点分（如 ai.summarize）：小写字母数字开头，其后可含 . 与 -
+        let ok = c.id.as_bytes().first().map(|b| b.is_ascii_lowercase() || b.is_ascii_digit()).unwrap_or(false)
+            && c.id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-');
+        if !ok {
+            bail!("命令 id 非法: {:?}", c.id);
+        }
+        if !cmd_ids.insert(c.id.as_str()) {
+            bail!("命令 id 重复: {}", c.id);
+        }
+        if c.title.trim().is_empty() {
+            bail!("命令 {} 缺 title", c.id);
+        }
+        if c.target != "backend" && c.target != "builtin" {
+            bail!("命令 {} 的 target 须为 backend|builtin", c.id);
+        }
+        if c.target == "backend" && m.backend.is_none() {
+            bail!("backend 命令 {} 需要 [backend]", c.id);
+        }
+    }
+    for tb in &m.contributes.toolbar {
+        if !cmd_ids.contains(tb.command.as_str()) {
+            bail!("toolbar 引用了未声明的命令: {}", tb.command);
+        }
+        if tb.location != "note-toolbar" && tb.location != "topbar" {
+            bail!("toolbar.location 须为 note-toolbar|topbar");
+        }
+    }
     validate_schema(&m.settings.schema, "settings.schema")?;
     Ok(())
 }
@@ -298,6 +348,46 @@ pass = { type = "secret" }
         // select 缺 options
         assert!(parse(
             "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.2\"\n[settings.schema]\nm = { type = \"select\" }"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn parses_command_toolbar_manifest() {
+        let m = parse(
+            r#"
+id = "ai-polish"
+name = "一键优化"
+version = "0.1.0"
+apiVersion = "0.2"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = ["settings", "host:http"]
+
+[[contributes.command]]
+id = "polish"
+title = "一键优化"
+target = "backend"
+icon = "rich"
+
+[[contributes.toolbar]]
+command = "polish"
+location = "note-toolbar"
+"#,
+        )
+        .unwrap();
+        assert_eq!(m.contributes.command[0].id, "polish");
+        assert_eq!(m.contributes.toolbar[0].location, "note-toolbar");
+
+        // toolbar 引用不存在的命令
+        assert!(parse(
+            "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.2\"\n[[contributes.toolbar]]\ncommand = \"nope\"\nlocation = \"topbar\"\n"
+        )
+        .is_err());
+        // backend 命令但无 [backend]
+        assert!(parse(
+            "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.2\"\n[[contributes.command]]\nid = \"c\"\ntitle = \"C\"\ntarget = \"backend\"\n"
         )
         .is_err());
     }

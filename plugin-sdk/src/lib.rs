@@ -39,27 +39,39 @@ mod rand_shim {
 }
 
 /// 生成 `plugin_alloc` / `plugin_free` / `plugin_dispatch` 三个 ABI 导出（spec §6.1/§6.2）。
-/// 可挂载：`before_save`（`fn(Note) -> Result<Note, String>`）、`storage`（impl [`storage::Storage`] 的类型）。
+/// 可挂载（任意顺序、可组合）：
+/// - `before_save`：`fn(Note) -> Result<Note, String>`
+/// - `storage`：impl [`storage::Storage`] 的类型
+/// - `command`：`fn(&str /* 命令 id */, Value /* args */) -> Result<Value, PluginError>`
 #[macro_export]
 macro_rules! register {
-    ( before_save: $hook:path $(,)? ) => {
-        $crate::__register_dispatch! { hook = ($hook), storage = () }
+    ( $($rest:tt)* ) => {
+        $crate::__register_accum! { hook = (), storage = (), command = (); $($rest)* }
     };
-    ( storage: $st:ty $(,)? ) => {
-        $crate::__register_dispatch! { hook = (), storage = ($st) }
+}
+
+// 累积器：按键收集三个可选槽位，与书写顺序无关。
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __register_accum {
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); before_save: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($f), storage = ($($s)?), command = ($($c)?); $($($rest)*)? }
     };
-    ( before_save: $hook:path, storage: $st:ty $(,)? ) => {
-        $crate::__register_dispatch! { hook = ($hook), storage = ($st) }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); storage: $t:ty $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($t), command = ($($c)?); $($($rest)*)? }
     };
-    ( storage: $st:ty, before_save: $hook:path $(,)? ) => {
-        $crate::__register_dispatch! { hook = ($hook), storage = ($st) }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); command: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($f); $($($rest)*)? }
+    };
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?); ) => {
+        $crate::__register_dispatch! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?) }
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __register_dispatch {
-    ( hook = ($($hook:path)?), storage = ($($st:ty)?) ) => {
+    ( hook = ($($hook:path)?), storage = ($($st:ty)?), command = ($($cmd:path)?) ) => {
         // 业务路由：storage.* 方法族优先，其余按 method 匹配。native 下仅供测试。
         #[allow(dead_code)]
         fn __jasper_dispatch(
@@ -84,6 +96,21 @@ macro_rules! __register_dispatch {
                         ) -> ::std::result::Result<$crate::core::model::Note, String> = $hook;
                         let out = hook(note).map_err($crate::PluginError::internal)?;
                         Ok($crate::serde_json::json!({ "note": out }))
+                    }
+                )?
+                $(
+                    "command" => {
+                        let id = params
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let args = params.get("args").cloned().unwrap_or($crate::serde_json::Value::Null);
+                        let run: fn(
+                            &str,
+                            $crate::serde_json::Value,
+                        ) -> ::std::result::Result<$crate::serde_json::Value, $crate::PluginError> = $cmd;
+                        run(&id, args)
                     }
                 )?
                 other => Err($crate::PluginError::unsupported(format!("未知方法: {other}"))),

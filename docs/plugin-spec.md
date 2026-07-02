@@ -392,6 +392,10 @@ UiNode = {
 - **工具栏**：`contributes.toolbar` 把某命令放到 `note-toolbar` 或 `topbar`。
 - **命令**：`target="backend"` 调后端 `command`；`target="builtin"` 触发宿主内置动作（白名单，TBD）。
 - 显示图标/文字由全局按钮显示模式（已实现 `ui.svelte.ts` 的 `both|icon|text`）统一控制。
+- **`note-toolbar` 后端命令的宿主约定**（0.2 落地）：宿主以 `args = { note_id, title, body }`（当前编辑器内容）调用 `command`；
+  若返回的 `result` 含字符串字段 `body`，宿主用它**替换编辑器缓冲**（进入正常的自动保存链路）。
+  其余 result 形状由宿主忽略（向前兼容）。宿主经 `POST /api/plugins/{id}/commands/{cmd}`（body `{ args }`）触发；
+  只读模式下该端点被写方法守卫拦截。命令按 Normal 档限额执行（AI 类命令的网络等待经 host_call 豁免 CPU 墙钟）。
 
 ---
 
