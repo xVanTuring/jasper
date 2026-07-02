@@ -140,7 +140,7 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 - **生命周期**：安装（`<config>/plugins/<id>/`）→ 含 `[backend]` 默认 **disabled**，启用=能力授权（前端 PluginConsent 弹窗，host:http 带联网警告）；纯零代码插件（如纯主题）自动启用。活动数据源引用的插件禁止停用/卸载（409 in_use）。能力集扩大后旧授权失效（回禁用态）。
 - **前端**：`plugins.svelte.ts`（列表 + 主题 `<link>` 注入 + `registerPluginThemes` 喂 ThemePicker）；顶栏 plug 按钮 → PluginPanel；向导数据源段动态渲染 provider（SchemaForm）。**探测坑**：feature off 时 SPA fallback 对 `/api/plugins` 回 200 的 HTML——`api.plugins()` 必须查 content-type。
 - **只读模式**：插件管理写操作被 `guard_read_only` 一并拦截；GET（列表/主题资产）放行 → 只读下已装主题继续生效。
-- **写插件**：cdylib crate 依赖 `jasper-plugin-sdk`，实现业务后 `sdk::register! { before_save: f, storage: T, command: g }` 一行接入（三槽可组合）；不要给插件 crate 引入会带 wasm-bindgen 的依赖（如 chrono 默认 feature——core 已裁掉 wasmbind，getrandom 由 SDK 注册报错桩）。**完整作者指南（脚手架/wasm 工具链坑/测试配方/打包）见 skill `.claude/skills/jasper-plugin/SKILL.md`**——新建或调试插件时先读它。
+- **写插件**：cdylib crate 依赖 `jasper-plugin-sdk`，实现业务后 `sdk::register! { before_save: f, storage: T, command: g }` 一行接入（三槽可组合）；不要给插件 crate 引入会带 wasm-bindgen 的依赖（如 chrono 默认 feature——core 已裁掉 wasmbind，getrandom 由 SDK 注册报错桩）。**完整作者指南（脚手架/wasm 工具链坑/测试配方/打包）见 skill `.claude/skills/jasper-plugin/SKILL.md`**——新建或调试插件时先读它。**仓库外插件**用模板仓库 [xVanTuring/jasper-plugin-template](https://github.com/xVanTuring/jasper-plugin-template)（脚手架 + `scripts/package.py` 校验打包（对齐 manifest.rs/install.rs 规则、查 wasm import 干净、确定性 zip）+ CI：推 `v*` tag 自动出 GitHub Release 挂 `.jplug`）；其 CI 依赖 crates.io 上的 `jasper-plugin-sdk`，SDK 有破坏性改动时要同步更新模板。
 - **before-save 改写不回显编辑器**（易误判为"插件没生效"）：钩子在服务端保存链路里跑，改写落 API 响应与磁盘；`NoteView` 保存后不回填编辑缓冲（自动保存频繁，回填会跳光标）。验证：切走再切回笔记、或看磁盘 `<id>.md`；且要用**源码模式**测（富文本 Milkdown 本来就会重排掉行尾空白之类的差异）。
 
 ## API
