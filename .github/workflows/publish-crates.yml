@@ -29,6 +29,11 @@ jobs:
               echo "::error::$d/Cargo.toml version is $got but tag says $ver"
               exit 1
             fi
+            # Cargo.lock 必须与 Cargo.toml 同步提交（版本 bump 后忘刷 lock 会让 cargo publish 报脏树）
+            if ! (cd "$d" && cargo metadata --locked --format-version 1 >/dev/null); then
+              echo "::error::$d/Cargo.lock is stale — run 'cargo update -w' in $d and commit"
+              exit 1
+            fi
           done
 
       - name: Publish jasper-core

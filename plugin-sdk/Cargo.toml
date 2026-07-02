@@ -1,6 +1,6 @@
 [package]
 name = "jasper-plugin-sdk"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Jasper plugin SDK: ABI glue (plugin_dispatch/host_call), typed host wrappers, storage trait (spec 0.2)"
 license = "MIT OR Apache-2.0"
