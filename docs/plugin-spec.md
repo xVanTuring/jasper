@@ -1,8 +1,15 @@
-# jasper 插件规范 v0.1（草案）
+# jasper 插件规范 v0.2（草案）
 
 > 状态：**草案，征求确认**。这是给「插件作者」和「宿主实现」照着做的**契约**；方案/路线见 [plugin-design.md](./plugin-design.md)。
 > 规范用词遵循 RFC 2119：**MUST/必须**、**SHOULD/应当**、**MAY/可以**。
-> 本版 `apiVersion = "0.1"`。破坏性改动升 MAJOR，向后兼容的新增升 MINOR。
+> 本版 `apiVersion = "0.2"`。破坏性改动升 MAJOR，向后兼容的新增升 MINOR。
+
+**版本历史**
+
+| 版本 | 日期 | 变化 |
+|---|---|---|
+| 0.1 | 2026-06-30（冻结） | 基础契约：主题 / 后端 wasm / 前端贡献 / 设置 |
+| 0.2 | 2026-07-02 | 向后兼容新增：`[[contributes.storage]]` 存储 provider（§3.9）、`host:http` 能力（§7）、`storage.*` 方法族（§6.5）、§10 增 `required`/`placeholder`、存储类调用限额修正（§11）、SMB/裸 TCP 非目标声明（§11）、v0.2 决策（§12.1） |
 
 ---
 
@@ -26,6 +33,7 @@
 | **后端钩子/命令** `[backend]` | 是 | 保存前格式化、AI 编排 |
 | **前端贡献** `[[contributes.*]]` | 看情况 | 侧边栏面板、工具栏按钮 |
 | **设置** `[settings.schema]` | 否 | 插件配置项 |
+| **存储 provider** `[[contributes.storage]]`（0.2） | 是 | OneDrive/Dropbox 等云盘、WebDAV 变体 |
 
 - **纯主题插件 MUST NOT 含 wasm**，宿主按“零代码”信任档加载（见 §11）。
 - 含 `[backend]` 的插件 MUST 提供合法 wasm 且声明所需 capabilities。
@@ -119,6 +127,32 @@ assets/                # 可选：css / svg / 图片等
 
 每个键是一个设置项，值是字段定义（见 §10）。
 
+### 3.9 `[[contributes.storage]]`（数组，可多个；0.2 新增）
+
+插件贡献一种**存储 provider**（数据源后端，如云盘 API）。含此表的插件 MUST 含 `[backend]`（`storage.*` 方法由 wasm 实现，见 §6.5）。
+
+| 字段 | 类型 | 必须 | 说明 |
+|---|---|---|---|
+| `id` | string | ✅ | provider id（插件内唯一），进 `source_key` 缓存隔离键 |
+| `name` | string | ✅ | 显示名（设置向导里的数据源选项） |
+| `icon` | string | ⬜ | 图标令牌名（§9.1），缺省宿主用 `plug` |
+| `config_schema` | table | ✅ | **每数据源**配置表单，字段词汇同 §10（如 url/user/pass(secret)） |
+
+```toml
+[[contributes.storage]]
+id = "webdav"
+name = "WebDAV (插件)"
+
+[contributes.storage.config_schema]
+url  = { type = "string", label = "WebDAV URL", required = true, placeholder = "https://…" }
+user = { type = "string", label = "用户名" }
+pass = { type = "secret", label = "密码" }
+```
+
+- `config_schema` 描述「配置**一个数据源**要填什么」（per-SOURCE，同一插件可配出多个数据源），与 `[settings.schema]`（per-plugin KV）无关。
+- 宿主把该数据源的 config 在**每次** `storage.*` 调用里传给插件（§6.5）；插件 MUST NOT 自行持久化凭据。
+- **秘密回显不对称**（宿主实现约定）：数据源配置（含 `secret` 字段）随宿主 `GET /api/config` 回显以支持设置页预填——与内置 webdav 密码同姿势；而 `[settings.schema]` 的 secret 值**不回显**（§10）。
+
 ---
 
 ## 4. 版本与兼容
@@ -137,9 +171,12 @@ assets/                # 可选：css / svg / 图片等
   → 读 manifest → 校验(§3/§4) → 失败则标记错误并跳过
   → [若有 backend] 编译 wasm(wasmi) → 用“受能力门控的 import”实例化
   → 调 dispatch:"metadata" 握手(可选)
-  → 注册贡献(主题/命令/面板/钩子/设置)
+  → 注册贡献(主题/命令/面板/钩子/设置/存储)
   → enabled
-启停: disable 后宿主 MUST NOT 再调其钩子/命令；enable 恢复
+安装后初始状态(0.2): 含 [backend] 的插件 MUST 落地为 disabled，enable = 用户对
+  capabilities 的授权动作(宿主 UI 展示能力清单并确认)；纯零代码插件(如纯主题) MAY 自动 enable
+启停: disable 后宿主 MUST NOT 再调其钩子/命令；enable 恢复；
+  被**当前活动数据源**引用的存储插件 MUST NOT 被 disable/卸载(宿主拒绝, 409)
 卸载: 释放实例，移除注册；删除 = 卸载 + 删目录
 ```
 
@@ -164,6 +201,7 @@ assets/                # 可选：css / svg / 图片等
 plugin_dispatch(ptr: u32, len: u32) -> u64
 ```
 - 入参：`ptr/len` 指向插件内存里的**请求 JSON**：`{ "method": string, "params": <json> }`。
+  请求缓冲区归**宿主**所有（宿主经 `plugin_alloc` 分配写入、调用结束后宿主 `plugin_free`）；插件 MUST NOT 释放它（0.2 澄清）。
 - 返回：打包的 `(out_ptr, out_len)`，指向插件内存里的**响应 JSON**（§6.4）。宿主读完 MUST 调 `plugin_free` 释放。
 
 ### 6.3 插件 → host：`host_call`（宿主 MUST 提供为 import，模块名 `joplin`）
@@ -202,6 +240,20 @@ joplin.host_call(ptr: u32, len: u32) -> u64
 | `command` | `{ id, args? }` | `{ result? , ui? }` | 命令被触发 |
 | `editor.transform` | `{ phase, text }` | `{ text }` | `contributes.editor`，`phase`∈`before-save\|input` |
 | `ui` | `{ view, state? }` | `UiNode`（§9.3） | 动态面板取声明树 |
+| `storage.list_items` | `{ storage, config }` | `{ items: ItemStat[] }` | 数据源为该 provider 时（0.2，下同） |
+| `storage.get_item` | `{ storage, config, name }` | `{ content }` | |
+| `storage.put_item` | `{ storage, config, name, content }` | `{}` | |
+| `storage.delete_item` | `{ storage, config, name }` | `{}` | |
+| `storage.get_resource` | `{ storage, config, resource_id }` | `{ data_b64 }` | |
+| `storage.put_resource` | `{ storage, config, resource_id, data_b64 }` | `{}` | |
+| `storage.delete_resource` | `{ storage, config, resource_id }` | `{}` | |
+| `storage.init_new` | `{ storage, config }` | `{}` | 「新建库」时 |
+
+**`storage.*` 约定（0.2）**
+- `storage` = 贡献的 provider id；`config` = 该数据源的配置对象（与 `config_schema` 对齐），每次调用传入——插件应视自己为**无状态**（每次调用新实例，§5），按需重建客户端。
+- `ItemStat = { name, updated_time }`：`name` 形如 `<32hex>.md`；`updated_time` 为条目 mtime（Unix 毫秒）。插件 MUST 尽力返回真实 mtime（WebDAV 类取 `getlastmodified`）；返回 `0` 合法，但宿主将失去增量缓存（每次全量拉取）。
+- 二进制经 **base64**（`data_b64`）。
+- 语义对齐宿主 `StorageBackend`：`delete_*` 幂等（目标不存在视为成功）；`init_new` 建根目录 + `.resource/` + 写默认 `info.json`，仅「新建库」时被调用。
 
 **插件 → host（host_call 的 method，括号为所需能力）**
 
@@ -216,6 +268,12 @@ joplin.host_call(ptr: u32, len: u32) -> u64
 | `ai.complete` | `{ messages, options? }` | `{ content }` | `host:ai` |
 | `settings.get` | `{ key }` | `{ value }` | `settings` |
 | `settings.set` | `{ key, value }` | `{}` | `settings` |
+| `http.request`（0.2） | `{ method, url, headers?, body_b64?, timeout_ms? }` | `{ status, headers, body_b64 }` | `host:http` |
+
+**`http.request` 约定（0.2）**
+- 宿主代理执行（插件不碰 socket）；仅 `http:`/`https:`。
+- 限额（宿主 MUST 施加，可配置）：响应体 ≤ 128 MiB、重定向 ≤ 5、`timeout_ms` 默认 30 000、上限 120 000。
+- **非 2xx 状态码照常以 `ok:true` 返回**（`status` 带回，错误语义留给插件——WebDAV 需要 404 判断）；连接失败/超时等网络错误才是 `{ok:false, code:"internal"}`。
 
 **数据形状**
 ```
@@ -240,9 +298,10 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 | `notes:write` | `notes.upsert` / `notes.create` | **默认每次写入弹 UI 确认**；用户可在该插件设置里开“免确认” |
 | `host:ai` | `ai.complete` | 密钥/端点在宿主，插件不可见 |
 | `settings` | `settings.get` / `settings.set` | 插件作用域 KV |
+| `host:http`（0.2） | `http.request` | 宿主**代理**的 HTTP(S) 出口（限额见 §6.5/§11）。安装/启用确认 MUST 显著提示「该插件可访问网络」。无域名白名单（存储端点来自用户配置）。 |
 
 - `log` 不需能力。
-- `host:fetch`（任意网络出口）**本版不提供**。
+- 0.1 的「`host:fetch` 本版不提供」由 `host:http` 取代：仍**不是**任意网络出口——只有宿主代理、限额受控的 HTTP(S)，永无裸 socket（§11 非目标）。
 - 调用未授权方法 MUST 返回 `{ok:false, error:{code:"forbidden"}}`。
 
 ---
@@ -261,6 +320,7 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 
 钩子约束：
 - `hook.before_save` 返回错误时，宿主 MUST 放弃该插件的改写、用原 note 继续保存（**不因插件失败而丢用户数据**），并提示。
+- **改写以落盘为准，不承诺回显**（0.2 澄清）：钩子发生在保存链路的服务端，宿主编辑器 MAY 不把改写结果回填进当前编辑缓冲（jasper 即如此——自动保存频繁，回填会跳光标）。用户重新打开笔记后可见改写；插件作者不应假设改写立即出现在编辑器里。
 
 ---
 
@@ -354,7 +414,9 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 | `number` | 数字 | number |
 | `select` | 下拉（需 `options`） | string |
 
-公共可选键：`label`、`default`、`description`。值存于宿主、**按插件 id 隔离**。
+公共可选键：`label`、`default`、`description`、`required`（0.2，bool）、`placeholder`（0.2，string）。值存于宿主、**按插件 id 隔离**。
+
+> 本字段词汇同时用于 `[[contributes.storage]].config_schema`（§3.9）；注意两处 secret 的回显规则不同（§3.9 末条）。
 
 ---
 
@@ -367,8 +429,15 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 
 **沙箱与上限（后端每次调用）**
 - 默认零 WASI 能力（无 fs/socket/clock，除非未来显式授权）。
-- 宿主 MUST 施加：**fuel 上限**（默认 ~1e9 指令）、**线性内存上限**（默认 64 MiB）、**墙钟超时**（默认 2s），均可配置。超限 MUST 中止该调用并记错。
+- 宿主 MUST 施加：**fuel 上限**、**线性内存上限**、**墙钟超时**，均可配置。超限 MUST 中止该调用并记错。
+- 墙钟（0.2 修正）：MUST 只计插件**自身执行**时间——`host_call` 期间的宿主 IO（如 `http.request` 网络等待）不计入。
+- 调用分两档（0.2）：**Normal**（默认 64 MiB / fuel 1e9 / CPU 2s）；**Storage**（`storage.*`：默认 256 MiB / fuel 5e9 / CPU 10s——base64 大资源需要更大内存与解码预算）。
+- base64-in-JSON 使单个资源的实际上限 ≈ 存储档内存限额 / 2.7 ≈ 90 MiB（v1 接受的代价，记录在案）。
 - 宿主 MAY 在插件反复超限/报错后自动停用它。
+
+**网络与裸 socket（非目标，0.2）**
+- 插件的网络出口**只有** `host:http`（宿主代理）；**永不**向 wasm 暴露裸 TCP/UDP socket。
+- 因此 SMB/NFS 这类裸 TCP 协议不是插件目标：在操作系统层挂载后用内置 `local` 数据源即可。
 
 **写入与外发**
 - `notes:write` 默认 UI 二次确认（§7）。
@@ -389,6 +458,17 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 6. **主题契约**：§9.1 令牌清单为权威、**只增不删**（删/改 = 破坏性，升 MAJOR）。
 
 `apiVersion 0.1` 据此冻结；后续实现（`plugin-sdk` + 宿主加载器）照本规范。
+
+### 12.1 v0.2 决策（2026-07-02）
+
+1. **存储 provider 扩展点** `[[contributes.storage]]`（§3.9 / §6.5）：云盘等文件后端插件化，不再全部写进核心；首个参考实现 = WebDAV-as-plugin（内置 webdav 保留作对照）。
+2. **`host:http`**（§7）：宿主代理 HTTP(S)，取代 0.1 的「host:fetch 不提供」；仍无裸 socket。
+3. **SMB/裸 TCP 非目标**（§11）：OS 挂载 + `local` 数据源覆盖。
+4. **安装后默认 disabled**（§5）：含 `[backend]` 的插件启用即能力授权；纯零代码插件自动启用。
+5. **资产端点**：宿主提供 `GET /api/plugins/{id}/assets/{path}`（主题 css 等；仅 enabled 插件、防路径逃逸）。
+6. **秘密回显不对称**（§3.9）：数据源配置回显、插件设置不回显。
+7. **in_use 守护**（§5）：活动数据源引用的插件禁止停用/卸载。
+8. **限额两档 + CPU-only 墙钟**（§11）。
 
 ---
 
