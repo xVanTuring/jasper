@@ -394,8 +394,8 @@ mod tests {
         assert_eq!(body["error"], "bad_manifest");
     }
 
-    /// 极简 stub AI 端点：任意 POST 都返回一段固定的 Messages API 响应。
-    fn spawn_stub_ai(response_json: &'static str) -> String {
+    /// 极简 stub HTTP 端点：任意请求都返回一段固定的响应体。
+    fn spawn_stub_http(response_json: &'static str) -> String {
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -439,27 +439,48 @@ mod tests {
         format!("http://{addr}")
     }
 
-    /// ai-polish 全链路：装插件 → 启用（授权 settings+host:http）→ 存 API 参数（secret 不回显）
-    /// → POST commands/polish → wasm 经 host:http 调 stub AI → 返回优化正文。
+    /// 后端命令全链路（testbed 的 relay 命令作夹具）：装插件 → 启用（授权 settings+host:http）
+    /// → 存设置（secret 不回显）→ POST commands/relay → wasm 读 settings、经 host:http 调 stub
+    /// → 返回 result.body。插件自身的业务逻辑（如 ai-polish 的 provider 请求形状）在
+    /// jasper-plugins 仓库里做纯函数单测，这里只测宿主链路。
     #[tokio::test(flavor = "multi_thread")]
-    async fn ai_polish_command_end_to_end() {
+    async fn backend_command_end_to_end() {
         let examples =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/ai-polish");
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/testbed");
         if !examples.join("plugin.wasm").exists() {
-            eprintln!("跳过：ai-polish/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("跳过：testbed/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
             return;
         }
-        let stub = spawn_stub_ai(
-            r#"{"content":[{"type":"text","text":"优化后的正文"}],"stop_reason":"end_turn"}"#,
-        );
+        let stub = spawn_stub_http("relayed body");
 
-        // 装好插件（直接落目录再建宿主）
+        // 装好插件：manifest 本测试自写（settings+host:http + relay 命令），只复用 testbed 的 wasm
         let dir = tempfile::tempdir().unwrap();
-        let dst = dir.path().join("ai-polish");
+        let dst = dir.path().join("testbed");
         std::fs::create_dir_all(&dst).unwrap();
-        for f in ["manifest.toml", "plugin.wasm"] {
-            std::fs::copy(examples.join(f), dst.join(f)).unwrap();
-        }
+        std::fs::copy(examples.join("plugin.wasm"), dst.join("plugin.wasm")).unwrap();
+        std::fs::write(
+            dst.join("manifest.toml"),
+            r#"
+id = "testbed"
+name = "Testbed"
+version = "0.1.0"
+apiVersion = "0.2"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = ["settings", "host:http"]
+
+[[contributes.command]]
+id = "relay"
+title = "Relay"
+target = "backend"
+
+[settings.schema]
+target_url = { type = "string" }
+token = { type = "secret" }
+"#,
+        )
+        .unwrap();
         let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
         let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
         let state = Arc::new(AppState {
@@ -475,7 +496,7 @@ mod tests {
         let (st, _) = send(
             state.clone(),
             "POST",
-            "/api/plugins/ai-polish/commands/polish",
+            "/api/plugins/testbed/commands/relay",
             b"{\"args\":{}}".to_vec(),
         )
         .await;
@@ -483,101 +504,56 @@ mod tests {
 
         // 启用（= 能力授权）
         let (st, body) =
-            send(state.clone(), "POST", "/api/plugins/ai-polish/enable", b"{\"enabled\":true}".to_vec()).await;
+            send(state.clone(), "POST", "/api/plugins/testbed/enable", b"{\"enabled\":true}".to_vec()).await;
         assert_eq!(st, StatusCode::OK, "{body}");
 
-        // 未配置 key → 插件返回 invalid → 400，带可读提示
+        // 未配置 target_url → 插件返回 invalid → 400，带可读提示
         let (st, body) = send(
             state.clone(),
             "POST",
-            "/api/plugins/ai-polish/commands/polish",
+            "/api/plugins/testbed/commands/relay",
             r#"{"args":{"note_id":"x","title":"t","body":"原文内容"}}"#.to_string().into_bytes(),
         )
         .await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
-        assert!(body["message"].as_str().unwrap().contains("API Key"));
+        assert!(body["message"].as_str().unwrap().contains("target_url"));
 
-        // 存 AI 参数（api_url 指向 stub）
-        let settings =
-            serde_json::json!({ "values": { "api_url": stub, "api_key": "sk-test", "model": "claude-opus-4-8" } });
+        // 存设置（target_url 指向 stub；token 是 secret）
+        let settings = serde_json::json!({ "values": { "target_url": stub, "token": "sk-secret" } });
         let (st, _) = send(
             state.clone(),
             "PUT",
-            "/api/plugins/ai-polish/settings",
+            "/api/plugins/testbed/settings",
             settings.to_string().into_bytes(),
         )
         .await;
         assert_eq!(st, StatusCode::NO_CONTENT);
-        // secret 不回显
-        let (_, body) = send(state.clone(), "GET", "/api/plugins/ai-polish/settings", vec![]).await;
-        assert!(body["values"].get("api_key").is_none());
-        assert_eq!(body["secret_set"]["api_key"], true);
+        // secret 不回显；非 secret 正常回显
+        let (_, body) = send(state.clone(), "GET", "/api/plugins/testbed/settings", vec![]).await;
+        assert!(body["values"].get("token").is_none());
+        assert_eq!(body["secret_set"]["token"], true);
+        assert_eq!(body["values"]["target_url"].as_str().unwrap(), stub);
 
-        // 触发命令 → 优化后的正文
+        // 触发命令 → wasm 读 settings、经 host:http 取回 stub 响应作新正文
         let (st, body) = send(
             state.clone(),
             "POST",
-            "/api/plugins/ai-polish/commands/polish",
-            r#"{"args":{"note_id":"x","title":"t","body":"原文内容，有一些病句。。"}}"#.to_string().into_bytes(),
+            "/api/plugins/testbed/commands/relay",
+            r#"{"args":{"note_id":"x","title":"t","body":"原文内容"}}"#.to_string().into_bytes(),
         )
         .await;
         assert_eq!(st, StatusCode::OK, "{body}");
-        assert_eq!(body["result"]["body"], "优化后的正文");
+        assert_eq!(body["result"]["body"], "relayed body");
 
         // 只读模式下命令被写方法守卫拦截
         state.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
         let (st, _) = send(
             state.clone(),
             "POST",
-            "/api/plugins/ai-polish/commands/polish",
+            "/api/plugins/testbed/commands/relay",
             b"{\"args\":{}}".to_vec(),
         )
         .await;
         assert_eq!(st, StatusCode::FORBIDDEN);
-    }
-
-    /// ai-polish 的 OpenAI 格式路径：provider=openai → 打 OpenAI Chat Completions 形状的 stub。
-    #[tokio::test(flavor = "multi_thread")]
-    async fn ai_polish_openai_format() {
-        let examples =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/ai-polish");
-        if !examples.join("plugin.wasm").exists() {
-            eprintln!("跳过：ai-polish/plugin.wasm 未构建");
-            return;
-        }
-        let stub = spawn_stub_ai(
-            r#"{"choices":[{"message":{"role":"assistant","content":"openai 优化后"},"finish_reason":"stop"}]}"#,
-        );
-        let dir = tempfile::tempdir().unwrap();
-        let dst = dir.path().join("ai-polish");
-        std::fs::create_dir_all(&dst).unwrap();
-        for f in ["manifest.toml", "plugin.wasm"] {
-            std::fs::copy(examples.join(f), dst.join(f)).unwrap();
-        }
-        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
-        let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
-        let state = Arc::new(AppState {
-            library: RwLock::new(Library::default()),
-            storage: RwLock::new(None),
-            config,
-            cache: crate::cache::CacheStore::in_memory().unwrap(),
-            read_only: AtomicBool::new(false),
-            plugins: Some(host),
-        });
-        send(state.clone(), "POST", "/api/plugins/ai-polish/enable", b"{\"enabled\":true}".to_vec()).await;
-        let settings = serde_json::json!({ "values": {
-            "provider": "openai", "api_url": stub, "api_key": "sk-test", "model": "gpt-4o"
-        } });
-        let (st, _) = send(state.clone(), "PUT", "/api/plugins/ai-polish/settings", settings.to_string().into_bytes()).await;
-        assert_eq!(st, StatusCode::NO_CONTENT);
-        let (st, body) = send(
-            state.clone(),
-            "POST",
-            "/api/plugins/ai-polish/commands/polish",
-            r#"{"args":{"note_id":"x","title":"t","body":"原文"}}"#.to_string().into_bytes(),
-        )
-        .await;
-        assert_eq!(st, StatusCode::OK, "{body}");
-        assert_eq!(body["result"]["body"], "openai 优化后");
     }
 }
