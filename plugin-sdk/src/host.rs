@@ -11,6 +11,15 @@ pub fn log(level: &str, message: &str) {
     let _ = call_host("log", json!({ "level": level, "message": message }));
 }
 
+/// `time.now`：当前时间 Unix 毫秒（无需能力，spec 0.2）。
+/// 沙箱内没有时钟（`SystemTime::now()` 在 wasm32 会 panic）——签名协议（S3 SigV4 等）用这个。
+pub fn now_ms() -> Result<i64, PluginError> {
+    let r = call_host("time.now", json!({}))?;
+    r.get("unix_ms")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| PluginError::internal("time.now 响应缺 unix_ms"))
+}
+
 /// `settings.get`：读插件作用域 KV（能力 `settings`）。键不存在返回 Null。
 pub fn settings_get(key: &str) -> Result<Value, PluginError> {
     let result = call_host("settings.get", json!({ "key": key }))?;

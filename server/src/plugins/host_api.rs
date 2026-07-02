@@ -19,6 +19,9 @@ pub fn err_envelope(code: &str, message: impl Into<String>) -> Value {
 pub fn handle(ctx: &mut HostCtx, method: &str, params: Value) -> Value {
     let r = match method {
         "log" => log(ctx, &params),
+        // 沙箱无时钟（SystemTime 在 wasm32 panic）；签名类协议（S3 SigV4 等）需要当前时间。
+        // 与 log 一样免能力：粒度毫秒，泄露面可忽略。
+        "time.now" => Ok(json!({ "unix_ms": crate::serialize::now_ms() })),
         "settings.get" => need(ctx, "settings").and_then(|_| settings_get(ctx, &params)),
         "settings.set" => need(ctx, "settings").and_then(|_| settings_set(ctx, &params)),
         "http.request" => need(ctx, "host:http").and_then(|_| http_request(ctx, &params)),

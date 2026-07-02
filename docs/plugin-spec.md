@@ -260,6 +260,7 @@ joplin.host_call(ptr: u32, len: u32) -> u64
 | method | params | result | 能力 |
 |---|---|---|---|
 | `log` | `{ level, message }` | `{}` | 无 |
+| `time.now`（0.2） | — | `{ unix_ms }` | 无（沙箱无时钟；签名协议如 S3 SigV4 需要） |
 | `notes.get` | `{ id }` | `{ note }` | `notes:read` |
 | `notes.search` | `{ query, limit? }` | `{ notes: NoteRef[] }` | `notes:read` |
 | `notes.list_folders` | — | `{ folders: FolderRef[] }` | `notes:read` |
@@ -300,7 +301,7 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 | `settings` | `settings.get` / `settings.set` | 插件作用域 KV |
 | `host:http`（0.2） | `http.request` | 宿主**代理**的 HTTP(S) 出口（限额见 §6.5/§11）。安装/启用确认 MUST 显著提示「该插件可访问网络」。无域名白名单（存储端点来自用户配置）。 |
 
-- `log` 不需能力。
+- `log`、`time.now` 不需能力（毫秒粒度时间的泄露面可忽略，而 fuel 计量本就允许粗略计时）。
 - 0.1 的「`host:fetch` 本版不提供」由 `host:http` 取代：仍**不是**任意网络出口——只有宿主代理、限额受控的 HTTP(S)，永无裸 socket（§11 非目标）。
 - 调用未授权方法 MUST 返回 `{ok:false, error:{code:"forbidden"}}`。
 
