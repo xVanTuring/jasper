@@ -8,6 +8,12 @@
 /server/target/
 /core/target/
 /wasm/target/
+/plugin-sdk/target/
+/plugins-examples/*/target/
+# 示例插件 wasm 产物（plugins-examples/build-wasm.sh 生成；缺失时相关测试自动跳过）
+/plugins-examples/*/plugin.wasm
+# 手工打的安装包（zip of manifest+wasm，本地试装用）
+/plugins-examples/*.jplug
 
 # 前端依赖与构建产物
 /web/node_modules/

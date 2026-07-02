@@ -1,0 +1,15 @@
+[package]
+name = "testbed"
+version = "0.1.0"
+edition = "2021"
+description = "测试夹具插件：echo / spin / alloc_bomb / bad_json / call_http，喂宿主的限额与能力门控测试"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jasper-plugin-sdk = { path = "../../plugin-sdk" }
+
+[profile.release]
+opt-level = "s"
+lto = true

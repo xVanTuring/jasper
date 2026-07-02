@@ -1,0 +1,10 @@
+id = "trim-trailing"
+name = "去行尾空白"
+version = "0.1.0"
+apiVersion = "0.2"
+description = "保存笔记前去除每行行尾空白"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = []          # 纯计算，不碰笔记库/网络
+hooks = ["before-save"]

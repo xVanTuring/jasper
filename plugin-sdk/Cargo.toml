@@ -1,0 +1,16 @@
+[package]
+name = "jasper-plugin-sdk"
+version = "0.1.0"
+edition = "2021"
+description = "Jasper plugin SDK: ABI glue (plugin_dispatch/host_call), typed host wrappers, storage trait (spec 0.2)"
+
+[dependencies]
+jasper-core = { path = "../core", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+# jasper-core 依赖 getrandom；wasmi 沙箱既无系统熵源也无 JS 环境，
+# 用 custom 后端注册一个报错实现让 wasm32-unknown-unknown 编译通过（见 lib.rs rand_shim）。
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["custom"] }

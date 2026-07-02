@@ -1,0 +1,9 @@
+id = "testbed"
+name = "Testbed"
+version = "0.1.0"
+apiVersion = "0.2"
+description = "宿主测试夹具（echo/spin/alloc_bomb/bad_json/call_http）"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = []          # 故意不申请 host:http：call_http 应得 forbidden
