@@ -28,6 +28,7 @@ const zh = {
 	'topbar.resources': '资源管理',
 	'topbar.settings': '设置',
 	'pane.notebooks': '笔记本',
+	'pane.tags': '标签',
 	'pane.newNote': '在当前笔记本新建笔记',
 	'pane.newTodo': '在当前笔记本新建待办',
 	'pane.newNotebook': '新建笔记本',
@@ -115,6 +116,11 @@ const zh = {
 	'editor.tool.codeText': '代码',
 	'editor.tool.linkText': '链接文字',
 	'editor.tool.tableCol': '列{n}',
+
+	// 笔记标签
+	'tags.add': '添加标签…',
+	'tags.remove': '移除标签',
+	'tags.actionFailed': '标签操作失败',
 
 	// 笔记本树
 	'tree.toggle': '展开/折叠',
@@ -250,6 +256,7 @@ const en: typeof zh = {
 	'topbar.resources': 'Resources',
 	'topbar.settings': 'Settings',
 	'pane.notebooks': 'Notebooks',
+	'pane.tags': 'Tags',
 	'pane.newNote': 'New note in this notebook',
 	'pane.newTodo': 'New to-do in this notebook',
 	'pane.newNotebook': 'New notebook',
@@ -334,6 +341,10 @@ const en: typeof zh = {
 	'editor.tool.codeText': 'code',
 	'editor.tool.linkText': 'link text',
 	'editor.tool.tableCol': 'Col {n}',
+
+	'tags.add': 'Add tag…',
+	'tags.remove': 'Remove tag',
+	'tags.actionFailed': 'Tag action failed',
 
 	'tree.toggle': 'Expand/collapse',
 	'tree.moveToTop': 'Move to top level',
