@@ -9,6 +9,7 @@
   import Editor from './Editor.svelte'
   import WysiwygEditor from './WysiwygEditor.svelte'
   import EditorToolbar from './EditorToolbar.svelte'
+  import NoteTags from './NoteTags.svelte'
   import Icon from './Icon.svelte'
   import type { EditorHandle } from './editor/types'
   import { editorCommands } from './plugins.svelte'
@@ -29,6 +30,9 @@
     onNavigate,
     onChanged,
     onDeleted,
+    onTagsChanged,
+    tagSuggestions = [],
+    tagRefreshToken = 0,
     initialEdit = false,
     readOnly = false,
   }: {
@@ -36,6 +40,9 @@
     onNavigate: (id: string) => void
     onChanged: () => void
     onDeleted: () => void
+    onTagsChanged?: () => void
+    tagSuggestions?: string[]
+    tagRefreshToken?: number
     initialEdit?: boolean
     readOnly?: boolean
   } = $props()
@@ -227,6 +234,14 @@
         {/if}
       </div>
     </div>
+
+    <NoteTags
+      noteId={detail.id}
+      {readOnly}
+      suggestions={tagSuggestions}
+      onChanged={onTagsChanged}
+      refreshToken={tagRefreshToken}
+    />
 
     {#if editMode}
       <input

@@ -5,9 +5,9 @@
 import { IS_DEMO } from './api'
 
 export type ChangeEvent = {
-	kind: 'note' | 'folder' | 'library'
+	kind: 'note' | 'folder' | 'tag' | 'library'
 	op: 'upsert' | 'delete' | 'reload'
-	id: string
+	id: string // kind=tag 时为受影响的笔记 id
 }
 
 let source: EventSource | null = null

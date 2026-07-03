@@ -6,8 +6,8 @@
 use serde::Serialize;
 use tokio::sync::broadcast;
 
-/// 一次库变更。`kind` ∈ note|folder|library；`op` ∈ upsert|delete|reload；
-/// `id` 在 kind=library 时为空串。
+/// 一次库变更。`kind` ∈ note|folder|tag|library；`op` ∈ upsert|delete|reload；
+/// `id` 在 kind=library 时为空串（tag 事件的 id 为受影响的笔记 id）。
 #[derive(Debug, Clone, Serialize)]
 pub struct ChangeEvent {
     pub kind: &'static str,
@@ -47,6 +47,11 @@ impl EventBus {
     }
     pub fn folder_changed(&self, id: &str) {
         self.emit("folder", "upsert", id);
+    }
+    /// 某笔记的标签集变化（打/去标签）。`id` 为受影响的笔记 id，
+    /// 前端据此刷新侧栏标签区（含篇数）+ 该笔记打开时的标签行。
+    pub fn tags_changed(&self, note_id: &str) {
+        self.emit("tag", "upsert", note_id);
     }
     pub fn library_reloaded(&self) {
         let _ = self.0.send(ChangeEvent::reload());

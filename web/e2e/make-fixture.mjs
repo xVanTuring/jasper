@@ -11,6 +11,10 @@ export const IDS = {
 	todoNote: '33333333333333333333333333333333',
 	plainNote: '44444444444444444444444444444444',
 	resource: '55555555555555555555555555555555',
+	// 标签测试：一篇预打标签的笔记 + 一个标签 + 一条关联
+	tagNote: '66666666666666666666666666666666',
+	tag: '77777777777777777777777777777777',
+	noteTag: '88888888888888888888888888888888',
 }
 
 const TS = 1700000000000 // 固定时间
@@ -105,6 +109,42 @@ function resourceMd(id, title, mime, ext, size) {
 	return `${title}\n\n${props.join('\n')}`
 }
 
+// 标签条目（type_=5）：字段集/顺序对齐 core/src/serialize.rs::new_tag_md（= Joplin 真实数据）。
+function tagMd(id, title) {
+	const props = [
+		`id: ${id}`,
+		`created_time: ${ISO}`,
+		`updated_time: ${ISO}`,
+		`user_created_time: ${ISO}`,
+		`user_updated_time: ${ISO}`,
+		'encryption_cipher_text: ',
+		'encryption_applied: 0',
+		'is_shared: 0',
+		'parent_id: ',
+		'user_data: ',
+		'type_: 5',
+	]
+	return `${title}\n\n${props.join('\n')}`
+}
+
+// note_tag 关联（type_=6，纯元数据无标题）：对齐 core/src/serialize.rs::new_note_tag_md。
+function noteTagMd(id, noteId, tagId) {
+	const props = [
+		`id: ${id}`,
+		`note_id: ${noteId}`,
+		`tag_id: ${tagId}`,
+		`created_time: ${ISO}`,
+		`updated_time: ${ISO}`,
+		`user_created_time: ${ISO}`,
+		`user_updated_time: ${ISO}`,
+		'encryption_cipher_text: ',
+		'encryption_applied: 0',
+		'is_shared: 0',
+		'type_: 6',
+	]
+	return props.join('\n')
+}
+
 /** 在 `dir` 下写出一个完整可读的 Joplin 库，返回 IDS。 */
 export function makeFixture(dir) {
 	mkdirSync(join(dir, '.resource'), { recursive: true })
@@ -144,6 +184,14 @@ export function makeFixture(dir) {
 		join(dir, `${IDS.resource}.md`),
 		resourceMd(IDS.resource, 'pixel.png', 'image/png', 'png', png.length),
 	)
+
+	// 预打标签的笔记：'Tagged Note' 打了 'reading' 标签（供标签浏览/打标签 e2e）
+	writeFileSync(
+		join(dir, `${IDS.tagNote}.md`),
+		noteMd(IDS.tagNote, IDS.notebook, 'Tagged Note', 'A note that carries a tag.', false),
+	)
+	writeFileSync(join(dir, `${IDS.tag}.md`), tagMd(IDS.tag, 'reading'))
+	writeFileSync(join(dir, `${IDS.noteTag}.md`), noteTagMd(IDS.noteTag, IDS.tagNote, IDS.tag))
 
 	return IDS
 }

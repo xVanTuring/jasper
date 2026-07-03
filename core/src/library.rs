@@ -19,6 +19,8 @@ pub struct Library {
     notes_by_folder: HashMap<String, Vec<String>>,
     /// parent folder_id -> 子笔记本 id（根用空串 ""）
     child_folders: HashMap<String, Vec<String>>,
+    /// tag_id -> 打了该标签且仍存在的笔记 id（去重；据 note_tags 关联表构建）
+    notes_by_tag: HashMap<String, Vec<String>>,
 
     /// 笔记的原始 .md 内容（用于保存时保留元数据，避免重新拉取）
     raw_notes: HashMap<String, String>,
@@ -126,8 +128,20 @@ impl Library {
                 .or_default()
                 .push(f.id.clone());
         }
+        // 标签 → 笔记：只收仍存在的笔记（note_tag 可能悬挂到已删笔记），按 (tag,note) 去重。
+        let mut notes_by_tag: HashMap<String, Vec<String>> = HashMap::new();
+        let mut seen: HashMap<String, HashSet<String>> = HashMap::new();
+        for nt in &self.note_tags {
+            if !self.notes.contains_key(&nt.note_id) {
+                continue;
+            }
+            if seen.entry(nt.tag_id.clone()).or_default().insert(nt.note_id.clone()) {
+                notes_by_tag.entry(nt.tag_id.clone()).or_default().push(nt.note_id.clone());
+            }
+        }
         self.notes_by_folder = notes_by_folder;
         self.child_folders = child_folders;
+        self.notes_by_tag = notes_by_tag;
     }
 
     /// 某笔记本（含根 ""）直属笔记数。
@@ -155,6 +169,75 @@ impl Library {
             .unwrap_or_default();
         notes.sort_by(|a, b| b.updated_time.cmp(&a.updated_time));
         notes
+    }
+
+    /// 某标签下仍存在的笔记数。
+    pub fn tag_note_count(&self, tag_id: &str) -> usize {
+        self.notes_by_tag.get(tag_id).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// 全部标签，按标题（不区分大小写）排序。
+    pub fn tags_sorted(&self) -> Vec<&Tag> {
+        let mut tags: Vec<&Tag> = self.tags.values().collect();
+        tags.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        tags
+    }
+
+    /// 打了某标签的笔记，按更新时间倒序（与笔记本视图一致）。
+    pub fn notes_with_tag(&self, tag_id: &str) -> Vec<&Note> {
+        let mut notes: Vec<&Note> = self
+            .notes_by_tag
+            .get(tag_id)
+            .map(|ids| ids.iter().filter_map(|id| self.notes.get(id)).collect())
+            .unwrap_or_default();
+        notes.sort_by(|a, b| b.updated_time.cmp(&a.updated_time));
+        notes
+    }
+
+    /// 按标题查已有标签 id（trim + 不区分大小写，对齐 Joplin `Tag.loadByTitle` 语义）。
+    /// 多个同名时取 id 最小者以保证确定性（Joplin 用 created_time，本模型不存该字段）。
+    pub fn tag_id_by_title(&self, title: &str) -> Option<String> {
+        let key = title.trim().to_lowercase();
+        if key.is_empty() {
+            return None;
+        }
+        self.tags
+            .values()
+            .filter(|t| t.title.trim().to_lowercase() == key)
+            .map(|t| &t.id)
+            .min()
+            .cloned()
+    }
+
+    /// 笔记是否已打某标签（据关联表；用于新增去重、对齐 Joplin `addNote` 的 hasNote 短路）。
+    pub fn note_has_tag(&self, note_id: &str, tag_id: &str) -> bool {
+        self.note_tags.iter().any(|nt| nt.note_id == note_id && nt.tag_id == tag_id)
+    }
+
+    /// (note,tag) 对应的全部 note_tag 条目 id（Joplin `removeNote` 删全部匹配）。
+    pub fn note_tag_ids_for(&self, note_id: &str, tag_id: &str) -> Vec<String> {
+        self.note_tags
+            .iter()
+            .filter(|nt| nt.note_id == note_id && nt.tag_id == tag_id)
+            .map(|nt| nt.id.clone())
+            .collect()
+    }
+
+    /// 某笔记的标签，按标题（不区分大小写）排序。
+    pub fn tags_of_note(&self, note_id: &str) -> Vec<&Tag> {
+        let mut ids: HashSet<&str> = HashSet::new();
+        let mut out: Vec<&Tag> = Vec::new();
+        for nt in &self.note_tags {
+            if nt.note_id == note_id {
+                if let Some(tag) = self.tags.get(&nt.tag_id) {
+                    if ids.insert(tag.id.as_str()) {
+                        out.push(tag);
+                    }
+                }
+            }
+        }
+        out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        out
     }
 
     pub fn note(&self, id: &str) -> Option<&Note> {
@@ -239,6 +322,32 @@ impl Library {
     pub fn remove_note(&mut self, id: &str) {
         self.notes.remove(id);
         self.raw_notes.remove(id);
+        self.build_indexes();
+    }
+
+    /// 新增或更新一个标签（写回成功后同步内存）。返回标签 id。
+    pub fn upsert_tag(&mut self, content: &str) -> anyhow::Result<String> {
+        let raw = parser::parse_item(content)?;
+        let tag = parser::to_tag(&raw)?;
+        let id = tag.id.clone();
+        self.tags.insert(id.clone(), tag);
+        // 标签本身不入 notes_by_tag（成员由 note_tag 决定），无需重建索引。
+        Ok(id)
+    }
+
+    /// 新增一个 note_tag 关联（写回成功后同步内存）。按 id 去重后重建标签成员索引。
+    pub fn upsert_note_tag(&mut self, content: &str) -> anyhow::Result<NoteTag> {
+        let raw = parser::parse_item(content)?;
+        let nt = parser::to_note_tag(&raw)?;
+        self.note_tags.retain(|x| x.id != nt.id);
+        self.note_tags.push(nt.clone());
+        self.build_indexes();
+        Ok(nt)
+    }
+
+    /// 删除一个 note_tag 关联（按条目 id；写回成功后同步内存）。
+    pub fn remove_note_tag(&mut self, id: &str) {
+        self.note_tags.retain(|nt| nt.id != id);
         self.build_indexes();
     }
 
@@ -340,7 +449,7 @@ mod tests {
     }
 
     // ---- 下面用 serialize 造 .md 喂 from_contents，做 Library 级集成单测 ----
-    use crate::serialize::{new_folder_md, new_note_md, new_resource_md};
+    use crate::serialize::{new_folder_md, new_note_md, new_note_tag_md, new_resource_md, new_tag_md};
 
     fn hid(n: u8) -> String {
         // 造一个确定的 32hex id：把一个字节重复 16 次的十六进制
@@ -416,6 +525,112 @@ mod tests {
         assert!(lib.is_self_or_descendant(&b, &c)); // 直接子
         assert!(!lib.is_self_or_descendant(&c, &a)); // 祖先不是后代 → 允许
         assert!(!lib.is_self_or_descendant(&a, &d)); // 无关分支
+    }
+
+    // 造一个 tag（type_=5，带标题）/ note_tag（type_=6，纯元数据）条目内容。
+    fn tag_md(id: &str, title: &str) -> String {
+        format!("{title}\n\nid: {id}\nparent_id: \ntype_: 5")
+    }
+    fn note_tag_md(id: &str, note_id: &str, tag_id: &str) -> String {
+        format!("id: {id}\nnote_id: {note_id}\ntag_id: {tag_id}\ntype_: 6")
+    }
+
+    #[test]
+    fn indexes_tags_with_counts_and_membership() {
+        let (t_work, t_idea) = (hid(0x51), hid(0x52));
+        let (n1, n2, n3) = (hid(1), hid(2), hid(3));
+        let contents = vec![
+            new_note_md(&n1, "", "n1", "body", false, 100),
+            new_note_md(&n2, "", "n2", "body", false, 300),
+            new_note_md(&n3, "", "n3", "body", false, 200),
+            tag_md(&t_work, "Work"),
+            tag_md(&t_idea, "idea"),
+            // n1 与 n2 打了 Work；n3 打了 idea；重复关联应被去重
+            note_tag_md(&hid(0x61), &n1, &t_work),
+            note_tag_md(&hid(0x62), &n2, &t_work),
+            note_tag_md(&hid(0x63), &n2, &t_work), // 重复：不重复计数
+            note_tag_md(&hid(0x64), &n3, &t_idea),
+            // 悬挂关联：引用不存在的笔记，应被忽略
+            note_tag_md(&hid(0x65), &hid(0xff), &t_work),
+        ];
+        let (lib, stats) = Library::from_contents(contents);
+        assert_eq!(stats.tags, 2);
+        assert_eq!(stats.note_tags, 5);
+
+        // 标签按标题不区分大小写排序：idea < Work
+        let tags = lib.tags_sorted();
+        assert_eq!(tags.iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), vec!["idea", "Work"]);
+
+        // 计数：Work 去重后 2（n1,n2），idea 1（n3）
+        assert_eq!(lib.tag_note_count(&t_work), 2);
+        assert_eq!(lib.tag_note_count(&t_idea), 1);
+        assert_eq!(lib.tag_note_count(&hid(0xee)), 0); // 未知标签
+
+        // 成员：Work 下按更新时间倒序 → n2(300) 在 n1(100) 前
+        let work_notes = lib.notes_with_tag(&t_work);
+        assert_eq!(work_notes.iter().map(|n| n.title.as_str()).collect::<Vec<_>>(), vec!["n2", "n1"]);
+        assert!(lib.notes_with_tag(&hid(0xee)).is_empty());
+    }
+
+    #[test]
+    fn tag_mutations_add_reuse_and_remove() {
+        let (n1, n2) = (hid(1), hid(2));
+        let (mut lib, _) = Library::from_contents(vec![
+            new_note_md(&n1, "", "n1", "b", false, 100),
+            new_note_md(&n2, "", "n2", "b", false, 200),
+        ]);
+
+        // 新建标签 + 关联 n1
+        let tag_id = hid(0x51);
+        lib.upsert_tag(&new_tag_md(&tag_id, "Work", 1)).unwrap();
+        assert_eq!(lib.tag_id_by_title("work").as_deref(), Some(tag_id.as_str())); // 不区分大小写
+        assert_eq!(lib.tag_id_by_title("  WORK  ").as_deref(), Some(tag_id.as_str())); // trim
+        assert_eq!(lib.tag_id_by_title("nope"), None);
+
+        assert!(!lib.note_has_tag(&n1, &tag_id));
+        let nt = lib.upsert_note_tag(&new_note_tag_md(&hid(0x61), &n1, &tag_id, 1)).unwrap();
+        assert_eq!(nt.note_id, n1);
+        assert!(lib.note_has_tag(&n1, &tag_id));
+        assert_eq!(lib.tag_note_count(&tag_id), 1);
+        assert_eq!(lib.notes_with_tag(&tag_id).iter().map(|n| n.title.as_str()).collect::<Vec<_>>(), vec!["n1"]);
+        assert_eq!(lib.tags_of_note(&n1).iter().map(|t| t.title.as_str()).collect::<Vec<_>>(), vec!["Work"]);
+        assert!(lib.tags_of_note(&n2).is_empty());
+
+        // 再关联 n2；成员两条
+        lib.upsert_note_tag(&new_note_tag_md(&hid(0x62), &n2, &tag_id, 1)).unwrap();
+        assert_eq!(lib.tag_note_count(&tag_id), 2);
+
+        // 移除 n1 的关联：按 (note,tag) 查 id 再删
+        let ids = lib.note_tag_ids_for(&n1, &tag_id);
+        assert_eq!(ids, vec![hid(0x61)]);
+        lib.remove_note_tag(&ids[0]);
+        assert!(!lib.note_has_tag(&n1, &tag_id));
+        assert_eq!(lib.tag_note_count(&tag_id), 1);
+        assert_eq!(lib.notes_with_tag(&tag_id).iter().map(|n| n.title.as_str()).collect::<Vec<_>>(), vec!["n2"]);
+
+        // upsert 同 id 关联幂等（不重复计数）
+        lib.upsert_note_tag(&new_note_tag_md(&hid(0x62), &n2, &tag_id, 1)).unwrap();
+        assert_eq!(lib.tag_note_count(&tag_id), 1);
+    }
+
+    #[test]
+    fn tag_membership_drops_deleted_notes() {
+        let t = hid(0x51);
+        let (n1, n2) = (hid(1), hid(2));
+        let contents = vec![
+            new_note_md(&n1, "", "n1", "body", false, 100),
+            new_note_md(&n2, "", "n2", "body", false, 200),
+            tag_md(&t, "Work"),
+            note_tag_md(&hid(0x61), &n1, &t),
+            note_tag_md(&hid(0x62), &n2, &t),
+        ];
+        let (mut lib, _) = Library::from_contents(contents);
+        assert_eq!(lib.tag_note_count(&t), 2);
+
+        // 删除 n1 后，标签成员随索引重建而剔除（note_tag 悬挂无害）
+        lib.remove_note(&n1);
+        assert_eq!(lib.tag_note_count(&t), 1);
+        assert_eq!(lib.notes_with_tag(&t).iter().map(|n| n.title.as_str()).collect::<Vec<_>>(), vec!["n2"]);
     }
 
     #[test]
