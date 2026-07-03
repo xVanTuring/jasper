@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { fade, scale } from 'svelte/transition'
   import { cubicOut } from 'svelte/easing'
-  import { api, type AiConfig } from './api'
+  import { api, type AiConfig, type AuthListMode, type FolderNode } from './api'
   import { t } from './i18n.svelte'
   import Button from './Button.svelte'
   import Icon from './Icon.svelte'
@@ -14,10 +14,13 @@
     mode,
     onDone,
     onClose,
+    onAuthChanged,
   }: {
     mode: 'setup' | 'settings'
     onDone: () => void
     onClose?: () => void
+    // 访问控制设置变更后通知父组件刷新 /api/status（更新只读闸门/登录态）
+    onAuthChanged?: () => void
   } = $props()
 
   let libMode = $state<'existing' | 'new'>('existing')
@@ -124,6 +127,95 @@
       aiError = e instanceof Error ? e.message : `${e}`
     } finally {
       aiSaving = false
+    }
+  }
+
+  // ---------- 访问控制（access control）----------
+  // 仅设置模式出现。密码只回 password_set 布尔；名单从笔记本树展平供勾选。
+  let authLoaded = $state(false)
+  let authPasswordSet = $state(false)
+  let authNewPassword = $state('') // 新密码输入（留空则不改）
+  let authPasswordless = $state(false)
+  let authListMode = $state<AuthListMode>('none')
+  let authFolderList = $state<string[]>([])
+  let authFolders = $state<{ id: string; title: string; depth: number }[]>([])
+  let authSaving = $state(false)
+  let authSaved = $state(false)
+  let authError = $state('')
+
+  $effect(() => {
+    if (mode === 'settings' && !authLoaded) {
+      authLoaded = true
+      void loadAuth()
+    }
+  })
+
+  async function loadAuth() {
+    try {
+      const s = await api.getAuthSettings()
+      authPasswordSet = s.password_set
+      authPasswordless = s.passwordless_read
+      authListMode = s.list_mode
+      authFolderList = s.folder_list
+    } catch {
+      /* 无权/未登录 → 保持默认（首次设密码前人人可读） */
+    }
+    try {
+      authFolders = flattenFolders(await api.folders())
+    } catch {
+      authFolders = []
+    }
+  }
+
+  // 展平笔记本树（跳过合成的未分类节点 id=""），带缩进层级供勾选显示。
+  function flattenFolders(nodes: FolderNode[], depth = 0): { id: string; title: string; depth: number }[] {
+    const out: { id: string; title: string; depth: number }[] = []
+    for (const n of nodes) {
+      if (n.id) out.push({ id: n.id, title: n.title, depth })
+      out.push(...flattenFolders(n.children, depth + 1))
+    }
+    return out
+  }
+
+  function toggleFolderInList(id: string) {
+    authFolderList = authFolderList.includes(id)
+      ? authFolderList.filter((x) => x !== id)
+      : [...authFolderList, id]
+  }
+
+  async function saveAuth(clearPassword = false) {
+    authSaving = true
+    authError = ''
+    authSaved = false
+    const newPassword = clearPassword ? '' : authNewPassword.trim()
+    try {
+      const s = await api.saveAuthSettings({
+        password: newPassword || undefined,
+        clear_password: clearPassword,
+        passwordless_read: authPasswordless,
+        list_mode: authListMode,
+        folder_list: authFolderList,
+      })
+      authPasswordSet = s.password_set
+      authPasswordless = s.passwordless_read
+      authListMode = s.list_mode
+      authFolderList = s.folder_list
+      // 设/改密码会吊销所有会话（含本人）→ 用刚设的密码自动重登，保持当前管理员在线。
+      if (newPassword) {
+        try {
+          await api.login(newPassword)
+        } catch {
+          /* 忽略：父组件刷新状态后会显示登录闸门 */
+        }
+      }
+      authNewPassword = ''
+      authSaved = true
+      setTimeout(() => (authSaved = false), 2000)
+      onAuthChanged?.() // 通知父组件刷新只读闸门/登录态
+    } catch (e) {
+      authError = e instanceof Error ? e.message : `${e}`
+    } finally {
+      authSaving = false
     }
   }
 
@@ -295,6 +387,93 @@
         <div class="ai-actions">
           {#if aiSaved}<span class="saved">{t('settings.ai.saved')}</span>{/if}
           <Button label={t('settings.ai.save')} onclick={saveAi} disabled={aiSaving} />
+        </div>
+      </div>
+    {/if}
+
+    <!-- 访问控制（access control）：设置模式独立段 -->
+    {#if mode === 'settings'}
+      <div class="ai-section">
+        <h3>{t('settings.auth.title')}</h3>
+        <p class="hint">{t('settings.auth.desc')}</p>
+        <label class="ai-field">
+          <span>{t('settings.auth.password')}</span>
+          <input
+            type="password"
+            bind:value={authNewPassword}
+            autocomplete="new-password"
+            placeholder={authPasswordSet
+              ? t('settings.auth.passwordChangePh')
+              : t('settings.auth.passwordSetPh')}
+          />
+        </label>
+        {#if authPasswordSet}
+          <p class="tip">{t('settings.auth.passwordSet')}</p>
+        {/if}
+
+        <label class="toggle">
+          <input type="checkbox" bind:checked={authPasswordless} />
+          <span class="toggle-body">
+            <span class="toggle-title">{t('settings.auth.passwordlessRead')}</span>
+            <span class="toggle-desc">{t('settings.auth.passwordlessReadDesc')}</span>
+          </span>
+        </label>
+
+        {#if authPasswordless}
+          <div class="auth-scope">
+            <span class="scope-label">{t('settings.auth.listMode')}</span>
+            <div class="seg">
+              <button class:on={authListMode === 'none'} onclick={() => (authListMode = 'none')}>
+                {t('settings.auth.listModeNone')}
+              </button>
+              <button class:on={authListMode === 'whitelist'} onclick={() => (authListMode = 'whitelist')}>
+                {t('settings.auth.listModeWhitelist')}
+              </button>
+              <button class:on={authListMode === 'blacklist'} onclick={() => (authListMode = 'blacklist')}>
+                {t('settings.auth.listModeBlacklist')}
+              </button>
+            </div>
+            {#if authListMode !== 'none'}
+              <p class="tip">{t('settings.auth.listHint')}</p>
+              {#if authFolders.length === 0}
+                <p class="tip">{t('settings.auth.noFolders')}</p>
+              {:else}
+                <div class="auth-folders">
+                  {#each authFolders as f (f.id)}
+                    <label class="folder-check" style="padding-left: {f.depth * 14}px">
+                      <input
+                        type="checkbox"
+                        checked={authFolderList.includes(f.id)}
+                        onchange={() => toggleFolderInList(f.id)}
+                      />
+                      <span>{f.title || t('common.untitled')}</span>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+
+        {#if authError}
+          <div class="error"><Icon name="alert" size={14} /> {authError}</div>
+        {/if}
+        <div class="ai-actions">
+          {#if authSaved}<span class="saved">{t('settings.auth.saved')}</span>{/if}
+          {#if authPasswordSet}
+            <Button
+              variant="danger"
+              label={t('settings.auth.clearPassword')}
+              onclick={() => saveAuth(true)}
+              disabled={authSaving}
+            />
+          {/if}
+          <Button
+            variant="primary"
+            label={t('settings.auth.save')}
+            onclick={() => saveAuth(false)}
+            disabled={authSaving}
+          />
         </div>
       </div>
     {/if}
@@ -500,6 +679,39 @@
   .ai-actions .saved {
     color: var(--success);
     font-size: 12px;
+  }
+  /* 访问控制：黑白名单范围选择 */
+  .auth-scope {
+    margin-top: 10px;
+  }
+  .scope-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+  .auth-folders {
+    margin-top: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px;
+  }
+  .folder-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 4px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 6px;
+  }
+  .folder-check:hover {
+    background: var(--hover, rgba(127, 127, 127, 0.1));
+  }
+  .folder-check input {
+    flex: none;
   }
   .error {
     margin-top: 14px;

@@ -24,7 +24,8 @@
 //!   PUT    /api/resources/{id}   重命名资源
 //!   DELETE /api/resources/{id}   删除资源（二进制 + 元数据）
 
-use crate::config::{self, ConfigStore, SourceConfig};
+use crate::auth::{Access, AuthState, Scope};
+use crate::config::{self, AuthConfig, ConfigStore, SourceConfig};
 use crate::library::Library;
 use crate::model::{MarkupLanguage, Note};
 use crate::serialize;
@@ -35,10 +36,11 @@ use axum::{
     http::{header, HeaderMap, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::{get, put},
-    Json, Router,
+    routing::{get, post, put},
+    Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -51,6 +53,8 @@ pub struct AppState {
     pub cache: crate::cache::CacheStore,
     /// 只读模式：为真时中间件拒绝一切写方法（/api/config 除外）。运行时可切换。
     pub read_only: AtomicBool,
+    /// 访问鉴权（access control）：访问密码 / 无密码阅读 / 黑白名单 / 内存会话 token。
+    pub auth: AuthState,
     /// 插件宿主（--features plugins；关闭或初始化失败时为 None）。
     pub plugins: Option<Arc<crate::plugins::PluginHost>>,
     /// 变更事件总线（SSE /api/events）：一切写路径在此广播，前端按需刷新。
@@ -67,6 +71,10 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/status", get(status))
         .route("/api/config", get(get_config).put(apply_config))
+        // 访问鉴权（access control）：登录取 token / 登出 / 读写访问控制设置
+        .route("/api/auth/login", post(auth_login))
+        .route("/api/auth/logout", post(auth_logout))
+        .route("/api/auth/settings", get(get_auth_settings).put(put_auth_settings))
         .route("/api/folders", get(folders).post(create_folder))
         .route("/api/folders/{id}", put(rename_folder))
         .route("/api/folders/{id}/move", put(move_folder))
@@ -77,11 +85,14 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/resources/{id}", get(resource).put(rename_resource).delete(delete_resource))
         .route("/api/search", get(search))
         .route("/api/events", get(events_sse))
-        // 插件管理路由（feature off = 空路由）。挂在只读守卫之内 → 只读时插件写操作同样被拦。
+        // 插件管理路由（feature off = 空路由）。挂在只读/鉴权守卫之内 → 只读/未授权时插件写操作同样被拦。
         .merge(crate::plugins::api_router())
-        // 只读守卫：只读模式下拦截一切写方法（/api/config 除外）。放在最内层，
+        // 只读守卫：只读模式下拦截一切写方法（/api/config 与 /api/auth/* 除外）。放在最内层，
         // 保证它能拿到 State 且早于任何 handler 运行。
         .layer(axum::middleware::from_fn_with_state(state.clone(), guard_read_only))
+        // 鉴权守卫：定 Access（塞进请求扩展供 handler 读）+ 拦未授权的写/机密读。
+        // 加在只读守卫之后 → 它更外层、先运行：认证优先于只读（未授权写得 401 而非 403）。
+        .layer(axum::middleware::from_fn_with_state(state.clone(), guard_auth))
         // 资源上传可能较大（图片/附件），放宽请求体上限到 100MB
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(CorsLayer::permissive())
@@ -91,20 +102,73 @@ pub fn router(state: Arc<AppState>) -> Router {
 }
 
 /// 只读强制拦截（核心安全保证）：只读开启时，凡写方法（POST/PUT/DELETE/PATCH）一律 403，
-/// 唯一例外是 `/api/config`（否则无法在设置页把只读关回去）。读方法（GET/HEAD/OPTIONS）放行。
-/// 按 HTTP 方法集中拦截 → 将来新增任何写路由自动被覆盖，不依赖逐个 handler 记得判断。
+/// 例外是 `/api/config`（否则无法在设置页把只读关回去）与 `/api/auth/*`（否则只读态无法登录/改密码）。
+/// 读方法（GET/HEAD/OPTIONS）放行。按 HTTP 方法集中拦截 → 将来新增任何写路由自动被覆盖。
 async fn guard_read_only(State(state): State<Arc<AppState>>, req: Request, next: Next) -> Response {
     let is_write = matches!(
         *req.method(),
         Method::POST | Method::PUT | Method::DELETE | Method::PATCH
     );
-    let is_config = req.uri().path() == "/api/config";
-    if is_write && !is_config && state.read_only.load(Ordering::Relaxed) {
+    let exempt = matches!(
+        req.uri().path(),
+        "/api/config" | "/api/auth/login" | "/api/auth/logout" | "/api/auth/settings"
+    );
+    if is_write && !exempt && state.read_only.load(Ordering::Relaxed) {
         return (
             StatusCode::FORBIDDEN,
             Json(serde_json::json!({ "error": "read_only", "message": "服务处于只读模式，写操作被拒绝" })),
         )
             .into_response();
+    }
+    next.run(req).await
+}
+
+/// 从 `Authorization: Bearer <token>` 头取会话 token。
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let t = v.strip_prefix("Bearer ").or_else(|| v.strip_prefix("bearer "))?.trim();
+    (!t.is_empty()).then(|| t.to_string())
+}
+
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({ "error": "unauthorized", "message": "需要登录：请先输入访问密码" })),
+    )
+        .into_response()
+}
+
+/// 鉴权守卫（access control）：
+/// 1. 据 Bearer token 定 [`Access`] 并塞进请求扩展，供各 handler 按可见范围过滤内容。
+/// 2. 未授权（Anonymous）时：拦一切写方法（`/api/auth/login|logout` 除外——登录本身要能打），
+///    并拦会泄露机密的读端点（`/api/config`、`/api/ai/config`、`GET /api/auth/settings`、
+///    `GET /api/resources` 资源清单会暴露私有资源标题）。
+/// 未设访问密码时 Access 恒 Full → 以下判断都不触发，行为与无鉴权时完全一致（向后兼容）。
+async fn guard_auth(State(state): State<Arc<AppState>>, mut req: Request, next: Next) -> Response {
+    let token = bearer_token(req.headers());
+    let access = state.auth.access_for(token.as_deref());
+    req.extensions_mut().insert(access);
+
+    if access != Access::Full {
+        let path = req.uri().path();
+        let is_write = matches!(
+            *req.method(),
+            Method::POST | Method::PUT | Method::DELETE | Method::PATCH
+        );
+        // 登录/登出不受写守卫拦（登录时还没 token）。注意 PUT /api/auth/settings 不在此列 →
+        // 匿名改访问控制设置会被下面拦成 401（未设密码时 Access=Full 才放行首次设置）。
+        let write_exempt = matches!(path, "/api/auth/login" | "/api/auth/logout");
+        // 机密读端点（`/api/resources` 只匹配清单本身，`/api/resources/{id}` 二进制不在内）。
+        let secret_read = matches!(
+            path,
+            "/api/config" | "/api/ai/config" | "/api/auth/settings" | "/api/resources"
+        );
+        if is_write && !write_exempt {
+            return unauthorized();
+        }
+        if !is_write && secret_read {
+            return unauthorized();
+        }
     }
     next.run(req).await
 }
@@ -118,6 +182,12 @@ struct StatusResp {
     notes: usize,
     folders: usize,
     read_only: bool,
+    /// 是否设了访问密码（受保护）。
+    auth_enabled: bool,
+    /// 本请求是否已登录（携带有效会话 token）。
+    authenticated: bool,
+    /// 允许无密码阅读总开关（前端据此提示匿名可见范围）。
+    passwordless_read: bool,
     /// 服务端版本（市场 UI 拿它做 minHostVersion 兼容过滤）
     version: &'static str,
 }
@@ -277,7 +347,10 @@ fn detail_of(n: &Note) -> NoteDetail {
 
 // ---------- 配置 handlers ----------
 
-async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResp> {
+async fn status(
+    State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
+) -> Json<StatusResp> {
     let configured = state.storage.read().unwrap().is_some();
     let (notes, folders) = {
         let lib = state.library.read().unwrap();
@@ -291,7 +364,21 @@ async fn status(State(state): State<Arc<AppState>>) -> Json<StatusResp> {
         .map(|c| c.source_type)
         .unwrap_or_default();
     let read_only = state.read_only.load(Ordering::Relaxed);
-    Json(StatusResp { configured, source_type, notes, folders, read_only, version: env!("CARGO_PKG_VERSION") })
+    let auth_enabled = state.auth.enabled();
+    // 已登录 = 设了密码且本请求为 Full（未设密码时 Full 不算「已登录」）。
+    let authenticated = auth_enabled && matches!(access, Access::Full);
+    let passwordless_read = state.auth.passwordless_read();
+    Json(StatusResp {
+        configured,
+        source_type,
+        notes,
+        folders,
+        read_only,
+        auth_enabled,
+        authenticated,
+        passwordless_read,
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<SourceConfig> {
@@ -368,6 +455,132 @@ async fn apply_config(
     }
 }
 
+// ---------- 访问鉴权 handlers ----------
+
+#[derive(Deserialize)]
+struct LoginReq {
+    #[serde(default)]
+    password: String,
+}
+
+#[derive(Serialize)]
+struct LoginResp {
+    token: String,
+}
+
+/// POST /api/auth/login —— 校验访问密码，成功则签发会话 token（前端存 localStorage、后续写请求带 Bearer）。
+async fn auth_login(State(state): State<Arc<AppState>>, Json(req): Json<LoginReq>) -> Response {
+    if !state.auth.enabled() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "auth_disabled", "message": "未设置访问密码，无需登录" })),
+        )
+            .into_response();
+    }
+    if !state.auth.verify(&req.password) {
+        tracing::debug!("auth login failed: wrong password");
+        return unauthorized();
+    }
+    let token = state.auth.issue_token();
+    tracing::info!("auth login succeeded, session issued");
+    (StatusCode::OK, Json(LoginResp { token })).into_response()
+}
+
+/// POST /api/auth/logout —— 吊销当前会话 token（幂等；无 token 也返回 204）。
+async fn auth_logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> StatusCode {
+    if let Some(t) = bearer_token(&headers) {
+        state.auth.revoke(&t);
+    }
+    StatusCode::NO_CONTENT
+}
+
+#[derive(Serialize)]
+struct AuthSettingsResp {
+    /// 是否已设访问密码（密码本身/哈希永不回传）。
+    password_set: bool,
+    passwordless_read: bool,
+    list_mode: String,
+    folder_list: Vec<String>,
+}
+
+fn auth_settings_resp(cfg: AuthConfig) -> AuthSettingsResp {
+    AuthSettingsResp {
+        password_set: !cfg.password_hash.is_empty(),
+        passwordless_read: cfg.passwordless_read,
+        list_mode: cfg.list_mode,
+        folder_list: cfg.folder_list,
+    }
+}
+
+/// GET /api/auth/settings —— 访问控制设置（供设置页预填）。guard_auth 已限定为 Full
+/// （未设密码时人人 Full → 首次配置可读）。密码只回 `password_set` 布尔，绝不回哈希。
+async fn get_auth_settings(State(state): State<Arc<AppState>>) -> Json<AuthSettingsResp> {
+    let cfg = state.config.lock().unwrap().auth_config();
+    Json(auth_settings_resp(cfg))
+}
+
+#[derive(Deserialize)]
+struct PutAuthSettingsReq {
+    /// 设置/修改访问密码：非空即改；省略/空 = 保持不变（除非 clear_password）。
+    #[serde(default)]
+    password: Option<String>,
+    /// 清除访问密码（关闭鉴权，回到全开放）。
+    #[serde(default)]
+    clear_password: bool,
+    #[serde(default)]
+    passwordless_read: bool,
+    #[serde(default = "default_list_mode")]
+    list_mode: String,
+    #[serde(default)]
+    folder_list: Vec<String>,
+}
+
+fn default_list_mode() -> String {
+    "none".to_string()
+}
+
+/// PUT /api/auth/settings —— 保存访问控制设置并即时同步运行态。guard_auth 已限定为 Full
+/// （未设密码时人人 Full → 首次可设密码）；改/清密码会吊销全部既有会话。
+async fn put_auth_settings(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<PutAuthSettingsReq>,
+) -> Result<Json<AuthSettingsResp>, StatusCode> {
+    let mut cfg = state.config.lock().unwrap().auth_config();
+    let mut password_changed = false;
+    if req.clear_password {
+        cfg.password_hash.clear();
+        cfg.password_salt.clear();
+        password_changed = true;
+    } else if let Some(pw) = req.password.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let salt = crate::auth::gen_salt();
+        cfg.password_hash = crate::auth::hash_password(pw, &salt);
+        cfg.password_salt = salt;
+        password_changed = true;
+    }
+    cfg.passwordless_read = req.passwordless_read;
+    cfg.list_mode = req.list_mode;
+    cfg.folder_list = req.folder_list;
+
+    state
+        .config
+        .lock()
+        .unwrap()
+        .save_auth_config(&cfg)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 同步运行态（改设置即时生效，无需重启）
+    state.auth.reload(&cfg);
+    if password_changed {
+        state.auth.revoke_all(); // 改/清密码 → 所有既有会话失效
+    }
+    tracing::info!(
+        password_set = !cfg.password_hash.is_empty(),
+        passwordless_read = cfg.passwordless_read,
+        list_mode = %cfg.list_mode,
+        "auth settings updated",
+    );
+    Ok(Json(auth_settings_resp(cfg)))
+}
+
 // ---------- 读 handlers ----------
 
 fn build_folder_tree(lib: &Library, parent_id: &str) -> Vec<FolderNode> {
@@ -384,15 +597,64 @@ fn build_folder_tree(lib: &Library, parent_id: &str) -> Vec<FolderNode> {
         .collect()
 }
 
-async fn folders(State(state): State<Arc<AppState>>) -> Json<Vec<FolderNode>> {
+/// 匿名受限范围下的笔记本树：只含可见笔记本；某可见笔记本的父级不可见时（whitelist 的私有祖先），
+/// 把它提到顶层作为根（不暴露私有祖先的存在/标题）。
+fn build_visible_folder_tree(lib: &Library, scope: &Scope) -> Vec<FolderNode> {
+    let visible: HashSet<String> =
+        lib.folders.keys().filter(|id| scope.allows_folder(id)).cloned().collect();
+    // 根 = 可见但父级不可见（含父级为 "" 根）的笔记本
+    let mut roots: Vec<String> = visible
+        .iter()
+        .filter(|id| {
+            let parent = lib.folders.get(*id).map(|f| f.parent_id.clone()).unwrap_or_default();
+            !visible.contains(&parent)
+        })
+        .cloned()
+        .collect();
+    roots.sort_by(|a, b| {
+        let ta = lib.folders.get(a).map(|f| f.title.as_str()).unwrap_or("");
+        let tb = lib.folders.get(b).map(|f| f.title.as_str()).unwrap_or("");
+        ta.cmp(tb)
+    });
+    roots.iter().map(|r| build_visible_subtree(lib, r, &visible)).collect()
+}
+
+fn build_visible_subtree(lib: &Library, id: &str, visible: &HashSet<String>) -> FolderNode {
+    let children = lib
+        .child_folder_ids_sorted(id)
+        .into_iter()
+        .filter(|c| visible.contains(c))
+        .map(|c| build_visible_subtree(lib, &c, visible))
+        .collect();
+    FolderNode {
+        id: id.to_string(),
+        title: lib.folders.get(id).map(|f| f.title.clone()).unwrap_or_default(),
+        note_count: lib.note_count(id),
+        children,
+    }
+}
+
+async fn folders(
+    State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
+) -> Json<Vec<FolderNode>> {
     let lib = state.library.read().unwrap();
-    let mut nodes = build_folder_tree(&lib, "");
-    // 未挂在任何笔记本下的笔记（parent_id==""）用一个合成节点表示，放最前面；
+    let scope = state.auth.scope(&lib, access);
+    if scope.is_none() {
+        return Json(Vec::new()); // 私有：匿名看不到任何笔记本
+    }
+    let mut nodes = match &scope {
+        Scope::All => build_folder_tree(&lib, ""),
+        _ => build_visible_folder_tree(&lib, &scope),
+    };
+    // 未挂在任何笔记本下的笔记（parent_id==""）用一个合成节点表示，放最前面；仅当该范围可见时给。
     // id 仍是 ""，前端已有的 selectFolder("")/api.notes("") 直接复用。标题留空，
     // 由前端按 id==="" 特判取本地化文案（服务端不做 i18n）。
-    let root_count = lib.note_count("");
-    if root_count > 0 {
-        nodes.insert(0, FolderNode { id: String::new(), title: String::new(), note_count: root_count, children: Vec::new() });
+    if scope.allows_folder("") {
+        let root_count = lib.note_count("");
+        if root_count > 0 {
+            nodes.insert(0, FolderNode { id: String::new(), title: String::new(), note_count: root_count, children: Vec::new() });
+        }
     }
     Json(nodes)
 }
@@ -404,19 +666,29 @@ struct NotesQuery {
 
 async fn notes_list(
     State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
     Query(q): Query<NotesQuery>,
 ) -> Json<Vec<NoteSummary>> {
     let lib = state.library.read().unwrap();
     let folder = q.folder.unwrap_or_default();
+    // 该笔记本对当前访问级别不可见 → 空列表（匿名不可越权枚举）
+    if !state.auth.scope(&lib, access).allows_folder(&folder) {
+        return Json(Vec::new());
+    }
     Json(lib.notes_in_folder_sorted(&folder).into_iter().map(summarize).collect())
 }
 
 async fn note_detail(
     State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
     Path(id): Path<String>,
 ) -> Result<Json<NoteDetail>, StatusCode> {
     let lib = state.library.read().unwrap();
     let n = lib.note(&id).ok_or(StatusCode::NOT_FOUND)?;
+    // 笔记所在笔记本不可见 → 404（不区分「不存在」与「无权」，避免探测）
+    if !state.auth.scope(&lib, access).allows_folder(&n.parent_id) {
+        return Err(StatusCode::NOT_FOUND);
+    }
     Ok(Json(detail_of(n)))
 }
 
@@ -646,18 +918,35 @@ struct SearchQuery {
 
 async fn search(
     State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
     Query(sq): Query<SearchQuery>,
 ) -> Json<Vec<NoteSummary>> {
     let lib = state.library.read().unwrap();
     let q = sq.q.unwrap_or_default();
-    Json(lib.search(&q).into_iter().map(summarize).collect())
+    let scope = state.auth.scope(&lib, access);
+    if scope.is_none() {
+        return Json(Vec::new());
+    }
+    // 命中过滤到可见笔记本（Scope::All 时 allows_folder 恒真，无额外开销）
+    Json(
+        lib.search(&q)
+            .into_iter()
+            .filter(|n| scope.allows_folder(&n.parent_id))
+            .map(summarize)
+            .collect(),
+    )
 }
 
 /// GET /api/events —— SSE 变更流（事件名 `change`，data 为 ChangeEvent JSON）。
 /// 只带 (kind, op, id)，内容由前端按需再拉；接收端落后（lagged，慢消费者被丢事件）
 /// 折算成一条 library reload，前端全量刷新兜底。GET 方法天然通过只读守卫。
+///
+/// 隐私：匿名且可见范围受限（非全库）时，把每条事件**折算为 library reload**——
+/// 丢掉具体笔记/笔记本 id，避免向匿名者泄露私有条目的 id 与变更时机（前端收到 reload 只做
+/// 一次按范围过滤的全量刷新）。Full / 无密码全库阅读则照常带 id。
 async fn events_sse(
     State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
 ) -> axum::response::sse::Sse<impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>
 {
     use axum::response::sse::{Event, KeepAlive, Sse};
@@ -665,9 +954,15 @@ async fn events_sse(
     use tokio_stream::wrappers::BroadcastStream;
     use tokio_stream::StreamExt as _;
 
-    let stream = BroadcastStream::new(state.events.subscribe()).filter_map(|item| {
+    let coarsen = {
+        let lib = state.library.read().unwrap();
+        matches!(access, Access::Anonymous) && !matches!(state.auth.scope(&lib, access), Scope::All)
+    };
+    let stream = BroadcastStream::new(state.events.subscribe()).filter_map(move |item| {
         let ev = match item {
-            Ok(ev) => ev,
+            Ok(ev) if !coarsen => ev,
+            // 受限匿名：不透传具体 id，一律折算 reload
+            Ok(_) => crate::events::ChangeEvent::reload(),
             Err(BroadcastStreamRecvError::Lagged(_)) => crate::events::ChangeEvent::reload(),
         };
         // 事件是纯 &'static str + String 结构，序列化不会失败；防御性丢弃而非 panic
@@ -933,15 +1228,44 @@ mod tests {
 
     // 无存储的最小 AppState（守卫在 handler 之前运行，故无需真实数据源）。
     fn state_with_read_only(read_only: bool) -> Arc<AppState> {
+        state_full(read_only, AuthConfig::default())
+    }
+
+    // 带指定访问控制配置的最小 AppState。
+    fn state_with_auth(cfg: AuthConfig) -> Arc<AppState> {
+        state_full(false, cfg)
+    }
+
+    fn state_full(read_only: bool, auth_cfg: AuthConfig) -> Arc<AppState> {
         Arc::new(AppState {
             library: Arc::new(RwLock::new(Library::default())),
             storage: RwLock::new(None),
             config: Arc::new(Mutex::new(ConfigStore::in_memory().unwrap())),
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(read_only),
+            auth: AuthState::from_config(&auth_cfg),
             plugins: None,
             events: crate::events::EventBus::new(),
         })
+    }
+
+    // 构造一份 AuthConfig（password 非空则加盐哈希）。
+    fn auth_config(password: Option<&str>, passwordless: bool, mode: &str, list: &[&str]) -> AuthConfig {
+        let (password_hash, password_salt) = match password {
+            Some(p) => {
+                let s = crate::auth::gen_salt();
+                let h = crate::auth::hash_password(p, &s);
+                (h, s)
+            }
+            None => (String::new(), String::new()),
+        };
+        AuthConfig {
+            password_hash,
+            password_salt,
+            passwordless_read: passwordless,
+            list_mode: mode.to_string(),
+            folder_list: list.iter().map(|s| s.to_string()).collect(),
+        }
     }
 
     async fn status_of(state: Arc<AppState>, method: &str, uri: &str, body: &'static str) -> StatusCode {
@@ -952,6 +1276,53 @@ mod tests {
             .body(Body::from(body))
             .unwrap();
         router(state).oneshot(req).await.unwrap().status()
+    }
+
+    // 发一个请求（可带 Bearer token），返回完整 Response。
+    async fn send(
+        state: Arc<AppState>,
+        method: &str,
+        uri: &str,
+        body: &str,
+        token: Option<&str>,
+    ) -> Response {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json");
+        if let Some(t) = token {
+            builder = builder.header("authorization", format!("Bearer {t}"));
+        }
+        router(state).oneshot(builder.body(Body::from(body.to_owned())).unwrap()).await.unwrap()
+    }
+
+    async fn body_json(resp: Response) -> serde_json::Value {
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    // 演示库：a(root) > b，独立 d(root)；三处各一篇笔记（id 1/2/3）。
+    fn sample_contents() -> (Vec<String>, [String; 3], [String; 3]) {
+        let folders = ["a", "b", "d"].map(|x| x.repeat(32));
+        let [a, b, d] = folders.clone();
+        let notes = ["1", "2", "3"].map(|x| x.repeat(32));
+        let [n_a, n_b, n_d] = notes.clone();
+        let contents = vec![
+            format!("A\n\nid: {a}\nparent_id: \ntype_: 2"),
+            format!("B\n\nid: {b}\nparent_id: {a}\ntype_: 2"),
+            format!("D\n\nid: {d}\nparent_id: \ntype_: 2"),
+            serialize::new_note_md(&n_a, &a, "note a", "body a", false, 1),
+            serialize::new_note_md(&n_b, &b, "note b", "body b", false, 2),
+            serialize::new_note_md(&n_d, &d, "note d", "body d", false, 3),
+        ];
+        (contents, folders, notes)
+    }
+
+    fn state_with_lib(cfg: AuthConfig, contents: Vec<String>) -> Arc<AppState> {
+        let state = state_with_auth(cfg);
+        let (lib, _) = Library::from_contents(contents);
+        *state.library.write().unwrap() = lib;
+        state
     }
 
     #[tokio::test]
@@ -977,6 +1348,180 @@ mod tests {
         let st = status_of(state_with_read_only(false), "POST", "/api/notes", "{\"parent_id\":\"x\"}").await;
         assert_ne!(st, StatusCode::FORBIDDEN);
         assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// 未设访问密码：一切照常（写不被鉴权拦；无存储 → 503 而非 401）。
+    #[tokio::test]
+    async fn no_password_leaves_everything_open() {
+        let state = state_with_auth(auth_config(None, false, "none", &[]));
+        assert_eq!(
+            send(state.clone(), "POST", "/api/notes", "{\"parent_id\":\"x\"}", None).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(send(state.clone(), "GET", "/api/config", "", None).await.status(), StatusCode::OK);
+        // 未设密码时不能登录
+        assert_eq!(
+            send(state, "POST", "/api/auth/login", "{\"password\":\"x\"}", None).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    /// 设了密码：无 token 写 → 401；登录取 token；带 token 写不再 401；登出使 token 失效。
+    #[tokio::test]
+    async fn auth_gates_writes_and_login_issues_token() {
+        let state = state_with_auth(auth_config(Some("open sesame"), false, "none", &[]));
+        // 无 token 写 → 401
+        assert_eq!(
+            send(state.clone(), "POST", "/api/notes", "{\"parent_id\":\"x\"}", None).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // 错密码 → 401
+        assert_eq!(
+            send(state.clone(), "POST", "/api/auth/login", "{\"password\":\"nope\"}", None).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // 正确密码 → 200 + 64hex token
+        let resp = send(state.clone(), "POST", "/api/auth/login", "{\"password\":\"open sesame\"}", None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let token = body_json(resp).await["token"].as_str().unwrap().to_string();
+        assert_eq!(token.len(), 64);
+        // 带 token 写 → 不再 401（无存储 → 503）
+        assert_eq!(
+            send(state.clone(), "POST", "/api/notes", "{\"parent_id\":\"x\"}", Some(&token)).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        // 机密读 /api/config：匿名 401、带 token 200
+        assert_eq!(send(state.clone(), "GET", "/api/config", "", None).await.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(send(state.clone(), "GET", "/api/config", "", Some(&token)).await.status(), StatusCode::OK);
+        // 资源清单机密读同理
+        assert_eq!(send(state.clone(), "GET", "/api/resources", "", None).await.status(), StatusCode::UNAUTHORIZED);
+        // 登出后 token 失效
+        assert_eq!(
+            send(state.clone(), "POST", "/api/auth/logout", "", Some(&token)).await.status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            send(state, "POST", "/api/notes", "{\"parent_id\":\"x\"}", Some(&token)).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    /// 匿名改访问控制设置被拦（PUT /api/auth/settings 非豁免写）；只读态登录端点不被 403。
+    #[tokio::test]
+    async fn anon_cannot_change_auth_settings_but_can_login_under_read_only() {
+        let state = state_with_auth(auth_config(Some("pw"), false, "none", &[]));
+        // 匿名 PUT /api/auth/settings → 401（否则可清密码绕过）
+        assert_eq!(
+            send(state.clone(), "PUT", "/api/auth/settings", "{\"clear_password\":true}", None).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // 只读 + 有密码：登录端点不被只读守卫 403（返回 401 因密码错，而非 403）
+        let ro = state_full(true, auth_config(Some("pw"), false, "none", &[]));
+        assert_eq!(
+            send(ro, "POST", "/api/auth/login", "{\"password\":\"wrong\"}", None).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    /// /api/status 带 auth 字段：未设密码 / 已设未登录 / 已设已登录。
+    #[tokio::test]
+    async fn status_reports_auth_fields() {
+        let open = body_json(send(state_with_auth(auth_config(None, false, "none", &[])), "GET", "/api/status", "", None).await).await;
+        assert_eq!(open["auth_enabled"], false);
+        assert_eq!(open["authenticated"], false);
+
+        let prot = state_with_auth(auth_config(Some("pw"), true, "none", &[]));
+        let anon = body_json(send(prot.clone(), "GET", "/api/status", "", None).await).await;
+        assert_eq!(anon["auth_enabled"], true);
+        assert_eq!(anon["authenticated"], false);
+        assert_eq!(anon["passwordless_read"], true);
+
+        let token = body_json(send(prot.clone(), "POST", "/api/auth/login", "{\"password\":\"pw\"}", None).await)
+            .await["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let authed = body_json(send(prot, "GET", "/api/status", "", Some(&token)).await).await;
+        assert_eq!(authed["authenticated"], true);
+    }
+
+    /// 匿名读范围过滤：passwordless 关 → 什么都看不到。
+    #[tokio::test]
+    async fn anonymous_private_sees_nothing() {
+        let (contents, _f, notes) = sample_contents();
+        let state = state_with_lib(auth_config(Some("pw"), false, "none", &[]), contents);
+        // folders 空
+        assert_eq!(body_json(send(state.clone(), "GET", "/api/folders", "", None).await).await, serde_json::json!([]));
+        // 某笔记 detail → 404
+        assert_eq!(
+            send(state.clone(), "GET", &format!("/api/notes/{}", notes[0]), "", None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+        // search 空
+        assert_eq!(body_json(send(state, "GET", "/api/search?q=note", "", None).await).await, serde_json::json!([]));
+    }
+
+    /// 匿名读范围过滤：passwordless 开 + none → 全库可读。
+    #[tokio::test]
+    async fn anonymous_passwordless_none_sees_all() {
+        let (contents, folders, notes) = sample_contents();
+        let state = state_with_lib(auth_config(Some("pw"), true, "none", &[]), contents);
+        let f = body_json(send(state.clone(), "GET", "/api/folders", "", None).await).await;
+        // 顶层 a、d 两个根
+        assert_eq!(f.as_array().unwrap().len(), 2);
+        // 笔记 detail 可读
+        assert_eq!(
+            send(state.clone(), "GET", &format!("/api/notes/{}", notes[2]), "", None).await.status(),
+            StatusCode::OK
+        );
+        // search 命中 3 篇
+        let s = body_json(send(state.clone(), "GET", "/api/search?q=body", "", None).await).await;
+        assert_eq!(s.as_array().unwrap().len(), 3);
+        let _ = folders;
+    }
+
+    /// 匿名读范围过滤：passwordless 开 + whitelist[a] → 仅 a 子树（a,b）可见，d 不可见。
+    #[tokio::test]
+    async fn anonymous_whitelist_scopes_to_subtree() {
+        let (contents, folders, notes) = sample_contents();
+        let [a, b, d] = folders;
+        let [n_a, n_b, n_d] = notes;
+        let state = state_with_lib(auth_config(Some("pw"), true, "whitelist", &[&a]), contents);
+        // folders：只有 a（含子 b）
+        let f = body_json(send(state.clone(), "GET", "/api/folders", "", None).await).await;
+        let arr = f.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], a);
+        assert_eq!(arr[0]["children"].as_array().unwrap()[0]["id"], b);
+        // a、b 的笔记可读；d 的笔记 404
+        assert_eq!(send(state.clone(), "GET", &format!("/api/notes/{n_a}"), "", None).await.status(), StatusCode::OK);
+        assert_eq!(send(state.clone(), "GET", &format!("/api/notes/{n_b}"), "", None).await.status(), StatusCode::OK);
+        assert_eq!(send(state.clone(), "GET", &format!("/api/notes/{n_d}"), "", None).await.status(), StatusCode::NOT_FOUND);
+        // d 笔记本的列表为空
+        assert_eq!(
+            body_json(send(state.clone(), "GET", &format!("/api/notes?folder={d}"), "", None).await).await,
+            serde_json::json!([])
+        );
+        // search 只命中 a、b 两篇
+        let s = body_json(send(state, "GET", "/api/search?q=body", "", None).await).await;
+        assert_eq!(s.as_array().unwrap().len(), 2);
+    }
+
+    /// 匿名读范围过滤：passwordless 开 + blacklist[a] → a 子树被挡，d 可见。
+    #[tokio::test]
+    async fn anonymous_blacklist_is_complement() {
+        let (contents, folders, notes) = sample_contents();
+        let [a, _b, d] = folders;
+        let [n_a, _n_b, n_d] = notes;
+        let state = state_with_lib(auth_config(Some("pw"), true, "blacklist", &[&a]), contents);
+        // folders：只有 d
+        let f = body_json(send(state.clone(), "GET", "/api/folders", "", None).await).await;
+        let arr = f.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], d);
+        // a 笔记 404、d 笔记 200
+        assert_eq!(send(state.clone(), "GET", &format!("/api/notes/{n_a}"), "", None).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(send(state, "GET", &format!("/api/notes/{n_d}"), "", None).await.status(), StatusCode::OK);
     }
 
     /// SSE 端点：订阅后广播的事件应以 `event: change` + ChangeEvent JSON 流出。

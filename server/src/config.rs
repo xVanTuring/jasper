@@ -57,6 +57,22 @@ pub struct AiConfig {
     pub model: String,
 }
 
+/// 访问控制配置（access control）：持久化在 config.db 的 `settings` 表。
+/// 明文密码永不落库，只存加盐迭代哈希（见 crate::auth）。password_hash 为空 = 未设密码 = auth 关闭。
+#[derive(Clone, Default)]
+pub struct AuthConfig {
+    /// 加盐迭代 SHA-256 的访问密码哈希（空 = 未设密码）。
+    pub password_hash: String,
+    /// 哈希用盐（hex）。
+    pub password_salt: String,
+    /// 允许无密码阅读总开关。
+    pub passwordless_read: bool,
+    /// 笔记本黑白名单模式：none|whitelist|blacklist。
+    pub list_mode: String,
+    /// 名单笔记本 id。
+    pub folder_list: Vec<String>,
+}
+
 pub struct ConfigStore {
     conn: Connection,
 }
@@ -251,6 +267,36 @@ impl ConfigStore {
         Ok(())
     }
 
+    // ---------- 访问控制配置（access control）----------
+
+    /// 读访问控制配置；未配置的键为空/默认（password_hash 空 = 未设密码 = auth 关闭）。
+    pub fn auth_config(&self) -> AuthConfig {
+        let folder_list = self
+            .setting("auth_folder_list")
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+            .unwrap_or_default();
+        AuthConfig {
+            password_hash: self.setting("auth_password_hash").unwrap_or_default(),
+            password_salt: self.setting("auth_password_salt").unwrap_or_default(),
+            passwordless_read: self
+                .setting("auth_passwordless_read")
+                .map(|v| v == "true" || v == "1")
+                .unwrap_or(false),
+            list_mode: self.setting("auth_folder_list_mode").unwrap_or_else(|| "none".to_string()),
+            folder_list,
+        }
+    }
+
+    pub fn save_auth_config(&self, cfg: &AuthConfig) -> Result<()> {
+        self.set_setting("auth_password_hash", &cfg.password_hash)?;
+        self.set_setting("auth_password_salt", &cfg.password_salt)?;
+        self.set_setting("auth_passwordless_read", if cfg.passwordless_read { "true" } else { "false" })?;
+        self.set_setting("auth_folder_list_mode", &cfg.list_mode)?;
+        let list = serde_json::to_string(&cfg.folder_list).unwrap_or_else(|_| "[]".to_string());
+        self.set_setting("auth_folder_list", &list)?;
+        Ok(())
+    }
+
     /// 「写入免确认」开关（notes:write，按插件，默认关）。宿主托管——**不放** plugin_settings：
     /// 插件经 `settings` 能力可读写自己的设置，放那儿等于插件可自行绕过写确认。
     pub fn plugin_write_auto_approve(&self, id: &str) -> bool {
@@ -320,7 +366,7 @@ pub fn source_key(cfg: &SourceConfig) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{source_key, AiConfig, ConfigStore, SourceConfig};
+    use super::{source_key, AiConfig, AuthConfig, ConfigStore, SourceConfig};
 
     #[test]
     fn read_only_round_trips() {
@@ -429,6 +475,35 @@ mod tests {
         assert_eq!(cfg.base_url, "http://127.0.0.1:11434/v1");
         assert_eq!(cfg.api_key, "sk-test");
         assert_eq!(cfg.model, "qwen3");
+    }
+
+    #[test]
+    fn auth_config_round_trip() {
+        let store = ConfigStore::in_memory().unwrap();
+        // 未配置：password 空 = auth 关闭，默认 mode=none
+        let cfg = store.auth_config();
+        assert!(cfg.password_hash.is_empty() && cfg.password_salt.is_empty());
+        assert!(!cfg.passwordless_read);
+        assert_eq!(cfg.list_mode, "none");
+        assert!(cfg.folder_list.is_empty());
+        // 保存后读回
+        store
+            .save_auth_config(&AuthConfig {
+                password_hash: "deadbeef".into(),
+                password_salt: "cafe".into(),
+                passwordless_read: true,
+                list_mode: "whitelist".into(),
+                folder_list: vec!["a".repeat(32), "b".repeat(32)],
+            })
+            .unwrap();
+        let cfg = store.auth_config();
+        assert_eq!(cfg.password_hash, "deadbeef");
+        assert_eq!(cfg.password_salt, "cafe");
+        assert!(cfg.passwordless_read);
+        assert_eq!(cfg.list_mode, "whitelist");
+        assert_eq!(cfg.folder_list, vec!["a".repeat(32), "b".repeat(32)]);
+        // 与数据源配置互不串键
+        assert!(store.load().is_none());
     }
 
     #[test]

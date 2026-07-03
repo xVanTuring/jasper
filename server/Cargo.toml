@@ -27,6 +27,10 @@ roxmltree = "0.20"
 base64 = "0.22"
 rayon = "1"
 getrandom = "0.2"
+# 访问鉴权：加盐迭代 SHA-256 存访问密码哈希。纯 Rust 小依赖；
+# 注意必须直接声明——sha2 此前只在 `embed` feature 下作为 rust-embed 的传递依赖存在，
+# 默认构建里没有，靠传递会 break 默认构建。
+sha2 = "0.10"
 rusqlite = { version = "0.32", features = ["bundled"] }
 dirs = "5"
 # 单文件打包：把 web/dist 编译进二进制（仅 `--features embed` 时生效）

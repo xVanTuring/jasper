@@ -62,7 +62,28 @@ export interface StatusResp {
   notes: number
   folders: number
   read_only: boolean // 服务端只读模式是否开启
+  auth_enabled: boolean // 是否设了访问密码（受保护）
+  authenticated: boolean // 本次会话是否已登录（携带有效 token）
+  passwordless_read: boolean // 允许无密码阅读总开关
   version: string // 服务端版本（市场 UI 做 minHostVersion 兼容过滤）
+}
+
+// 访问控制设置（GET /api/auth/settings；密码只回 password_set 布尔，绝不回哈希）。
+export type AuthListMode = 'none' | 'whitelist' | 'blacklist'
+export interface AuthSettings {
+  password_set: boolean
+  passwordless_read: boolean
+  list_mode: AuthListMode
+  folder_list: string[] // 名单笔记本 id
+}
+
+// PUT /api/auth/settings 请求体。password 非空=设/改；clear_password=清除（关鉴权）。
+export interface AuthSettingsUpdate {
+  password?: string
+  clear_password?: boolean
+  passwordless_read: boolean
+  list_mode: AuthListMode
+  folder_list: string[]
 }
 
 export interface ConfigResult {
@@ -235,19 +256,68 @@ function wasmDemo() {
   return _demo
 }
 
+// ---------- 会话 token（访问鉴权）----------
+// 登录成功后拿到的会话 token 存 localStorage，之后每个请求带 `Authorization: Bearer`。
+// 读天然放行（服务端按可见范围过滤）；写/机密读需要它。不用 cookie（契合 permissive CORS + LAN http）。
+const TOKEN_KEY = 'jasper.token'
+let authToken: string | null = readStoredToken()
+
+function readStoredToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function getAuthToken(): string | null {
+  return authToken
+}
+
+export function setAuthToken(token: string | null) {
+  authToken = token
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token)
+    else localStorage.removeItem(TOKEN_KEY)
+  } catch {
+    /* localStorage 不可用（隐私模式等）→ 仅内存态 */
+  }
+}
+
+// 组装请求头，附带当前 token（若有）。
+export function authHeaders(base: Record<string, string> = {}): Record<string, string> {
+  return authToken ? { ...base, Authorization: `Bearer ${authToken}` } : base
+}
+
+// token 失效（服务端重启/改密码）时的回调：由 App 注册以清态 + 提示重新登录。
+let onAuthErrorCb: (() => void) | null = null
+export function setAuthErrorHandler(cb: (() => void) | null) {
+  onAuthErrorCb = cb
+}
+function authFailed() {
+  setAuthToken(null)
+  onAuthErrorCb?.()
+}
+
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`${url} -> ${res.status}`)
+  const res = await fetch(url, { headers: authHeaders() })
+  if (!res.ok) {
+    if (res.status === 401) authFailed()
+    throw new Error(`${url} -> ${res.status}`)
+  }
   return res.json() as Promise<T>
 }
 
 async function sendJson<T>(url: string, method: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`${method} ${url} -> ${res.status}`)
+  if (!res.ok) {
+    if (res.status === 401) authFailed()
+    throw new Error(`${method} ${url} -> ${res.status}`)
+  }
   return res.json() as Promise<T>
 }
 
@@ -278,6 +348,34 @@ const httpApi = {
   getConfig: () => getJson<SourceConfig>('/api/config'),
   saveConfig: (data: ApplyConfigReq) => sendJson<ConfigResult>('/api/config', 'PUT', data),
 
+  // ---------- 访问鉴权（access control）----------
+  // 登录：正确密码 → 存 token 返回 true；密码错 → false；其它错误抛异常。
+  login: async (password: string): Promise<boolean> => {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    })
+    if (res.status === 401) return false // 密码错误（不触发全局 authFailed）
+    if (!res.ok) throw new Error(`login -> ${res.status}`)
+    const body = (await res.json()) as { token: string }
+    setAuthToken(body.token)
+    return true
+  },
+  // 登出：吊销服务端会话 + 清本地 token。
+  logout: async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', headers: authHeaders() })
+    } catch {
+      /* 忽略网络错误——本地 token 照清 */
+    }
+    setAuthToken(null)
+  },
+  // 访问控制设置（需已登录/未设密码时可读）。密码只回 password_set。
+  getAuthSettings: () => getJson<AuthSettings>('/api/auth/settings'),
+  saveAuthSettings: (data: AuthSettingsUpdate) =>
+    sendJson<AuthSettings>('/api/auth/settings', 'PUT', data),
+
   folders: () => getJson<FolderNode[]>('/api/folders'),
   createFolder: (data: { parent_id: string; title: string }) =>
     sendJson<FolderRef>('/api/folders', 'POST', data),
@@ -300,7 +398,7 @@ const httpApi = {
   createNote: (data: { parent_id: string; title?: string; body?: string; is_todo?: boolean }) =>
     sendJson<NoteDetail>('/api/notes', 'POST', data),
   deleteNote: async (id: string) => {
-    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/notes/${id}`, { method: 'DELETE', headers: authHeaders() })
     if (!res.ok) throw new Error(`DELETE -> ${res.status}`)
   },
 
@@ -308,7 +406,7 @@ const httpApi = {
   uploadResource: async (file: Blob, filename: string): Promise<ResourceUpload> => {
     const res = await fetch(`/api/resources?filename=${encodeURIComponent(filename)}`, {
       method: 'POST',
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+      headers: authHeaders({ 'Content-Type': file.type || 'application/octet-stream' }),
       body: file,
     })
     if (!res.ok) throw new Error(`${t('api.uploadFailed')} -> ${res.status}`)
@@ -320,7 +418,7 @@ const httpApi = {
   renameResource: (id: string, title: string) =>
     sendJson<ResourceInfo>(`/api/resources/${id}`, 'PUT', { title }),
   deleteResource: async (id: string) => {
-    const res = await fetch(`/api/resources/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/resources/${id}`, { method: 'DELETE', headers: authHeaders() })
     if (!res.ok) throw new Error(`${t('api.deleteResFailed')} -> ${res.status}`)
   },
 
@@ -341,7 +439,7 @@ const httpApi = {
   installPlugin: async (file: Blob, force = false): Promise<PluginInstallResult> => {
     const res = await fetch(`/api/plugins/install${force ? '?force=true' : ''}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/zip' },
+      headers: authHeaders({ 'Content-Type': 'application/zip' }),
       body: file,
     })
     const body = (await res.json().catch(() => null)) as
@@ -351,7 +449,7 @@ const httpApi = {
     return body as PluginInstallResult
   },
   deletePlugin: async (id: string) => {
-    const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/plugins/${id}`, { method: 'DELETE', headers: authHeaders() })
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as { error?: string; message?: string } | null
       throw new Error(body?.message || body?.error || `DELETE plugin -> ${res.status}`)
@@ -363,7 +461,7 @@ const httpApi = {
   savePluginSettings: async (id: string, values: Record<string, unknown>) => {
     const res = await fetch(`/api/plugins/${id}/settings`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ values }),
     })
     if (!res.ok) throw new Error(`PUT plugin settings -> ${res.status}`)
@@ -380,7 +478,7 @@ const httpApi = {
   ): Promise<PluginCommandResp> => {
     const res = await fetch(`/api/plugins/${pluginId}/commands/${commandId}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ args }),
     })
     const body = (await res.json().catch(() => null)) as
@@ -393,7 +491,7 @@ const httpApi = {
   pluginUi: async (pluginId: string, view: string, state: unknown = null): Promise<PluginUiResp> => {
     const res = await fetch(`/api/plugins/${pluginId}/ui/${view}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ state }),
     })
     const body = (await res.json().catch(() => null)) as
@@ -410,7 +508,7 @@ const httpApi = {
   saveAiConfig: async (cfg: AiConfig) => {
     const res = await fetch('/api/ai/config', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(cfg),
     })
     if (!res.ok) {
@@ -428,6 +526,9 @@ const demoApi = {
     notes: 0,
     folders: 0,
     read_only: true, // demo 天然只读
+    auth_enabled: false, // demo 无鉴权
+    authenticated: false,
+    passwordless_read: false,
     version: '0.0.0-demo',
   }),
   folders: async (): Promise<FolderNode[]> => JSON.parse((await wasmDemo()).folders()),

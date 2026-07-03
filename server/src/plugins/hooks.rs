@@ -101,6 +101,7 @@ mod tests {
             config,
             cache: crate::cache::CacheStore::in_memory().unwrap(),
             read_only: AtomicBool::new(false),
+            auth: crate::auth::AuthState::from_config(&crate::config::AuthConfig::default()),
             plugins: Some(host),
             events: crate::events::EventBus::new(),
         });

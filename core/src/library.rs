@@ -226,6 +226,28 @@ impl Library {
         false
     }
 
+    /// 某笔记本自身 + 其所有后代笔记本 id（BFS）。`root` 不存在则返回空。
+    /// 用于访问控制的黑白名单按子树展开（server::auth::AuthState::scope）。
+    pub fn subtree_folder_ids(&self, root: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        if root.is_empty() || !self.folders.contains_key(root) {
+            return out; // 空串=未分类根不是真笔记本，无子树
+        }
+        let mut stack = vec![root.to_string()];
+        // 步数上限防坏数据成环
+        let cap = self.folders.len() + 1;
+        while let Some(id) = stack.pop() {
+            if out.len() > cap {
+                break;
+            }
+            if let Some(children) = self.child_folders.get(&id) {
+                stack.extend(children.iter().cloned());
+            }
+            out.push(id);
+        }
+        out
+    }
+
     /// 新增或更新一个资源（上传成功后同步内存，使 /api/resources 能拿到 mime）。返回资源 id。
     pub fn upsert_resource(&mut self, content: &str) -> anyhow::Result<String> {
         let raw = parser::parse_item(content)?;

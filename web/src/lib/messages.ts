@@ -226,6 +226,38 @@ const zh = {
 	'settings.ai.save': '保存 AI 配置',
 	'settings.ai.saved': '已保存',
 	'settings.ai.loadFailed': '读取 AI 配置失败',
+
+	// 访问控制（鉴权）
+	'settings.auth.title': '访问控制',
+	'settings.auth.desc': '设置访问密码后，一切写操作需登录；未登录访问按下方规则只读或不可见。适合把实例分享给他人阅读。',
+	'settings.auth.password': '访问密码',
+	'settings.auth.passwordSetPh': '设置访问密码',
+	'settings.auth.passwordChangePh': '输入新密码以修改（留空则不改）',
+	'settings.auth.passwordSet': '已设置访问密码',
+	'settings.auth.clearPassword': '清除密码（关闭鉴权，恢复全开放）',
+	'settings.auth.passwordlessRead': '允许无密码阅读',
+	'settings.auth.passwordlessReadDesc': '开启后未登录访客可只读浏览（范围受下方名单约束）；关闭则未登录看不到任何内容，需先登录。',
+	'settings.auth.listMode': '匿名可见范围',
+	'settings.auth.listModeNone': '全部笔记本',
+	'settings.auth.listModeWhitelist': '仅名单内',
+	'settings.auth.listModeBlacklist': '名单外全部',
+	'settings.auth.listHint': '勾选下列笔记本组成名单（含其子笔记本）：whitelist 只放这些，blacklist 挡掉这些。',
+	'settings.auth.noFolders': '暂无笔记本',
+	'settings.auth.save': '保存访问控制',
+	'settings.auth.saved': '已保存',
+	'settings.auth.saveFailed': '保存失败',
+
+	// 登录 / 解锁
+	'auth.unlock': '解锁（登录）',
+	'auth.lock': '锁定（登出）',
+	'auth.dialogTitle': '输入访问密码',
+	'auth.dialogDesc': '此实例受密码保护。输入访问密码以获得读写权限。',
+	'auth.passwordPlaceholder': '访问密码',
+	'auth.submit': '登录',
+	'auth.submitting': '登录中…',
+	'auth.wrongPassword': '密码错误',
+	'auth.lockedTitle': '需要登录',
+	'auth.lockedDesc': '此内容受密码保护。请登录后查看。',
 }
 
 const en: typeof zh = {
@@ -442,6 +474,38 @@ const en: typeof zh = {
 	'settings.ai.save': 'Save AI config',
 	'settings.ai.saved': 'Saved',
 	'settings.ai.loadFailed': 'Failed to load AI config',
+
+	// Access control (auth)
+	'settings.auth.title': 'Access control',
+	'settings.auth.desc': 'With an access password set, all writes require login; visitors who are not logged in see read-only or nothing per the rules below. Great for sharing an instance for others to read.',
+	'settings.auth.password': 'Access password',
+	'settings.auth.passwordSetPh': 'Set an access password',
+	'settings.auth.passwordChangePh': 'Enter a new password to change (blank = keep)',
+	'settings.auth.passwordSet': 'Access password is set',
+	'settings.auth.clearPassword': 'Clear password (disable auth, fully open again)',
+	'settings.auth.passwordlessRead': 'Allow reading without a password',
+	'settings.auth.passwordlessReadDesc': 'When on, logged-out visitors can browse read-only (scoped by the list below); when off, they see nothing until they log in.',
+	'settings.auth.listMode': 'Anonymous visibility',
+	'settings.auth.listModeNone': 'All notebooks',
+	'settings.auth.listModeWhitelist': 'Only listed',
+	'settings.auth.listModeBlacklist': 'All except listed',
+	'settings.auth.listHint': 'Check notebooks to form the list (subtrees included): whitelist exposes only these, blacklist hides these.',
+	'settings.auth.noFolders': 'No notebooks yet',
+	'settings.auth.save': 'Save access control',
+	'settings.auth.saved': 'Saved',
+	'settings.auth.saveFailed': 'Save failed',
+
+	// Login / unlock
+	'auth.unlock': 'Unlock (log in)',
+	'auth.lock': 'Lock (log out)',
+	'auth.dialogTitle': 'Enter access password',
+	'auth.dialogDesc': 'This instance is password protected. Enter the access password for read-write access.',
+	'auth.passwordPlaceholder': 'Access password',
+	'auth.submit': 'Log in',
+	'auth.submitting': 'Logging in…',
+	'auth.wrongPassword': 'Wrong password',
+	'auth.lockedTitle': 'Login required',
+	'auth.lockedDesc': 'This content is password protected. Please log in to view it.',
 }
 
 export type MsgKey = keyof typeof zh

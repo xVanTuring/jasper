@@ -5,11 +5,14 @@
     api,
     IS_DEMO,
     FOLDER_DND_TYPE,
+    setAuthErrorHandler,
     type FolderNode,
     type NoteSummary,
     type NoteDetail,
     type PendingWrite,
+    type StatusResp,
   } from './lib/api'
+  import AuthDialog from './lib/AuthDialog.svelte'
   import { draggingFolder } from './lib/dnd.svelte'
   import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
   import Button from './lib/Button.svelte'
@@ -52,6 +55,14 @@
   let showPlugins = $state(false)
   let showDemoBanner = $state(true)
 
+  // 访问鉴权（access control）状态（来自 /api/status）
+  let authEnabled = $state(false) // 是否设了访问密码
+  let authenticated = $state(false) // 本会话是否已登录
+  let passwordlessRead = $state(false) // 允许无密码阅读
+  let showAuthDialog = $state(false) // 登录框开关
+  // 受保护但未登录：写入闸门收紧为只读（下方 readOnly 合并）；且当无可见内容时给登录提示
+  const locked = $derived(authEnabled && !authenticated)
+
   // 插件侧边栏（右侧 dock，spec §3.5/§9.4）：当前打开的面板；插件被禁用/卸载后自动关闭
   let dockEntry = $state<SidebarEntry | null>(null)
   $effect(() => {
@@ -86,9 +97,41 @@
       /* 忽略 */
     }
   }
-  // 服务端只读模式（/api/status 返回）。与编译期 demo 只读合并成统一的写入闸门。
+  // 服务端只读模式（/api/status 返回）。与编译期 demo 只读、未登录锁定合并成统一的写入闸门。
   let serverReadOnly = $state(false)
-  const readOnly = $derived(IS_DEMO || serverReadOnly)
+  const readOnly = $derived(IS_DEMO || serverReadOnly || locked)
+
+  // 把一次 /api/status 的开关同步进本地状态（checkStatus / onConfigured / 登录后共用）。
+  function applyStatusFlags(s: StatusResp) {
+    serverReadOnly = s.read_only
+    authEnabled = s.auth_enabled
+    authenticated = s.authenticated
+    passwordlessRead = s.passwordless_read
+  }
+
+  // 登录成功：关闭登录框并整体重载（现在可写 + 可见全部）
+  async function onLoginSuccess() {
+    showAuthDialog = false
+    await checkStatus()
+  }
+  // 登出：吊销会话 + 清 token → 重载（回到匿名可见范围）
+  async function doLogout() {
+    try {
+      await api.logout()
+    } catch {
+      /* 忽略 */
+    }
+    await checkStatus()
+  }
+
+  // 访问控制设置在设置页被改动后：刷新状态闸门（不重载数据、不关设置页）
+  async function refreshStatus() {
+    try {
+      applyStatusFlags(await api.status())
+    } catch {
+      /* 忽略 */
+    }
+  }
 
   // ---- SSE 变更 → 去抖合并刷新（/api/events）----
   // 自己的写入也会回声：列表刷新幂等、打开中的笔记走 NoteView.applyExternal 的
@@ -172,7 +215,14 @@
     }
   }
 
-  onMount(checkStatus)
+  onMount(() => {
+    // token 失效（服务端重启/改密码使会话作废）→ 回退只读并重新拉状态
+    setAuthErrorHandler(() => {
+      authenticated = false
+      void checkStatus()
+    })
+    void checkStatus()
+  })
 
   async function checkStatus() {
     // 插件列表并行加载（探测服务端是否编译 plugins feature；注入插件主题 CSS）
@@ -180,7 +230,7 @@
     try {
       const s = await api.status()
       configured = s.configured
-      serverReadOnly = s.read_only
+      applyStatusFlags(s)
       if (configured) {
         connectEvents(onRemoteChange) // 幂等；DEMO/不支持时静默跳过
         await loadFolders()
@@ -233,9 +283,9 @@
     showSettings = false
     query = ''
     searchMode = false
-    // 只读开关可能在设置里被切换 → 重新拉状态刷新写入闸门
+    // 只读/鉴权开关可能在设置里被切换 → 重新拉状态刷新写入闸门
     try {
-      serverReadOnly = (await api.status()).read_only
+      applyStatusFlags(await api.status())
     } catch {
       /* 忽略 */
     }
@@ -464,11 +514,19 @@
       />
       <ThemePicker />
       {#if !IS_DEMO}
-        <Button variant="ghost" iconOnly icon="image" label={t('topbar.resources')} onclick={() => (showResources = true)} />
-        {#if pluginsAvailable()}
-          <Button variant="ghost" iconOnly icon="plug" label={t('plugins.topbar')} onclick={() => (showPlugins = true)} />
+        {#if locked}
+          <!-- 受保护未登录：只给「解锁登录」入口，管理功能待登录后出现 -->
+          <Button variant="ghost" iconOnly icon="lock" label={t('auth.unlock')} onclick={() => (showAuthDialog = true)} />
+        {:else}
+          {#if authenticated}
+            <Button variant="ghost" iconOnly icon="unlock" label={t('auth.lock')} onclick={doLogout} />
+          {/if}
+          <Button variant="ghost" iconOnly icon="image" label={t('topbar.resources')} onclick={() => (showResources = true)} />
+          {#if pluginsAvailable()}
+            <Button variant="ghost" iconOnly icon="plug" label={t('plugins.topbar')} onclick={() => (showPlugins = true)} />
+          {/if}
+          <Button variant="ghost" iconOnly icon="settings" label={t('topbar.settings')} onclick={() => (showSettings = true)} />
         {/if}
-        <Button variant="ghost" iconOnly icon="settings" label={t('topbar.settings')} onclick={() => (showSettings = true)} />
       {/if}
     </div>
   </header>
@@ -487,7 +545,16 @@
     <div class="error" transition:slide={{ duration: 200 }}>{error}</div>
   {/if}
 
-  <div class="panes" class:with-dock={dockEntry != null}>
+  {#if locked && configured && folders.length === 0}
+    <!-- 受保护、未登录、且无任何可见内容（整站私有）→ 登录闸门取代三栏 -->
+    <div class="locked-gate">
+      <Icon name="lock" size={40} />
+      <h2>{t('auth.lockedTitle')}</h2>
+      <p>{t('auth.lockedDesc')}</p>
+      <Button variant="primary" icon="lock" label={t('auth.unlock')} onclick={() => (showAuthDialog = true)} />
+    </div>
+  {:else}
+    <div class="panes" class:with-dock={dockEntry != null}>
     <aside class="sidebar">
       <div class="pane-title">
         <span>{t('pane.notebooks')}</span>
@@ -574,15 +641,25 @@
         {/key}
       </aside>
     {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <PendingWriteDialog onApplied={onPluginWriteApplied} />
 
+{#if showAuthDialog}
+  <AuthDialog onSuccess={onLoginSuccess} onClose={() => (showAuthDialog = false)} />
+{/if}
+
 {#if configured === false}
   <Settings mode="setup" onDone={onConfigured} />
 {:else if showSettings}
-  <Settings mode="settings" onDone={onConfigured} onClose={() => (showSettings = false)} />
+  <Settings
+    mode="settings"
+    onDone={onConfigured}
+    onClose={() => (showSettings = false)}
+    onAuthChanged={refreshStatus}
+  />
 {/if}
 
 {#if showPlugins}
@@ -657,6 +734,29 @@
     color: var(--on-accent);
     padding: 6px 14px;
     font-size: 13px;
+  }
+  /* 登录闸门（整站私有、未登录）：占据三栏位置的居中提示 */
+  .locked-gate {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 40px 20px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+  .locked-gate h2 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--text);
+  }
+  .locked-gate p {
+    margin: 0;
+    font-size: 14px;
+    max-width: 360px;
   }
   .demo-banner {
     display: flex;

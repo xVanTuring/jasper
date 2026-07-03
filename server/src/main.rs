@@ -19,6 +19,7 @@
 //!                             不设时默认 `jasper=debug,tower_http=debug,info`
 
 mod api;
+mod auth;
 mod cache;
 mod config;
 mod events;
@@ -147,12 +148,26 @@ async fn main() -> Result<()> {
         tracing::info!("read-only mode enabled: all write operations will be rejected.");
     }
 
+    // 访问鉴权（access control）：从配置库载入访问密码哈希/无密码阅读/黑白名单。
+    let auth_state = {
+        let auth_cfg = config_store.lock().unwrap().auth_config();
+        if !auth_cfg.password_hash.is_empty() {
+            tracing::info!(
+                passwordless_read = auth_cfg.passwordless_read,
+                list_mode = %auth_cfg.list_mode,
+                "access password set: writes require login; anonymous read gated by passwordless_read + notebook list",
+            );
+        }
+        auth::AuthState::from_config(&auth_cfg)
+    };
+
     let state = Arc::new(AppState {
         library: Arc::new(RwLock::new(library)),
         storage: RwLock::new(storage_opt),
         config: config_store,
         cache: cache_store,
         read_only: AtomicBool::new(read_only),
+        auth: auth_state,
         plugins: plugin_host,
         events: events::EventBus::new(),
     });
