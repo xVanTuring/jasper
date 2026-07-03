@@ -14,16 +14,7 @@
   import type { EditorHandle } from './editor/types'
   import { editorCommands } from './plugins.svelte'
   import { enqueuePendingWrites } from './pendingWrites.svelte'
-
-  const ENGINE_KEY = 'jasper.editor'
-  // 默认源码模式（无损、所见非所得关闭）；只有用户显式开过富文本才记为 'wysiwyg'。
-  function loadEngine(): 'wysiwyg' | 'source' {
-    try {
-      return localStorage.getItem(ENGINE_KEY) === 'wysiwyg' ? 'wysiwyg' : 'source'
-    } catch {
-      return 'source'
-    }
-  }
+  import { getEngine, setEngine } from './editorPrefs'
 
   let {
     detail,
@@ -57,15 +48,12 @@
   // 编辑引擎：富文本(Crepe) / 源码(CodeMirror)，记忆在 localStorage。
   // HTML 笔记（markup_language=2）不走 markdown 富文本，强制源码。
   let isMarkdown = $derived(detail?.markup_language !== 2)
-  let editorEngine = $state<'wysiwyg' | 'source'>(loadEngine())
+  // 默认引擎偏好由设置面板「编辑器」分区与本组件共享（editorPrefs，jasper.editor 键）。
+  let editorEngine = $state<'wysiwyg' | 'source'>(getEngine())
   let engine = $derived(isMarkdown ? editorEngine : 'source')
   function toggleEngine() {
     editorEngine = editorEngine === 'wysiwyg' ? 'source' : 'wysiwyg'
-    try {
-      localStorage.setItem(ENGINE_KEY, editorEngine)
-    } catch {
-      /* 忽略 */
-    }
+    setEngine(editorEngine)
   }
 
   let dirty = false

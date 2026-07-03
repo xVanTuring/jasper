@@ -1,5 +1,7 @@
-// 设置向导 × 插件数据源：page.route 伪造 provider（无需真插件/wasm），
-// 断言动态段按钮 + SchemaForm 渲染 + PUT /api/config 的 payload 形状。
+// 设置面板 × 插件数据源：page.route 伪造 provider（无需真插件/wasm），
+// 断言侧边栏「数据源」分区里的动态 provider 选项 + SchemaForm 渲染 + PUT /api/config 的 payload 形状。
+// 数据源描述符由真后端 /api/settings/schema 提供（默认构建，无 AI 段）；provider 选项经 options_source
+// 合入伪造的 /api/plugins storage 贡献。
 import { test, expect } from '@playwright/test'
 
 const FAKE_PLUGINS = {
@@ -53,7 +55,10 @@ test('向导出现插件 provider，动态表单提交正确 payload', async ({ 
 	await page.goto('/')
 	await page.getByRole('button', { name: /^(设置|Settings)$/ }).click()
 
-	// 动态 provider 按钮（来自伪造的 contributes.storage）
+	// 侧边栏导航到「数据源」分区（默认即选中，此步显式确认新结构且抗分区重排）
+	await page.getByRole('button', { name: /^(数据源|Data source)$/ }).click()
+
+	// 动态 provider 选项按钮（source_type enum 经 options_source 合入伪造的 contributes.storage）
 	const providerBtn = page.getByRole('button', { name: 'Demo Cloud' })
 	await expect(providerBtn).toBeVisible()
 	await providerBtn.click()
@@ -63,7 +68,7 @@ test('向导出现插件 provider，动态表单提交正确 payload', async ({ 
 	await expect(page.getByText(/必填|Required/)).toBeVisible()
 	expect(captured).toBeNull()
 
-	// 填表提交（限定在 provider 表单内，避免命中设置页「访问控制」段的访问密码输入框）
+	// 填表提交（限定在 provider 子表单 .plugin-form 内）
 	await page.getByPlaceholder('https://…').fill('https://cloud.example/dav/')
 	await page.locator('.plugin-form input[type="password"]').fill('tok-123')
 	await page.getByRole('button', { name: /^(连接|Connect)$/ }).click()
