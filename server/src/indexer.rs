@@ -48,6 +48,10 @@ pub fn build_cached(
         }
     }
     let cached_count = reuse_contents.len();
+    tracing::debug!(
+        source, listed = listed.len(), cached = cached_count, to_fetch = to_fetch.len(),
+        "resolved cache hits, fetching the rest",
+    );
 
     // 只并行拉取变化的条目。返回 (name, updated_time, content) 以便写回缓存。
     let mtime_of: HashMap<&str, i64> =
@@ -77,7 +81,7 @@ pub fn build_cached(
         .cloned()
         .collect();
     if let Err(e) = cache.sync(source, &fetched, &removed) {
-        eprintln!("缓存写入失败（不影响本次运行）: {e}");
+        tracing::warn!("failed to write cache (does not affect this run): {e}");
     }
     Ok((lib, stats))
 }

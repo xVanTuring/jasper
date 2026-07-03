@@ -197,7 +197,7 @@ mod tests {
         let wasm = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../plugins-examples/testbed/plugin.wasm");
         if !wasm.exists() {
-            eprintln!("跳过：testbed/plugin.wasm 未构建");
+            eprintln!("skipping: testbed/plugin.wasm not built");
             return None;
         }
         let dir = tempfile::tempdir().unwrap();
@@ -286,12 +286,12 @@ mode = { type = "select", options = ["a", "b"] }
     #[test]
     fn webdav_plugin_round_trip_against_container() {
         let Ok(base) = std::env::var("JASPER_TEST_WEBDAV_URL") else {
-            eprintln!("跳过：未设 JASPER_TEST_WEBDAV_URL（docker compose -f docker-compose.dev.yml up -d）");
+            eprintln!("skipping: JASPER_TEST_WEBDAV_URL not set (docker compose -f docker-compose.dev.yml up -d)");
             return;
         };
         let examples = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/webdav-storage");
         if !examples.join("plugin.wasm").exists() {
-            eprintln!("跳过：webdav-storage/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("skipping: webdav-storage/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
             return;
         }
         let user = std::env::var("JASPER_WEBDAV_USER").unwrap_or_else(|_| "joplin".into());

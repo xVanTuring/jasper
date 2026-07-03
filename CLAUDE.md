@@ -102,7 +102,10 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 - `JASPER_CONFIG_DIR`（配置库目录；默认平台配置目录 `jasper/config.db`）
 - `JASPER_WEB_DIR`（前端静态目录；默认相对源码，容器里指向打包路径）
 - `JASPER_READ_ONLY`（truthy=1/true/yes/on → 只读引导；仅当尚无保存配置时生效，之后以配置库为准）
+- `RUST_LOG`（日志级别过滤，`tracing_subscriber::EnvFilter` 语法；不设时默认 `jasper=debug,tower_http=debug,info`——本项目内部与每条 HTTP 请求默认就是 debug 级可见，排障不用先设环境变量；调小用 `RUST_LOG=warn` 等）
 - 首次引导：`JASPER_SOURCE` / `JASPER_WEBDAV_USER` / `JASPER_WEBDAV_PASS`
+
+日志：用 **tracing**（+ `tracing-subscriber` env-filter）而非裸 `println!`/`eprintln!`；`api::router()` 挂了 `tower_http::trace::TraceLayer` 自动记每个 HTTP 请求（method/uri/status/latency）。写路径的单一咽喉 `persist_note_blocking`、插件调用的单一咽喉 `PluginHost::dispatch_with_notes` 都打了 debug 级日志，覆盖 API 写入/插件免确认直写/前端全部请求/一切插件调用，无需在各处分别加日志。测试里的 `跳过：...`/`skipping: ...` 提示仍用裸 `eprintln!`（多为无 subscriber 的场景，tracing 会静默不可见）。
 
 ## 浏览器 WASM demo（纯前端预览，无 server）
 

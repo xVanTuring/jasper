@@ -632,7 +632,7 @@ mod tests {
         let examples =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/testbed");
         if !examples.join("plugin.wasm").exists() {
-            eprintln!("跳过：testbed/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("skipping: testbed/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
             return;
         }
         let stub = spawn_stub_http("relayed body");
@@ -748,7 +748,7 @@ token = { type = "secret" }
         let examples =
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/testbed");
         if !examples.join("plugin.wasm").exists() {
-            eprintln!("跳过：testbed/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("skipping: testbed/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
             return;
         }
 
