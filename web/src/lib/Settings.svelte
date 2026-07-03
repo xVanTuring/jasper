@@ -509,6 +509,9 @@
   .card {
     width: 440px;
     max-width: calc(100vw - 32px);
+    /* 内容较多（数据源 + AI + 访问控制段）时卡片自身滚动，避免超出视口后底部按钮不可达 */
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 12px;

@@ -63,9 +63,9 @@ test('向导出现插件 provider，动态表单提交正确 payload', async ({ 
 	await expect(page.getByText(/必填|Required/)).toBeVisible()
 	expect(captured).toBeNull()
 
-	// 填表提交
+	// 填表提交（限定在 provider 表单内，避免命中设置页「访问控制」段的访问密码输入框）
 	await page.getByPlaceholder('https://…').fill('https://cloud.example/dav/')
-	await page.locator('input[type="password"]').fill('tok-123')
+	await page.locator('.plugin-form input[type="password"]').fill('tok-123')
 	await page.getByRole('button', { name: /^(连接|Connect)$/ }).click()
 
 	await expect.poll(() => captured).not.toBeNull()

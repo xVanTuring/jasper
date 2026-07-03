@@ -56,6 +56,8 @@ test('wrong password shows an error and stays locked', async ({ page }) => {
 	expect(res.ok()).toBeTruthy()
 	await page.reload()
 
+	// 等锁定态就绪（只读徽标出现 = status 已加载），再点解锁，避免加载间隙误判
+	await expect(page.locator('.ro-badge')).toBeVisible()
 	await page.getByRole('button', { name: 'Unlock (log in)', exact: true }).click()
 	await page.getByPlaceholder('Access password').fill('wrong-password')
 	await page.getByRole('button', { name: 'Log in', exact: true }).click()

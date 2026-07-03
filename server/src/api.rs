@@ -710,24 +710,54 @@ struct TagInfo {
     note_count: usize,
 }
 
-/// GET /api/tags —— 全部标签（按标题排序，含篇数）。
-async fn tags_list(State(state): State<Arc<AppState>>) -> Json<Vec<TagInfo>> {
+/// GET /api/tags —— 全部标签（按标题排序，含篇数）。匿名受限时篇数只数可见笔记、零可见的标签隐藏。
+async fn tags_list(
+    State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
+) -> Json<Vec<TagInfo>> {
     let lib = state.library.read().unwrap();
-    Json(
-        lib.tags_sorted()
-            .into_iter()
-            .map(|t| TagInfo { id: t.id.clone(), title: t.title.clone(), note_count: lib.tag_note_count(&t.id) })
-            .collect(),
-    )
+    let scope = state.auth.scope(&lib, access);
+    if scope.is_none() {
+        return Json(Vec::new());
+    }
+    let mut out = Vec::new();
+    for t in lib.tags_sorted() {
+        if matches!(scope, Scope::All) {
+            // Full/全库可读：保持原样（含篇数 0 的标签也列出）
+            out.push(TagInfo { id: t.id.clone(), title: t.title.clone(), note_count: lib.tag_note_count(&t.id) });
+        } else {
+            // 受限：只数可见笔记，零可见则隐藏该标签
+            let count = lib
+                .notes_with_tag(&t.id)
+                .into_iter()
+                .filter(|n| scope.allows_folder(&n.parent_id))
+                .count();
+            if count > 0 {
+                out.push(TagInfo { id: t.id.clone(), title: t.title.clone(), note_count: count });
+            }
+        }
+    }
+    Json(out)
 }
 
-/// GET /api/tags/{id}/notes —— 打了某标签的笔记（按更新时间倒序）。
+/// GET /api/tags/{id}/notes —— 打了某标签的笔记（按更新时间倒序），过滤到可见笔记本。
 async fn tag_notes(
     State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
     Path(id): Path<String>,
 ) -> Json<Vec<NoteSummary>> {
     let lib = state.library.read().unwrap();
-    Json(lib.notes_with_tag(&id).into_iter().map(summarize).collect())
+    let scope = state.auth.scope(&lib, access);
+    if scope.is_none() {
+        return Json(Vec::new());
+    }
+    Json(
+        lib.notes_with_tag(&id)
+            .into_iter()
+            .filter(|n| scope.allows_folder(&n.parent_id))
+            .map(summarize)
+            .collect(),
+    )
 }
 
 #[derive(Serialize)]
@@ -745,13 +775,15 @@ struct AddTagReq {
     title: String,
 }
 
-/// GET /api/notes/{id}/tags —— 某笔记的标签（按标题排序）。
+/// GET /api/notes/{id}/tags —— 某笔记的标签（按标题排序）。笔记所在笔记本不可见 → 404（同 note_detail）。
 async fn note_tags_list(
     State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<TagRef>>, StatusCode> {
     let lib = state.library.read().unwrap();
-    if lib.note(&id).is_none() {
+    let note = lib.note(&id).ok_or(StatusCode::NOT_FOUND)?;
+    if !state.auth.scope(&lib, access).allows_folder(&note.parent_id) {
         return Err(StatusCode::NOT_FOUND);
     }
     Ok(Json(lib.tags_of_note(&id).into_iter().map(tag_ref).collect()))
@@ -1682,6 +1714,50 @@ mod tests {
         // a 笔记 404、d 笔记 200
         assert_eq!(send(state.clone(), "GET", &format!("/api/notes/{n_a}"), "", None).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(send(state, "GET", &format!("/api/notes/{n_d}"), "", None).await.status(), StatusCode::OK);
+    }
+
+    /// 标签读端点也按范围过滤：篇数只数可见笔记、tag_notes 过滤、私有笔记的 tags 404、私有态全空。
+    #[tokio::test]
+    async fn anonymous_tag_endpoints_filtered() {
+        let pub_f = "a".repeat(32);
+        let priv_f = "b".repeat(32);
+        let n_pub = "1".repeat(32);
+        let n_priv = "2".repeat(32);
+        let tag = "c".repeat(32);
+        // 一个标签同时打在公开笔记与私有笔记上
+        let build = || {
+            vec![
+                format!("Public\n\nid: {pub_f}\nparent_id: \ntype_: 2"),
+                format!("Private\n\nid: {priv_f}\nparent_id: \ntype_: 2"),
+                serialize::new_note_md(&n_pub, &pub_f, "pub note", "x", false, 1),
+                serialize::new_note_md(&n_priv, &priv_f, "priv note", "x", false, 2),
+                format!("mytag\n\nid: {tag}\nparent_id: \ntype_: 5"),
+                format!("id: {}\nnote_id: {n_pub}\ntag_id: {tag}\ntype_: 6", "d".repeat(32)),
+                format!("id: {}\nnote_id: {n_priv}\ntag_id: {tag}\ntype_: 6", "e".repeat(32)),
+            ]
+        };
+
+        // passwordless + whitelist(Public)：标签可见但篇数只数公开那 1 篇
+        let st = state_with_lib(auth_config(Some("pw"), true, "whitelist", &[&pub_f]), build());
+        let tags = body_json(send(st.clone(), "GET", "/api/tags", "", None).await).await;
+        assert_eq!(tags.as_array().unwrap().len(), 1);
+        assert_eq!(tags[0]["id"], tag);
+        assert_eq!(tags[0]["note_count"], 1);
+        // tag_notes 只含公开笔记
+        let tn = body_json(send(st.clone(), "GET", &format!("/api/tags/{tag}/notes"), "", None).await).await;
+        assert_eq!(tn.as_array().unwrap().len(), 1);
+        assert_eq!(tn[0]["id"], n_pub);
+        // 某笔记的标签：公开 200、私有 404
+        assert_eq!(send(st.clone(), "GET", &format!("/api/notes/{n_pub}/tags"), "", None).await.status(), StatusCode::OK);
+        assert_eq!(send(st, "GET", &format!("/api/notes/{n_priv}/tags"), "", None).await.status(), StatusCode::NOT_FOUND);
+
+        // passwordless 关（整站私有）：标签相关端点全空
+        let priv_st = state_with_lib(auth_config(Some("pw"), false, "none", &[]), build());
+        assert_eq!(body_json(send(priv_st.clone(), "GET", "/api/tags", "", None).await).await, serde_json::json!([]));
+        assert_eq!(
+            body_json(send(priv_st, "GET", &format!("/api/tags/{tag}/notes"), "", None).await).await,
+            serde_json::json!([])
+        );
     }
 
     /// SSE 端点：订阅后广播的事件应以 `event: change` + ChangeEvent JSON 流出。

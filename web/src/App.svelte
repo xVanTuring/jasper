@@ -603,8 +603,10 @@
     <div class="error" transition:slide={{ duration: 200 }}>{error}</div>
   {/if}
 
-  {#if locked && configured && folders.length === 0}
-    <!-- 受保护、未登录、且无任何可见内容（整站私有）→ 登录闸门取代三栏 -->
+  {#if locked && configured && !passwordlessRead}
+    <!-- 受保护、未登录、且未开放无密码阅读（整站私有 → 匿名什么都看不到）→ 登录闸门取代三栏。
+         用 passwordlessRead 判定而非 folders.length：后者在重载后的加载间隙短暂为空，会导致闸门闪现
+         + 与顶栏「解锁」按钮同名重复。开了无密码阅读则始终展示三栏（只读浏览可见范围内容）。 -->
     <div class="locked-gate">
       <Icon name="lock" size={40} />
       <h2>{t('auth.lockedTitle')}</h2>
