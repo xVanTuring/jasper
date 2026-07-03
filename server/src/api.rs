@@ -77,6 +77,8 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/status", get(status))
         .route("/api/config", get(get_config).put(apply_config))
+        // 服务器驱动的设置描述符（分区目录 + 字段 schema + 当前值 + 动作）：前端通用渲染器据此渲染设置面板
+        .route("/api/settings/schema", get(settings_schema))
         // 访问鉴权（access control）：登录取 token / 登出 / 读写访问控制设置
         .route("/api/auth/login", post(auth_login))
         .route("/api/auth/logout", post(auth_logout))
@@ -169,9 +171,14 @@ async fn guard_auth(State(state): State<Arc<AppState>>, mut req: Request, next: 
         // 匿名改访问控制设置会被下面拦成 401（未设密码时 Access=Full 才放行首次设置）。
         let write_exempt = matches!(path, "/api/auth/login" | "/api/auth/logout");
         // 机密读端点（`/api/resources` 只匹配清单本身，`/api/resources/{id}` 二进制不在内）。
+        // `/api/settings/schema` 回显 webdav 密码 / AI key / 私有笔记本名单 → 匿名不可读。
         let secret_read = matches!(
             path,
-            "/api/config" | "/api/ai/config" | "/api/auth/settings" | "/api/resources"
+            "/api/config"
+                | "/api/ai/config"
+                | "/api/auth/settings"
+                | "/api/resources"
+                | "/api/settings/schema"
         );
         if is_write && !write_exempt {
             return unauthorized();
@@ -589,6 +596,204 @@ async fn put_auth_settings(
         "auth settings updated",
     );
     Ok(Json(auth_settings_resp(cfg)))
+}
+
+// ---------- 设置描述符（server-driven settings，供前端通用渲染器）----------
+
+/// GET /api/settings/schema —— 下发分区化的设置描述符：分区目录 + 字段 schema + 当前值 + 动作。
+/// 前端据此用单一通用渲染器渲染侧边栏设置面板（数据源 / 访问控制 / AI / 外观 / 编辑器），
+/// 无需在前端硬编码有哪些设置、字段、顺序、可用性。分区顺序、图标、i18n 键均由此处控制。
+///
+/// 字段 `label_key`/`placeholder_key`/`desc_key` 是 i18n 键，前端 `t()` 解析（未知回退原串，
+/// 故 provider 名等字面量也可直接放）。`values` 为当前值（含 secret，故 guard_auth 已把本路径
+/// 列为机密读 → 匿名 401）。`scope=client` 的分区（外观 / 编辑器）无 `values`/`actions`，值由前端
+/// 存 localStorage。AI 段仅当插件宿主可用时出现（`/api/ai/config` 亦仅 plugins 构建存在）。
+async fn settings_schema(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    use serde_json::json;
+    let (cfg, auth) = {
+        let store = state.config.lock().unwrap();
+        (store.load().unwrap_or_default(), store.auth_config())
+    };
+
+    // 数据源当前值：把 source_type=="plugin" 还原成前端用的 provider 键 `plugin:<id>:<contrib>`，
+    // 让 enum 能回显选中项；plugin_config 文本还原成对象供 provider 子表单预填。
+    let source_type_key = if cfg.source_type == "plugin" {
+        format!("plugin:{}:{}", cfg.plugin_id, cfg.plugin_storage)
+    } else if cfg.source_type.is_empty() {
+        "local".to_string()
+    } else {
+        cfg.source_type.clone()
+    };
+    let plugin_config_val: serde_json::Value =
+        serde_json::from_str(&cfg.plugin_config).unwrap_or_else(|_| json!({}));
+
+    let data_source = json!({
+        "id": "data-source",
+        "title_key": "settings.section.dataSource",
+        "icon": "folder",
+        "scope": "server",
+        "search_keys": ["settings.local", "settings.webdav", "settings.readOnly", "settings.folderPath"],
+        "fields": [
+            { "key": "create_new", "type": "enum", "label_key": "settings.libMode", "default": "existing",
+              "options": [
+                { "value": "existing", "label_key": "settings.useExisting" },
+                { "value": "new", "label_key": "settings.createNew" }
+              ] },
+            { "key": "source_type", "type": "enum", "label_key": "settings.sourceType", "default": "local",
+              "options_source": "storage_providers",
+              "options": [
+                { "value": "local", "label_key": "settings.local" },
+                { "value": "webdav", "label_key": "settings.webdav" }
+              ] },
+            { "key": "local_path", "type": "text", "label_key": "settings.folderPath",
+              "placeholder_key": "settings.localPhExisting",
+              "show_if": { "field": "source_type", "equals": "local" } },
+            { "key": "webdav_url", "type": "text", "label_key": "settings.webdavUrl",
+              "placeholder_key": "settings.webdavUrlPh",
+              "show_if": { "field": "source_type", "equals": "webdav" } },
+            { "key": "webdav_user", "type": "text", "label_key": "settings.username",
+              "show_if": { "field": "source_type", "equals": "webdav" } },
+            { "key": "webdav_pass", "type": "secret", "label_key": "settings.password",
+              "show_if": { "field": "source_type", "equals": "webdav" } },
+            // 选中插件 provider（source_type 非 local/webdav）时渲染该 provider 的 config_schema 子表单
+            { "key": "plugin_config", "type": "provider-config",
+              "show_if": { "field": "source_type", "not_in": ["local", "webdav"] } },
+            { "key": "read_only", "type": "bool", "label_key": "settings.readOnly",
+              "desc_key": "settings.readOnlyDesc" }
+        ],
+        "values": {
+            "create_new": "existing",
+            "source_type": source_type_key,
+            "local_path": cfg.local_path,
+            "webdav_url": cfg.webdav_url,
+            "webdav_user": cfg.webdav_user,
+            "webdav_pass": cfg.webdav_pass,
+            "plugin_config": plugin_config_val,
+            "read_only": cfg.read_only
+        },
+        "actions": [
+            { "id": "connect", "label_key": "settings.connect", "variant": "primary",
+              "request": { "method": "PUT", "url": "/api/config", "convention": "config-result" },
+              "on_success": "reload" }
+        ]
+    });
+
+    let access_control = json!({
+        "id": "access-control",
+        "title_key": "settings.section.accessControl",
+        "icon": "lock",
+        "scope": "server",
+        "desc_key": "settings.auth.desc",
+        "search_keys": ["settings.auth.password", "settings.auth.passwordlessRead", "settings.auth.listMode"],
+        "fields": [
+            // 密码只写不回显（回 password_set 布尔）；已设时渲染器用 form.secretSetPh 提示留空保持不变
+            { "key": "password", "type": "secret", "label_key": "settings.auth.password",
+              "writeonly": true, "set_flag": "password_set",
+              "placeholder_key": "settings.auth.passwordSetPh" },
+            { "key": "passwordless_read", "type": "bool", "label_key": "settings.auth.passwordlessRead",
+              "desc_key": "settings.auth.passwordlessReadDesc" },
+            { "key": "list_mode", "type": "enum", "label_key": "settings.auth.listMode", "default": "none",
+              "desc_key": "settings.auth.listHint",
+              "show_if": { "field": "passwordless_read", "truthy": true },
+              "options": [
+                { "value": "none", "label_key": "settings.auth.listModeNone" },
+                { "value": "whitelist", "label_key": "settings.auth.listModeWhitelist" },
+                { "value": "blacklist", "label_key": "settings.auth.listModeBlacklist" }
+              ] },
+            { "key": "folder_list", "type": "notebook-multiselect", "options_source": "folders",
+              "empty_key": "settings.auth.noFolders",
+              "show_if": { "field": "list_mode", "in": ["whitelist", "blacklist"] } }
+        ],
+        "values": {
+            "password_set": !auth.password_hash.is_empty(),
+            "passwordless_read": auth.passwordless_read,
+            "list_mode": auth.list_mode,
+            "folder_list": auth.folder_list
+        },
+        "actions": [
+            { "id": "clear", "label_key": "settings.auth.clearPassword", "variant": "danger",
+              "show_if": { "field": "password_set", "truthy": true },
+              "request": { "method": "PUT", "url": "/api/auth/settings", "convention": "status",
+                           "extra": { "clear_password": true } },
+              "on_success": "relogin" },
+            { "id": "save", "label_key": "settings.auth.save", "variant": "primary",
+              "request": { "method": "PUT", "url": "/api/auth/settings", "convention": "status" },
+              "on_success": "relogin" }
+        ]
+    });
+
+    let appearance = json!({
+        "id": "appearance",
+        "title_key": "settings.section.appearance",
+        "icon": "palette",
+        "scope": "client",
+        "fields": [
+            { "key": "theme", "type": "theme", "label_key": "settings.appearance.theme" },
+            { "key": "language", "type": "language", "label_key": "settings.appearance.language" }
+        ]
+    });
+
+    let editor = json!({
+        "id": "editor",
+        "title_key": "settings.section.editor",
+        "icon": "edit",
+        "scope": "client",
+        "fields": [
+            { "key": "engine", "type": "enum", "label_key": "settings.editor.default", "default": "source",
+              // 客户端本地偏好：值存 localStorage（与 NoteView 共享 jasper.editor 键）
+              "client_store": "jasper.editor",
+              "options": [
+                { "value": "source", "label_key": "settings.editor.source" },
+                { "value": "wysiwyg", "label_key": "settings.editor.wysiwyg" }
+              ] }
+        ]
+    });
+
+    let mut sections = vec![data_source, access_control];
+    // AI 段仅在插件宿主可用时出现（宿主级 AI 配置、/api/ai/config 均只在 plugins 构建存在）
+    if state.plugins.is_some() {
+        let ai = state.config.lock().unwrap().ai_config();
+        sections.push(json!({
+            "id": "ai",
+            "title_key": "settings.section.ai",
+            "icon": "sparkles",
+            "scope": "server",
+            "desc_key": "settings.ai.desc",
+            "search_keys": ["settings.ai.provider", "settings.ai.apiKey", "settings.ai.model"],
+            "fields": [
+                { "key": "provider", "type": "enum", "label_key": "settings.ai.provider", "default": "",
+                  "options": [
+                    { "value": "", "label_key": "settings.ai.providerNone" },
+                    { "value": "anthropic", "label_key": "Anthropic" },
+                    { "value": "openai", "label_key": "OpenAI API" }
+                  ] },
+                { "key": "base_url", "type": "text", "label_key": "settings.ai.baseUrl",
+                  "placeholder_key": "settings.ai.baseUrlPh",
+                  "show_if": { "field": "provider", "truthy": true } },
+                // api_key 回显（不遮罩）：PUT /api/ai/config 是整体替换，遮罩+空串回传会静默清空密钥
+                { "key": "api_key", "type": "secret", "label_key": "settings.ai.apiKey",
+                  "show_if": { "field": "provider", "truthy": true } },
+                { "key": "model", "type": "text", "label_key": "settings.ai.model",
+                  "placeholder_key": "settings.ai.modelPh",
+                  "show_if": { "field": "provider", "truthy": true } }
+            ],
+            "values": {
+                "provider": ai.provider,
+                "base_url": ai.base_url,
+                "api_key": ai.api_key,
+                "model": ai.model
+            },
+            "actions": [
+                { "id": "save", "label_key": "settings.ai.save", "variant": "primary",
+                  "request": { "method": "PUT", "url": "/api/ai/config", "convention": "status" },
+                  "on_success": "saved" }
+            ]
+        }));
+    }
+    sections.push(appearance);
+    sections.push(editor);
+
+    Json(json!({ "sections": sections }))
 }
 
 // ---------- 读 handlers ----------
@@ -1635,6 +1840,67 @@ mod tests {
             .to_string();
         let authed = body_json(send(prot, "GET", "/api/status", "", Some(&token)).await).await;
         assert_eq!(authed["authenticated"], true);
+    }
+
+    /// 设置描述符：分区顺序固定、带字段/当前值/动作；plugins=None → 无 AI 段。
+    #[tokio::test]
+    async fn settings_schema_lists_sections_in_order() {
+        // 未设密码 → 人人 Full，可读描述符
+        let state = state_with_auth(auth_config(None, false, "none", &[]));
+        let body = body_json(send(state, "GET", "/api/settings/schema", "", None).await).await;
+        let sections = body["sections"].as_array().unwrap();
+        let ids: Vec<&str> = sections.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        // plugins=None → 无 ai 段；顺序固定
+        assert_eq!(ids, ["data-source", "access-control", "appearance", "editor"]);
+        // 数据源段：带字段 / 当前值 / connect 动作
+        let ds = &sections[0];
+        assert!(ds["fields"].as_array().unwrap().iter().any(|f| f["key"] == "source_type"));
+        assert_eq!(ds["values"]["read_only"], false);
+        assert_eq!(ds["values"]["source_type"], "local"); // 空配置回显默认 local
+        assert_eq!(ds["actions"][0]["request"]["url"], "/api/config");
+        assert_eq!(ds["actions"][0]["request"]["convention"], "config-result");
+        // 访问控制段：未设密码 → password_set=false，且绝不回哈希
+        let ac = sections.iter().find(|s| s["id"] == "access-control").unwrap();
+        assert_eq!(ac["values"]["password_set"], false);
+        assert!(ac["values"].get("password_hash").is_none());
+        // client 作用域段（外观 / 编辑器）无 values
+        let appearance = sections.iter().find(|s| s["id"] == "appearance").unwrap();
+        assert_eq!(appearance["scope"], "client");
+        assert!(appearance.get("values").is_none());
+    }
+
+    /// 设置描述符是机密读：设了密码后匿名 401，登录后 200 且回显访问控制当前值。
+    #[tokio::test]
+    async fn settings_schema_is_secret_read_gated() {
+        let cfg = auth_config(Some("pw"), true, "whitelist", &["a".repeat(32).as_str()]);
+        let state = state_with_auth(cfg.clone());
+        // 描述符从 ConfigStore 读访问控制当前值（生产里 store 与运行态由 save+reload 同步）；
+        // 测试助手只填了运行态 AuthState，这里补填 store 以断言回显。
+        state.config.lock().unwrap().save_auth_config(&cfg).unwrap();
+        // 匿名 → 401
+        assert_eq!(
+            send(state.clone(), "GET", "/api/settings/schema", "", None).await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        // 登录后 → 200
+        let token = body_json(send(state.clone(), "POST", "/api/auth/login", "{\"password\":\"pw\"}", None).await)
+            .await["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let resp = send(state, "GET", "/api/settings/schema", "", Some(&token)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_json(resp).await;
+        let ac = body["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "access-control")
+            .unwrap()
+            .clone();
+        assert_eq!(ac["values"]["password_set"], true);
+        assert_eq!(ac["values"]["passwordless_read"], true);
+        assert_eq!(ac["values"]["list_mode"], "whitelist");
     }
 
     /// 匿名读范围过滤：passwordless 关 → 什么都看不到。

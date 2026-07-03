@@ -564,6 +564,35 @@ mod tests {
         assert_eq!(body["model"], "qwen3");
     }
 
+    /// 插件宿主可用时，设置描述符须包含 AI 段（其字段/当前值/save 动作），并回显已存 api_key。
+    #[tokio::test]
+    async fn settings_schema_includes_ai_when_plugins_available() {
+        let (_dir, state) = state_with_host(false);
+        // 先存一份 AI 配置，验证描述符回显当前值
+        let (st, _) = send(
+            state.clone(),
+            "PUT",
+            "/api/ai/config",
+            br#"{"provider":"openai","base_url":"","api_key":"sk-x","model":"qwen3"}"#.to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NO_CONTENT);
+
+        let (st, body) = send(state, "GET", "/api/settings/schema", vec![]).await;
+        assert_eq!(st, StatusCode::OK);
+        let ai = body["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "ai")
+            .expect("ai section present with plugins")
+            .clone();
+        assert_eq!(ai["values"]["provider"], "openai");
+        assert_eq!(ai["values"]["api_key"], "sk-x"); // 回显，非遮罩
+        assert_eq!(ai["actions"][0]["request"]["url"], "/api/ai/config");
+        assert!(ai["fields"].as_array().unwrap().iter().any(|f| f["key"] == "api_key"));
+    }
+
     #[tokio::test]
     async fn ai_config_put_blocked_in_read_only() {
         let (_dir, state) = state_with_host(true);

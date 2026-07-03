@@ -1,6 +1,7 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
 import { t } from './i18n.svelte'
 import type { Schema } from './schema'
+import type { SettingsSchema } from './settingsSchema'
 
 // 拖拽（移动）用的 dataTransfer MIME：笔记 / 笔记本各一种，放置目标据此区分。
 export const NOTE_DND_TYPE = 'application/x-jasper-note-id'
@@ -359,6 +360,39 @@ const httpApi = {
   status: () => getJson<StatusResp>('/api/status'),
   getConfig: () => getJson<SourceConfig>('/api/config'),
   saveConfig: (data: ApplyConfigReq) => sendJson<ConfigResult>('/api/config', 'PUT', data),
+
+  // ---------- 服务器驱动的设置描述符 ----------
+  // 探测坑同 plugins()：老服务器无此路由时 SPA fallback 回 200 的 index.html —— 必须查 content-type。
+  // 机密读端点：token 失效 → 401 触发全局 authFailed（设置面板仅登录后可开）。
+  settingsSchema: async (): Promise<SettingsSchema | null> => {
+    try {
+      const res = await fetch('/api/settings/schema', { headers: authHeaders() })
+      if (res.status === 401) {
+        authFailed()
+        return null
+      }
+      const ct = res.headers.get('content-type') ?? ''
+      if (!res.ok || !ct.includes('application/json')) return null
+      return (await res.json()) as SettingsSchema
+    } catch {
+      return null
+    }
+  },
+  // 通用设置动作：向描述符声明的端点发请求（带鉴权），返回 {ok,status,body} 供调用方按约定判定。
+  sendSettingsAction: async (
+    method: string,
+    url: string,
+    body: Record<string, unknown>,
+  ): Promise<{ ok: boolean; status: number; body: unknown }> => {
+    const res = await fetch(url, {
+      method,
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body),
+    })
+    if (res.status === 401) authFailed()
+    const json = await res.json().catch(() => null)
+    return { ok: res.ok, status: res.status, body: json }
+  },
 
   // ---------- 访问鉴权（access control）----------
   // 登录：正确密码 → 存 token 返回 true；密码错 → false；其它错误抛异常。
