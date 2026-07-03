@@ -11,6 +11,12 @@
 //!   PUT    /api/folders/{id}/move 移动笔记本（改 parent_id；防环）
 //!   GET    /api/notes?folder=ID  笔记列表
 //!   GET    /api/notes/{id}       笔记详情
+//!   GET    /api/tags             标签列表（含篇数）
+//!   GET    /api/tags/{id}/notes  某标签下的笔记
+//!   GET    /api/notes/{id}/tags  某笔记的标签
+//! 写：
+//!   POST   /api/notes/{id}/tags        给笔记打标签 { title }（标签不存在则新建，兼容 Joplin）
+//!   DELETE /api/notes/{id}/tags/{tid}  从笔记去掉某标签（删 note_tag 关联，保留标签本身）
 //!   GET    /api/resources        资源清单（含引用计数）
 //!   GET    /api/resources/{id}   资源二进制
 //!   GET    /api/search?q=...     全文搜索
@@ -36,7 +42,7 @@ use axum::{
     http::{header, HeaderMap, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{delete, get, post, put},
     Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -81,6 +87,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/notes", get(notes_list).post(create_note))
         .route("/api/notes/{id}", get(note_detail).put(update_note).delete(delete_note))
         .route("/api/notes/{id}/move", put(move_note))
+        .route("/api/tags", get(tags_list))
+        .route("/api/tags/{id}/notes", get(tag_notes))
+        .route("/api/notes/{id}/tags", get(note_tags_list).post(add_note_tag))
+        .route("/api/notes/{id}/tags/{tag_id}", delete(remove_note_tag))
         .route("/api/resources", get(list_resources).post(upload_resource))
         .route("/api/resources/{id}", get(resource).put(rename_resource).delete(delete_resource))
         .route("/api/search", get(search))
@@ -692,6 +702,148 @@ async fn note_detail(
     Ok(Json(detail_of(n)))
 }
 
+#[derive(Serialize)]
+struct TagInfo {
+    id: String,
+    title: String,
+    /// 打了该标签且仍存在的笔记数。
+    note_count: usize,
+}
+
+/// GET /api/tags —— 全部标签（按标题排序，含篇数）。
+async fn tags_list(State(state): State<Arc<AppState>>) -> Json<Vec<TagInfo>> {
+    let lib = state.library.read().unwrap();
+    Json(
+        lib.tags_sorted()
+            .into_iter()
+            .map(|t| TagInfo { id: t.id.clone(), title: t.title.clone(), note_count: lib.tag_note_count(&t.id) })
+            .collect(),
+    )
+}
+
+/// GET /api/tags/{id}/notes —— 打了某标签的笔记（按更新时间倒序）。
+async fn tag_notes(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Json<Vec<NoteSummary>> {
+    let lib = state.library.read().unwrap();
+    Json(lib.notes_with_tag(&id).into_iter().map(summarize).collect())
+}
+
+#[derive(Serialize)]
+struct TagRef {
+    id: String,
+    title: String,
+}
+
+fn tag_ref(t: &crate::model::Tag) -> TagRef {
+    TagRef { id: t.id.clone(), title: t.title.clone() }
+}
+
+#[derive(Deserialize)]
+struct AddTagReq {
+    title: String,
+}
+
+/// GET /api/notes/{id}/tags —— 某笔记的标签（按标题排序）。
+async fn note_tags_list(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<TagRef>>, StatusCode> {
+    let lib = state.library.read().unwrap();
+    if lib.note(&id).is_none() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(lib.tags_of_note(&id).into_iter().map(tag_ref).collect()))
+}
+
+/// 打标签的执行计划（在读锁内算好，避免持锁做 IO / 借用冲突）。
+enum TagPlan {
+    /// 笔记已有该标签 → 幂等无操作。
+    Noop,
+    /// 需落盘：可选的新建标签条目 + 必建的 note_tag 关联条目（均为 (文件名, 内容)）。
+    Create {
+        new_tag: Option<(String, String)>,
+        note_tag: (String, String),
+    },
+}
+
+/// POST /api/notes/{id}/tags —— 给笔记打标签 { title }。
+/// 语义对齐 Joplin `addNoteTagByTitle`：标题 trim + 不区分大小写复用已有标签，
+/// 不存在则新建（type_=5），再建 note_tag 关联（type_=6）；笔记已有该标签则幂等。
+async fn add_note_tag(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<AddTagReq>,
+) -> Result<Json<Vec<TagRef>>, StatusCode> {
+    // 提早确认有数据源（写路径）。
+    storage_of(&state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let title = req.title.trim().to_string();
+    if title.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let now = serialize::now_ms();
+
+    let plan = {
+        let lib = state.library.read().unwrap();
+        if lib.note(&id).is_none() {
+            return Err(StatusCode::NOT_FOUND);
+        }
+        match lib.tag_id_by_title(&title) {
+            Some(tid) if lib.note_has_tag(&id, &tid) => TagPlan::Noop,
+            Some(tid) => {
+                let ntid = serialize::new_id();
+                TagPlan::Create {
+                    new_tag: None,
+                    note_tag: (ntid.clone(), serialize::new_note_tag_md(&ntid, &id, &tid, now)),
+                }
+            }
+            None => {
+                let tid = serialize::new_id();
+                let ntid = serialize::new_id();
+                TagPlan::Create {
+                    new_tag: Some((tid.clone(), serialize::new_tag_md(&tid, &title, now))),
+                    note_tag: (ntid.clone(), serialize::new_note_tag_md(&ntid, &id, &tid, now)),
+                }
+            }
+        }
+    };
+
+    if let TagPlan::Create { new_tag, note_tag } = plan {
+        // 先落标签再落关联：读者先看到关联时，其引用的标签已存在。
+        if let Some((tid, content)) = new_tag {
+            write_item(&state, format!("{tid}.md"), content.clone()).await?;
+            state.library.write().unwrap().upsert_tag(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        }
+        let (ntid, content) = note_tag;
+        write_item(&state, format!("{ntid}.md"), content.clone()).await?;
+        state.library.write().unwrap().upsert_note_tag(&content).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        state.events.tags_changed(&id);
+    }
+
+    let lib = state.library.read().unwrap();
+    Ok(Json(lib.tags_of_note(&id).into_iter().map(tag_ref).collect()))
+}
+
+/// DELETE /api/notes/{id}/tags/{tag_id} —— 从笔记去掉某标签（删 note_tag 关联，保留标签本身）。
+/// 对齐 Joplin `removeNote`：删除该 (note,tag) 的全部关联；无关联则幂等返回当前标签。
+async fn remove_note_tag(
+    State(state): State<Arc<AppState>>,
+    Path((id, tag_id)): Path<(String, String)>,
+) -> Result<Json<Vec<TagRef>>, StatusCode> {
+    storage_of(&state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let ntids = state.library.read().unwrap().note_tag_ids_for(&id, &tag_id);
+    if !ntids.is_empty() {
+        for ntid in &ntids {
+            delete_item(&state, format!("{ntid}.md")).await?;
+            state.library.write().unwrap().remove_note_tag(ntid);
+        }
+        state.events.tags_changed(&id);
+    }
+    let lib = state.library.read().unwrap();
+    Ok(Json(lib.tags_of_note(&id).into_iter().map(tag_ref).collect()))
+}
+
 async fn resource(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let storage = match storage_of(&state) {
         Some(s) => s,
@@ -976,6 +1128,14 @@ async fn events_sse(
 async fn write_item(state: &Arc<AppState>, name: String, content: String) -> Result<(), StatusCode> {
     let storage = storage_of(state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     tokio::task::spawn_blocking(move || storage.put_item(&name, &content))
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+async fn delete_item(state: &Arc<AppState>, name: String) -> Result<(), StatusCode> {
+    let storage = storage_of(state).ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    tokio::task::spawn_blocking(move || storage.delete_item(&name))
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -1568,6 +1728,154 @@ mod tests {
         let ev = rx.try_recv().expect("写入后应有事件");
         assert_eq!((ev.kind, ev.op), ("note", "upsert"));
         assert_eq!(ev.id, id);
+    }
+
+    async fn get_json(state: Arc<AppState>, uri: &str) -> serde_json::Value {
+        let req = Request::builder().method("GET").uri(uri).body(Body::empty()).unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// /api/tags 列表（含篇数）与 /api/tags/{id}/notes 过滤。
+    #[tokio::test]
+    async fn tags_endpoints_list_and_filter() {
+        let state = state_with_read_only(false);
+        let n1 = "1".repeat(32);
+        let n2 = "2".repeat(32);
+        let tag = "a".repeat(32);
+        let contents = vec![
+            serialize::new_note_md(&n1, "", "笔记一", "正文", false, 100),
+            serialize::new_note_md(&n2, "", "笔记二", "正文", false, 200),
+            // 标签（type_=5）+ 关联（type_=6）：仅 n1 打了该标签
+            format!("待办\n\nid: {tag}\nparent_id: \ntype_: 5"),
+            format!("id: {}\nnote_id: {n1}\ntag_id: {tag}\ntype_: 6", "b".repeat(32)),
+        ];
+        let (lib, _) = Library::from_contents(contents);
+        *state.library.write().unwrap() = lib;
+
+        let tags = get_json(state.clone(), "/api/tags").await;
+        let arr = tags.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], tag);
+        assert_eq!(arr[0]["title"], "待办");
+        assert_eq!(arr[0]["note_count"], 1);
+
+        // 该标签下只有 n1
+        let notes = get_json(state.clone(), &format!("/api/tags/{tag}/notes")).await;
+        let narr = notes.as_array().unwrap();
+        assert_eq!(narr.len(), 1);
+        assert_eq!(narr[0]["id"], n1);
+
+        // 未知标签 → 空列表（非 404）
+        let empty = get_json(state.clone(), &format!("/api/tags/{}/notes", "f".repeat(32))).await;
+        assert_eq!(empty, serde_json::json!([]));
+    }
+
+    async fn send_json(
+        state: Arc<AppState>,
+        method: &str,
+        uri: &str,
+        body: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let val = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, val)
+    }
+
+    /// 打标签全链路：新建/复用（不区分大小写）/幂等 + 去标签 + Joplin 兼容落盘。
+    #[tokio::test]
+    async fn note_tag_add_reuse_and_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(crate::storage::local::LocalStorage::new(dir.path())) as Arc<dyn StorageBackend>;
+        let state = state_with_read_only(false);
+        *state.storage.write().unwrap() = Some(storage.clone());
+        let note_id = "1".repeat(32);
+        state
+            .library
+            .write()
+            .unwrap()
+            .upsert_note(&serialize::new_note_md(&note_id, "", "N", "body", false, 100))
+            .unwrap();
+
+        let tags_uri = format!("/api/notes/{note_id}/tags");
+
+        // 打标签 "Work" → 新建标签 + 关联
+        let (st, body) = send_json(state.clone(), "POST", &tags_uri, r#"{"title":"Work"}"#).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["title"], "Work");
+        let work_id = body[0]["id"].as_str().unwrap().to_string();
+
+        // 大小写不同 + 幂等：复用同一标签，笔记标签数不增
+        let (_, body) = send_json(state.clone(), "POST", &tags_uri, r#"{"title":"  work "}"#).await;
+        assert_eq!(body.as_array().unwrap().len(), 1);
+
+        // /api/tags 里 Work 篇数为 1
+        let (_, tags) = send_json(state.clone(), "GET", "/api/tags", "").await;
+        let work = tags.as_array().unwrap().iter().find(|t| t["title"] == "Work").unwrap();
+        assert_eq!(work["note_count"], 1);
+
+        // Joplin 兼容：落盘的 note_tag 文件是纯元数据（无标题、type_=6），标签文件 type_=5
+        let files: Vec<String> = storage.list_items().unwrap().into_iter().map(|i| i.name).collect();
+        let mut saw_note_tag = false;
+        let mut saw_tag = false;
+        for name in &files {
+            if name == &format!("{note_id}.md") {
+                continue;
+            }
+            let content = storage.get_item(name).unwrap();
+            if content.contains("\ntype_: 6") {
+                saw_note_tag = true;
+                assert!(content.starts_with("id: "), "note_tag 应无标题: {content}");
+                assert!(content.contains(&format!("note_id: {note_id}")));
+            } else if content.contains("\ntype_: 5") {
+                saw_tag = true;
+                assert!(content.starts_with("Work\n\nid: "), "tag 首行应为标题: {content}");
+            }
+        }
+        assert!(saw_note_tag && saw_tag, "应已落盘 tag + note_tag");
+
+        // 第二个标签
+        let (_, body) = send_json(state.clone(), "POST", &tags_uri, r#"{"title":"Idea"}"#).await;
+        assert_eq!(body.as_array().unwrap().len(), 2);
+
+        // 去掉 Work → 只剩 Idea；Work 变孤儿（仍在 /api/tags，篇数 0）
+        let (st, body) = send_json(state.clone(), "DELETE", &format!("{tags_uri}/{work_id}"), "").await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert_eq!(body[0]["title"], "Idea");
+        let (_, tags) = send_json(state.clone(), "GET", "/api/tags", "").await;
+        let work = tags.as_array().unwrap().iter().find(|t| t["title"] == "Work").unwrap();
+        assert_eq!(work["note_count"], 0);
+
+        // 空标题 400；不存在的笔记 404
+        let (st, _) = send_json(state.clone(), "POST", &tags_uri, r#"{"title":"   "}"#).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+        let (st, _) = send_json(state.clone(), "POST", &format!("/api/notes/{}/tags", "9".repeat(32)), r#"{"title":"x"}"#).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
+
+    /// 只读模式拦截打/去标签（守卫按方法拦截，无需触达 handler）。
+    #[tokio::test]
+    async fn read_only_blocks_tag_writes() {
+        let id = "1".repeat(32);
+        assert_eq!(
+            send_json(state_with_read_only(true), "POST", &format!("/api/notes/{id}/tags"), r#"{"title":"x"}"#).await.0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            send_json(state_with_read_only(true), "DELETE", &format!("/api/notes/{id}/tags/{}", "2".repeat(32)), "").await.0,
+            StatusCode::FORBIDDEN
+        );
     }
 
     async fn folders_json(state: Arc<AppState>) -> serde_json::Value {

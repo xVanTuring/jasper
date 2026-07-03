@@ -30,6 +30,18 @@ export interface FolderRef {
   parent_id: string
 }
 
+export interface TagInfo {
+  id: string
+  title: string
+  note_count: number // 打了该标签且仍存在的笔记数
+}
+
+// 笔记上的标签（GET/POST /api/notes/{id}/tags 的元素）。
+export interface TagRef {
+  id: string
+  title: string
+}
+
 export interface NoteDetail {
   id: string
   title: string
@@ -387,6 +399,16 @@ const httpApi = {
     getJson<NoteSummary[]>(`/api/notes?folder=${encodeURIComponent(folderId)}`),
   note: (id: string) => getJson<NoteDetail>(`/api/notes/${id}`),
   search: (q: string) => getJson<NoteSummary[]>(`/api/search?q=${encodeURIComponent(q)}`),
+  // 标签视图（只读浏览）：列表 + 按标签过滤笔记
+  tags: () => getJson<TagInfo[]>('/api/tags'),
+  notesByTag: (tagId: string) =>
+    getJson<NoteSummary[]>(`/api/tags/${encodeURIComponent(tagId)}/notes`),
+  // 某笔记的标签 + 打/去标签（打标签按标题，标签不存在则服务端新建，兼容 Joplin）
+  noteTags: (noteId: string) => getJson<TagRef[]>(`/api/notes/${noteId}/tags`),
+  addNoteTag: (noteId: string, title: string) =>
+    sendJson<TagRef[]>(`/api/notes/${noteId}/tags`, 'POST', { title }),
+  removeNoteTag: (noteId: string, tagId: string) =>
+    sendJson<TagRef[]>(`/api/notes/${noteId}/tags/${encodeURIComponent(tagId)}`, 'DELETE', undefined),
   resourceUrl: (id: string) => `/api/resources/${id}`,
 
   // 写入
@@ -532,6 +554,8 @@ const demoApi = {
     version: '0.0.0-demo',
   }),
   folders: async (): Promise<FolderNode[]> => JSON.parse((await wasmDemo()).folders()),
+  // 演示库不含标签视图 → 空列表（前端据此隐藏标签区）
+  tags: async (): Promise<TagInfo[]> => [],
   notes: async (folderId: string): Promise<NoteSummary[]> =>
     JSON.parse((await wasmDemo()).notes(folderId)),
   note: async (id: string): Promise<NoteDetail> => JSON.parse((await wasmDemo()).note(id)),

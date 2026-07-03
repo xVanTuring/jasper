@@ -178,6 +178,46 @@ pub fn new_folder_md(id: &str, parent_id: &str, title: &str, now: i64) -> String
     format!("{title}\n\n{}", props.join("\n"))
 }
 
+/// 新建标签条目（type_=5）。字段集与顺序逐字对齐 Joplin 真实数据
+/// （含空 `parent_id`/`user_data`，**无 `deleted_time`**——标签不进回收站）。
+/// title 已由调用方 trim（Joplin `Tag.save` 也 trim；此处不再改动大小写，混合大小写标签受支持）。
+pub fn new_tag_md(id: &str, title: &str, now: i64) -> String {
+    let iso = format_iso(now);
+    let props = [
+        format!("id: {id}"),
+        format!("created_time: {iso}"),
+        format!("updated_time: {iso}"),
+        format!("user_created_time: {iso}"),
+        format!("user_updated_time: {iso}"),
+        "encryption_cipher_text: ".to_string(),
+        "encryption_applied: 0".to_string(),
+        "is_shared: 0".to_string(),
+        "parent_id: ".to_string(),
+        "user_data: ".to_string(),
+        "type_: 5".to_string(),
+    ];
+    format!("{title}\n\n{}", props.join("\n"))
+}
+
+/// 新建 note_tag 关联条目（type_=6，纯元数据、无标题无空行）。字段集/顺序对齐 Joplin。
+pub fn new_note_tag_md(id: &str, note_id: &str, tag_id: &str, now: i64) -> String {
+    let iso = format_iso(now);
+    let props = [
+        format!("id: {id}"),
+        format!("note_id: {note_id}"),
+        format!("tag_id: {tag_id}"),
+        format!("created_time: {iso}"),
+        format!("updated_time: {iso}"),
+        format!("user_created_time: {iso}"),
+        format!("user_updated_time: {iso}"),
+        "encryption_cipher_text: ".to_string(),
+        "encryption_applied: 0".to_string(),
+        "is_shared: 0".to_string(),
+        "type_: 6".to_string(),
+    ];
+    props.join("\n")
+}
+
 /// 把现有笔记本移动到新的父笔记本（改 parent_id），刷新更新时间，其余元数据原样保留。
 /// 笔记本无正文段（仅标题），故标题逐字保留、仅重写元数据块。
 pub fn move_folder_md(original: &str, new_parent_id: &str, now: i64) -> Result<String> {
@@ -397,6 +437,45 @@ mod tests {
         assert_eq!(f.id, id);
         assert_eq!(f.title, "我的笔记本");
         assert_eq!(f.parent_id, "parentparentparentparentparent12");
+    }
+
+    #[test]
+    fn new_tag_is_parseable_and_matches_joplin_shape() {
+        let id = "1434aa3b57b54f839c8a5fc4025cbf10";
+        let out = new_tag_md(id, "emulator", 1_700_000_000_000);
+        let raw = parser::parse_item(&out).unwrap();
+        assert_eq!(raw.item_type(), crate::model::ItemType::Tag);
+        let tag = parser::to_tag(&raw).unwrap();
+        assert_eq!(tag.id, id);
+        assert_eq!(tag.title, "emulator");
+        assert_eq!(tag.parent_id, ""); // 空 parent_id
+        // 字段集与顺序须与 Joplin 真实数据一致（含 user_data，无 deleted_time）
+        let expected = "emulator\n\nid: 1434aa3b57b54f839c8a5fc4025cbf10\n\
+            created_time: 2023-11-14T22:13:20.000Z\nupdated_time: 2023-11-14T22:13:20.000Z\n\
+            user_created_time: 2023-11-14T22:13:20.000Z\nuser_updated_time: 2023-11-14T22:13:20.000Z\n\
+            encryption_cipher_text: \nencryption_applied: 0\nis_shared: 0\nparent_id: \nuser_data: \ntype_: 5";
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn new_note_tag_is_parseable_and_matches_joplin_shape() {
+        let (id, note_id, tag_id) = (
+            "5828867dfe7f4ce184f3dff4e0e1e756",
+            "8565caad9a4c487996e2e5be171af413",
+            "1434aa3b57b54f839c8a5fc4025cbf10",
+        );
+        let out = new_note_tag_md(id, note_id, tag_id, 1_700_000_000_000);
+        let raw = parser::parse_item(&out).unwrap();
+        assert_eq!(raw.item_type(), crate::model::ItemType::NoteTag);
+        assert!(raw.title.is_none()); // 纯元数据、无标题
+        let nt = parser::to_note_tag(&raw).unwrap();
+        assert_eq!((nt.id.as_str(), nt.note_id.as_str(), nt.tag_id.as_str()), (id, note_id, tag_id));
+        let expected = "id: 5828867dfe7f4ce184f3dff4e0e1e756\n\
+            note_id: 8565caad9a4c487996e2e5be171af413\ntag_id: 1434aa3b57b54f839c8a5fc4025cbf10\n\
+            created_time: 2023-11-14T22:13:20.000Z\nupdated_time: 2023-11-14T22:13:20.000Z\n\
+            user_created_time: 2023-11-14T22:13:20.000Z\nuser_updated_time: 2023-11-14T22:13:20.000Z\n\
+            encryption_cipher_text: \nencryption_applied: 0\nis_shared: 0\ntype_: 6";
+        assert_eq!(out, expected);
     }
 
     #[test]

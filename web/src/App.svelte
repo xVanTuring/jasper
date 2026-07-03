@@ -11,6 +11,7 @@
     type NoteDetail,
     type PendingWrite,
     type StatusResp,
+    type TagInfo,
   } from './lib/api'
   import AuthDialog from './lib/AuthDialog.svelte'
   import { draggingFolder } from './lib/dnd.svelte'
@@ -19,6 +20,7 @@
   import Icon from './lib/Icon.svelte'
   import ThemePicker from './lib/ThemePicker.svelte'
   import FolderTree from './lib/FolderTree.svelte'
+  import TagList from './lib/TagList.svelte'
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
   import Settings from './lib/Settings.svelte'
@@ -37,6 +39,11 @@
 
   let folders = $state<FolderNode[]>([])
   let selectedFolderId = $state<string | null>(null)
+  // 标签视图（只读浏览，与笔记本选择互斥）：选中某标签时 selectedFolderId=null
+  let tags = $state<TagInfo[]>([])
+  let selectedTagId = $state<string | null>(null)
+  // 打开中的笔记标签行的外部刷新令牌（SSE tag 事件命中该笔记时自增 → NoteTags 重载）
+  let tagRefreshToken = $state(0)
   let notes = $state<NoteSummary[]>([])
   let selectedNoteId = $state<string | null>(null)
   let detail = $state<NoteDetail | null>(null)
@@ -136,7 +143,14 @@
   // ---- SSE 变更 → 去抖合并刷新（/api/events）----
   // 自己的写入也会回声：列表刷新幂等、打开中的笔记走 NoteView.applyExternal 的
   // §5.3 保守规则（内容相同/正在输入都不动缓冲），所以无需区分事件来源。
-  const remotePending = { folders: false, list: false, openNote: false, openNoteDeleted: false }
+  const remotePending = {
+    folders: false,
+    list: false,
+    openNote: false,
+    openNoteDeleted: false,
+    tags: false,
+    openNoteTags: false,
+  }
   let remoteTimer: ReturnType<typeof setTimeout> | undefined
 
   function onRemoteChange(ev: ChangeEvent) {
@@ -144,12 +158,17 @@
       // 整库替换（数据源切换/服务重启后重连）：全量重载
       clearTimeout(remoteTimer)
       remotePending.folders = remotePending.list = remotePending.openNote = false
-      remotePending.openNoteDeleted = false
+      remotePending.openNoteDeleted = remotePending.tags = remotePending.openNoteTags = false
       void checkStatus()
       return
     }
     if (ev.kind === 'folder') {
       remotePending.folders = remotePending.list = true
+    } else if (ev.kind === 'tag') {
+      // 某笔记的标签集变化（id 为该笔记）：刷侧栏标签区；若在看该标签则刷列表；命中打开的笔记则刷其标签行
+      remotePending.tags = true
+      if (selectedTagId) remotePending.list = true
+      if (ev.id === selectedNoteId) remotePending.openNoteTags = true
     } else {
       remotePending.list = true
       // 未知 id 的 upsert 可能是新建/移动（笔记本计数变了）；删除同理
@@ -166,8 +185,9 @@
 
   async function applyRemoteChanges() {
     const { folders: doFolders, list: doList, openNote, openNoteDeleted } = remotePending
+    const { tags: doTags, openNoteTags } = remotePending
     remotePending.folders = remotePending.list = remotePending.openNote = false
-    remotePending.openNoteDeleted = false
+    remotePending.openNoteDeleted = remotePending.tags = remotePending.openNoteTags = false
     try {
       if (openNoteDeleted) {
         // 打开中的笔记被外部删除：关视图（未保存输入已无处可保存）
@@ -176,6 +196,9 @@
         saveLastNoteId(null)
       }
       if (doFolders) folders = await api.folders()
+      // 标签篇数随笔记增删/打标签变化 → 侧栏标签区随笔记本树或 tag 事件刷新
+      if (doFolders || doTags) void loadTags()
+      if (openNoteTags) tagRefreshToken++ // 打开的笔记标签被外部改动 → NoteTags 重载
       if (doList) await refreshList()
       if (openNote && !openNoteDeleted && selectedNoteId) {
         const fresh = await api.note(selectedNoteId)
@@ -184,6 +207,12 @@
     } catch {
       /* 网络抖动忽略；下一个事件会再触发 */
     }
+  }
+
+  // 本地给当前笔记打/去标签后：刷新侧栏标签区（含篇数）；若正在看某标签则刷新其笔记列表
+  async function onNoteTagsChanged() {
+    void loadTags()
+    if (selectedTagId) await refreshList()
   }
 
   // 资源被删除/重命名后，刷新当前笔记详情（被引用资源变动可能影响渲染）
@@ -240,9 +269,19 @@
     }
   }
 
+  async function loadTags() {
+    try {
+      tags = await api.tags()
+    } catch {
+      /* 忽略（无标签/网络抖动） */
+    }
+  }
+
   async function loadFolders() {
     try {
       folders = await api.folders()
+      void loadTags() // 标签区与笔记本树并列，随之刷新（互不阻塞）
+      selectedTagId = null // 整体重载回到笔记本视图
       detail = null
       selectedNoteId = null
       // 优先恢复上次打开的笔记（含其所在笔记本）；无记录/已失效则回退到首个有笔记的笔记本
@@ -314,10 +353,24 @@
 
   async function selectFolder(id: string, title?: string) {
     searchMode = false
+    selectedTagId = null // 笔记本与标签选择互斥
     selectedFolderId = id
     listTitle = title ?? findTitle(folders, id) ?? ''
     try {
       notes = await api.notes(id)
+    } catch (e) {
+      error = `${e}`
+    }
+  }
+
+  // 选中某标签：列表显示打了该标签的笔记（互斥于笔记本选择）。
+  async function selectTag(id: string, title: string) {
+    searchMode = false
+    selectedFolderId = null
+    selectedTagId = id
+    listTitle = title
+    try {
+      notes = await api.notesByTag(id)
     } catch (e) {
       error = `${e}`
     }
@@ -353,6 +406,7 @@
   async function refreshList() {
     try {
       if (searchMode) notes = await api.search(query.trim())
+      else if (selectedTagId != null) notes = await api.notesByTag(selectedTagId)
       else if (selectedFolderId != null) notes = await api.notes(selectedFolderId)
     } catch (e) {
       error = `${e}`
@@ -419,6 +473,7 @@
       // 之前未选中任何笔记本（如空白库）时，把选中态落到笔记实际所在的 parent，
       // 否则 refreshList 的 selectedFolderId!=null 判断会跳过拉取，新笔记不会出现在列表里。
       if (!searchMode && selectedFolderId == null) {
+        selectedTagId = null // 标签视图下新建的是未打标签的笔记 → 落到未分类视图
         selectedFolderId = parent // parent 在此分支恒为 ''（未分类笔记）
         listTitle = t('tree.unfiled')
       }
@@ -454,6 +509,7 @@
       // 之前未选中任何笔记本（如空白库）时，把选中态落到笔记实际所在的 parent，
       // 否则 refreshList 的 selectedFolderId!=null 判断会跳过拉取，新笔记不会出现在列表里。
       if (!searchMode && selectedFolderId == null) {
+        selectedTagId = null // 标签视图下新建的是未打标签的笔记 → 落到未分类视图
         selectedFolderId = parent // parent 在此分支恒为 ''（未分类笔记）
         listTitle = t('tree.unfiled')
       }
@@ -477,7 +533,9 @@
     clearTimeout(searchTimer)
     const q = query.trim()
     if (!q) {
-      if (selectedFolderId) selectFolder(selectedFolderId)
+      // 清空搜索：回到清空前所在的视图（标签 / 笔记本）
+      if (selectedTagId) selectTag(selectedTagId, tags.find((x) => x.id === selectedTagId)?.title ?? '')
+      else if (selectedFolderId) selectFolder(selectedFolderId)
       return
     }
     searchTimer = setTimeout(async () => {
@@ -583,6 +641,7 @@
         onMoveFolder={readOnly ? undefined : moveFolder}
         onRenameFolder={readOnly ? undefined : renameFolder}
       />
+      <TagList {tags} selectedId={searchMode ? null : selectedTagId} onSelect={selectTag} />
       <!-- 插件面板入口（左栏底部，spec §9.4）；只读下命令端点全被拦，一并隐藏 -->
       {#if !readOnly && sidebarContributions().length}
         <div class="plugin-entries">
@@ -623,6 +682,9 @@
           onNavigate={navigate}
           onChanged={refreshList}
           onDeleted={onNoteDeleted}
+          onTagsChanged={onNoteTagsChanged}
+          tagSuggestions={tags.map((t) => t.title)}
+          {tagRefreshToken}
           initialEdit={detail != null && detail.id === editOnOpenId}
           {readOnly}
         />
