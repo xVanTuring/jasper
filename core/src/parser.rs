@@ -196,7 +196,7 @@ mod tests {
     fn parses_all_real_data() {
         let dir = data_dir();
         if !dir.exists() {
-            eprintln!("跳过：未找到测试数据 {:?}", dir);
+            eprintln!("skipping: test data not found {:?}", dir);
             return;
         }
         let (mut notes, mut folders, mut resources, mut tags, mut note_tags, mut others) =

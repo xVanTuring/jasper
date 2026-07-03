@@ -39,11 +39,14 @@ pub fn init(config: Arc<Mutex<ConfigStore>>) -> Option<Arc<PluginHost>> {
         Ok(host) => {
             let infos = host.list_info();
             let enabled = infos.iter().filter(|p| p.enabled).count();
-            println!("插件: 已装 {}（启用 {enabled}）| 目录: {:?}", infos.len(), host.dir);
+            tracing::info!(
+                installed = infos.len(), enabled, dir = ?host.dir,
+                "plugin host initialized",
+            );
             Some(host)
         }
         Err(e) => {
-            eprintln!("插件宿主初始化失败（本次禁用插件）: {e}");
+            tracing::warn!("plugin host init failed (disabling plugins for this run): {e}");
             None
         }
     }

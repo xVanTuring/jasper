@@ -63,6 +63,7 @@ fn storage_of(state: &Arc<AppState>) -> Option<Arc<dyn StorageBackend>> {
 
 pub fn router(state: Arc<AppState>) -> Router {
     use tower_http::cors::CorsLayer;
+    use tower_http::trace::TraceLayer;
     Router::new()
         .route("/api/status", get(status))
         .route("/api/config", get(get_config).put(apply_config))
@@ -84,6 +85,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         // 资源上传可能较大（图片/附件），放宽请求体上限到 100MB
         .layer(DefaultBodyLimit::max(100 * 1024 * 1024))
         .layer(CorsLayer::permissive())
+        // 每个请求一条 method+path+status+耗时 的结构化日志（tower_http=debug 时可见，见 main.rs 默认过滤）
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -299,6 +302,7 @@ async fn apply_config(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ApplyConfigReq>,
 ) -> Json<ConfigResult> {
+    tracing::info!(source_type = %req.source_type, create_new = req.create_new, "applying data source config");
     let mut cfg = SourceConfig {
         source_type: req.source_type,
         local_path: req.local_path,
@@ -338,6 +342,10 @@ async fn apply_config(
 
     match built {
         Ok(Ok((lib, stats))) => {
+            tracing::info!(
+                source_type = %cfg.source_type, notes = stats.notes, folders = stats.folders,
+                "data source switched",
+            );
             *state.library.write().unwrap() = lib;
             *state.storage.write().unwrap() = Some(storage);
             if let Err(e) = state.config.lock().unwrap().save(&cfg) {
@@ -349,8 +357,14 @@ async fn apply_config(
             state.events.library_reloaded();
             Json(ConfigResult { ok: true, error: None, notes: stats.notes, folders: stats.folders })
         }
-        Ok(Err(e)) => Json(ConfigResult::err(e)),
-        Err(_) => Json(ConfigResult::err("处理任务失败")),
+        Ok(Err(e)) => {
+            tracing::warn!("data source switch failed: {e}");
+            Json(ConfigResult::err(e))
+        }
+        Err(_) => {
+            tracing::warn!("data source switch task panicked");
+            Json(ConfigResult::err("处理任务失败"))
+        }
     }
 }
 
@@ -683,7 +697,11 @@ pub(crate) fn persist_note_blocking(
     id: &str,
     content: &str,
 ) -> anyhow::Result<Note> {
-    storage.put_item(&format!("{id}.md"), content)?;
+    tracing::debug!(note_id = id, bytes = content.len(), "persisting note");
+    if let Err(e) = storage.put_item(&format!("{id}.md"), content) {
+        tracing::warn!(note_id = id, "failed to write note to storage: {e}");
+        return Err(e);
+    }
     let mut lib = library.write().unwrap();
     lib.upsert_note(content)?;
     let note = lib.note(id).cloned().ok_or_else(|| anyhow::anyhow!("写入后索引缺失: {id}"))?;

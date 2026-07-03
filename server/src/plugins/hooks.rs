@@ -9,16 +9,17 @@ use std::sync::Arc;
 /// 串联执行（按插件 id 序 = 加载顺序）。阻塞（内部跑 wasm），调用方套 spawn_blocking。
 pub fn run_before_save(host: &Arc<PluginHost>, mut note: Note) -> Note {
     for id in host.before_save_plugins() {
+        tracing::debug!(plugin_id = %id, note_id = %note.id, "running before_save hook");
         let params = serde_json::json!({ "note": note });
         match host.dispatch(&id, "hook.before_save", params, CallClass::Normal) {
             Ok(result) => {
                 let returned = result.get("note").cloned().unwrap_or(serde_json::Value::Null);
                 match serde_json::from_value::<Note>(returned) {
                     Ok(n) => note = n,
-                    Err(e) => eprintln!("[plugin:{id}] before_save 返回的 note 解析失败，跳过该插件: {e}"),
+                    Err(e) => tracing::warn!("[plugin:{id}] failed to parse note returned by before_save, skipping this plugin: {e}"),
                 }
             }
-            Err(e) => eprintln!("[plugin:{id}] before_save 失败，跳过该插件: {e}"),
+            Err(e) => tracing::warn!("[plugin:{id}] before_save failed, skipping this plugin: {e}"),
         }
     }
     note
@@ -63,7 +64,7 @@ mod tests {
         let trim_wasm = examples_dir().join("trim-trailing/plugin.wasm");
         let testbed_wasm = examples_dir().join("testbed/plugin.wasm");
         if !trim_wasm.exists() || !testbed_wasm.exists() {
-            eprintln!("跳过：示例插件未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("skipping: example plugins not built (run plugins-examples/build-wasm.sh first)");
             return;
         }
 

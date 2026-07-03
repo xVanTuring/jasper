@@ -15,6 +15,8 @@
 //!   JASPER_READ_ONLY     只读模式引导（truthy=1/true/yes/on；仅当尚无保存配置时生效）
 //!   JASPER_WEB_DIR       前端静态目录覆盖（设了就从该磁盘目录托管，可热替换前端）；
 //!                             不设时：embed 构建用内嵌资源，否则用源码旁 ../web/dist
+//!   RUST_LOG              日志级别过滤（tracing_subscriber::EnvFilter 语法，如 `jasper=trace`）；
+//!                             不设时默认 `jasper=debug,tower_http=debug,info`
 
 mod api;
 mod cache;
@@ -72,19 +74,31 @@ fn bootstrap_config() -> Option<SourceConfig> {
     }
 }
 
+/// 默认日志过滤：可被 RUST_LOG 覆盖。故意比常见的 `info` 更低一档（含 debug），
+/// 让 HTTP 请求（tower_http）与本项目内部（jasper）的细节默认就可见，排障不用先设环境变量。
+const DEFAULT_LOG_FILTER: &str = "jasper=debug,tower_http=debug,info";
+
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER));
+    tracing_subscriber::fmt().with_env_filter(filter).with_target(true).init();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    init_tracing();
+
     let host = std::env::var("JASPER_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let port = std::env::var("JASPER_PORT").unwrap_or_else(|_| "27583".to_string());
 
-    println!("jasper 启动中…");
+    tracing::info!("jasper starting…");
 
     // Arc 化：与插件宿主共享同一配置库连接
     let config_store = Arc::new(Mutex::new(ConfigStore::open()?));
     // 增量缓存库；打开失败则退化为内存缓存（等同禁用缓存，不影响功能）。
     let cache_store = cache::CacheStore::open().unwrap_or_else(|e| {
-        eprintln!("缓存库打开失败，本次禁用增量缓存: {e}");
-        cache::CacheStore::in_memory().expect("内存缓存初始化失败")
+        tracing::warn!("failed to open cache store, disabling incremental cache for this run: {e}");
+        cache::CacheStore::in_memory().expect("failed to initialize in-memory cache")
     });
     // 已保存配置优先；否则用命令行/环境变量引导
     let cfg = config_store.lock().unwrap().load().or_else(bootstrap_config);
@@ -104,10 +118,11 @@ async fn main() -> Result<()> {
                 &config::source_key(cfg),
             ) {
                 Ok((lib, stats)) => {
-                    println!(
-                        "数据源: {} | 索引: 笔记={} 笔记本={} 资源={} 标签={} 错误={} | 缓存命中={} 拉取={}",
-                        cfg.source_type, stats.notes, stats.folders, stats.resources, stats.tags,
-                        stats.errors, stats.cached, stats.fetched
+                    tracing::info!(
+                        source = %cfg.source_type,
+                        notes = stats.notes, folders = stats.folders, resources = stats.resources,
+                        tags = stats.tags, errors = stats.errors, cached = stats.cached, fetched = stats.fetched,
+                        "index built",
                     );
                     library = lib;
                     storage_opt = Some(storage);
@@ -117,19 +132,19 @@ async fn main() -> Result<()> {
                         store.save(cfg).ok();
                     }
                 }
-                Err(e) => eprintln!("索引失败（进入未配置状态，可在浏览器重新配置）: {e}"),
+                Err(e) => tracing::warn!("indexing failed (entering unconfigured state, reconfigure in the browser): {e}"),
             },
-            Err(e) => eprintln!("数据源无效（进入未配置状态）: {e}"),
+            Err(e) => tracing::warn!("invalid data source (entering unconfigured state): {e}"),
         }
     }
 
     if storage_opt.is_none() {
-        println!("尚未配置数据源 —— 请在浏览器中完成首次配置。");
+        tracing::info!("no data source configured yet — complete first-time setup in the browser.");
     }
 
     let read_only = cfg.as_ref().map(|c| c.read_only).unwrap_or(false);
     if read_only {
-        println!("只读模式已开启：拒绝一切写操作。");
+        tracing::info!("read-only mode enabled: all write operations will be rejected.");
     }
 
     let state = Arc::new(AppState {
@@ -147,8 +162,8 @@ async fn main() -> Result<()> {
 
     let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    println!("\n  ➜  浏览器打开: http://{}/", display_host(&host, &port));
-    println!("  ➜  API 根:     http://{addr}/api/folders\n");
+    println!("\n  ➜  open in browser: http://{}/", display_host(&host, &port));
+    println!("  ➜  API root:        http://{addr}/api/folders\n");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -163,19 +178,24 @@ async fn main() -> Result<()> {
 fn attach_web(router: axum::Router) -> axum::Router {
     if let Some(dir) = std::env::var("JASPER_WEB_DIR").ok().map(PathBuf::from) {
         if !dir.exists() {
-            println!("（提示：JASPER_WEB_DIR={} 不存在）", dir.display());
+            tracing::warn!("JASPER_WEB_DIR={} does not exist", dir.display());
+        } else {
+            tracing::debug!("serving frontend from JASPER_WEB_DIR={}", dir.display());
         }
         return serve_disk(router, dir);
     }
     #[cfg(feature = "embed")]
     {
+        tracing::debug!("serving frontend from embedded assets");
         router.fallback(web_assets::handler)
     }
     #[cfg(not(feature = "embed"))]
     {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../web/dist");
         if !dir.exists() {
-            println!("（提示：前端尚未构建，web/dist 不存在；可先访问 /api/* 验证后端）");
+            tracing::warn!("frontend not built yet, web/dist does not exist; you can still hit /api/* to verify the backend");
+        } else {
+            tracing::debug!("serving frontend from {}", dir.display());
         }
         serve_disk(router, dir)
     }
@@ -194,5 +214,5 @@ fn display_host(host: &str, port: &str) -> String {
 
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
-    println!("\n收到退出信号，关闭服务。");
+    tracing::info!("shutdown signal received, stopping the server.");
 }

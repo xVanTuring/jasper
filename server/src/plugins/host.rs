@@ -312,7 +312,12 @@ impl PluginHost {
             http_response_cap: self.limits.http_response_cap,
             notes,
         };
-        runtime::call_dispatch(&self.engine, &module, ctx, method, params, class, &self.limits)
+        tracing::debug!(plugin_id, method, ?class, "dispatching plugin call");
+        let result = runtime::call_dispatch(&self.engine, &module, ctx, method, params, class, &self.limits);
+        if let Err(e) = &result {
+            tracing::warn!(plugin_id, method, error = %e, "plugin call failed");
+        }
+        result
     }
 
     /// 订阅 before-save 的已启用插件 id（BTreeMap 序 = 加载顺序，spec §8）。
@@ -435,7 +440,7 @@ mod tests {
     fn install_example(host_dir: &std::path::Path, name: &str) -> Option<()> {
         let src = examples_dir().join(name);
         if !src.join("plugin.wasm").exists() {
-            eprintln!("跳过：{name}/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("skipping: {name}/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
             return None;
         }
         let dst = host_dir.join(name);
@@ -561,7 +566,7 @@ mod tests {
     fn host_with_manifest(manifest: &str) -> Option<(tempfile::TempDir, Arc<PluginHost>)> {
         let src = examples_dir().join("testbed/plugin.wasm");
         if !src.exists() {
-            eprintln!("跳过：testbed/plugin.wasm 未构建（先跑 plugins-examples/build-wasm.sh）");
+            eprintln!("skipping: testbed/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
             return None;
         }
         let dir = tempfile::tempdir().unwrap();
