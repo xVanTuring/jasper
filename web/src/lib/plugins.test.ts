@@ -15,7 +15,7 @@ function pluginInfo(over: Partial<PluginInfo>): PluginInfo {
 		capabilities: [],
 		hooks: [],
 		error: null,
-		contributes: { theme: [], storage: [], command: [], toolbar: [], sidebar: [] },
+		contributes: { theme: [], locale: [], storage: [], command: [], toolbar: [], sidebar: [] },
 		settings_schema: {},
 		write_auto_approve: false,
 		...over,
@@ -73,9 +73,9 @@ describe('storageProviders', () => {
 			'fetch',
 			vi.fn(async () =>
 				mockPluginsResp([
-					pluginInfo({ id: 'ok', contributes: { theme: [], storage: [storage], command: [], toolbar: [], sidebar: [] } }),
-					pluginInfo({ id: 'off', enabled: false, contributes: { theme: [], storage: [storage], command: [], toolbar: [], sidebar: [] } }),
-					pluginInfo({ id: 'bad', error: 'x', contributes: { theme: [], storage: [storage], command: [], toolbar: [], sidebar: [] } }),
+					pluginInfo({ id: 'ok', contributes: { theme: [], locale: [], storage: [storage], command: [], toolbar: [], sidebar: [] } }),
+					pluginInfo({ id: 'off', enabled: false, contributes: { theme: [], locale: [], storage: [storage], command: [], toolbar: [], sidebar: [] } }),
+					pluginInfo({ id: 'bad', error: 'x', contributes: { theme: [], locale: [], storage: [storage], command: [], toolbar: [], sidebar: [] } }),
 				]),
 			),
 		)
@@ -94,7 +94,7 @@ describe('editorCommands', () => {
 					pluginInfo({
 						id: 'ai',
 						contributes: {
-							theme: [],
+							theme: [], locale: [],
 							storage: [],
 							command: [{ id: 'polish', title: '优化', icon: 'rich', target: 'backend' }],
 							toolbar: [{ command: 'polish', location: 'note-toolbar' }],
@@ -106,7 +106,7 @@ describe('editorCommands', () => {
 						id: 'off',
 						enabled: false,
 						contributes: {
-							theme: [],
+							theme: [], locale: [],
 							storage: [],
 							command: [{ id: 'x', title: 'X', icon: '', target: 'backend' }],
 							toolbar: [{ command: 'x', location: 'note-toolbar' }],
@@ -117,7 +117,7 @@ describe('editorCommands', () => {
 					pluginInfo({
 						id: 'top',
 						contributes: {
-							theme: [],
+							theme: [], locale: [],
 							storage: [],
 							command: [{ id: 'y', title: 'Y', icon: '', target: 'backend' }],
 							toolbar: [{ command: 'y', location: 'topbar' }],
@@ -145,17 +145,17 @@ describe('sidebarContributions', () => {
 					pluginInfo({
 						id: 'ok',
 						name: 'AI 助手',
-						contributes: { theme: [], storage: [], command: [], toolbar: [], sidebar: [sidebar] },
+						contributes: { theme: [], locale: [], storage: [], command: [], toolbar: [], sidebar: [sidebar] },
 					}),
 					pluginInfo({
 						id: 'off',
 						enabled: false,
-						contributes: { theme: [], storage: [], command: [], toolbar: [], sidebar: [sidebar] },
+						contributes: { theme: [], locale: [], storage: [], command: [], toolbar: [], sidebar: [sidebar] },
 					}),
 					pluginInfo({
 						id: 'bad',
 						error: 'x',
-						contributes: { theme: [], storage: [], command: [], toolbar: [], sidebar: [sidebar] },
+						contributes: { theme: [], locale: [], storage: [], command: [], toolbar: [], sidebar: [sidebar] },
 					}),
 				]),
 			),
@@ -172,7 +172,7 @@ describe('sidebarContributions', () => {
 describe('主题 <link> 注入', () => {
 	it('enabled 插件的主题注入、禁用后移除', async () => {
 		const theme = { id: 'oceanic', name: 'Oceanic', base: 'dark' as const, css: 'assets/o.css' }
-		const withTheme = [pluginInfo({ id: 'th', version: '2.0.0', contributes: { theme: [theme], storage: [], command: [], toolbar: [], sidebar: [] } })]
+		const withTheme = [pluginInfo({ id: 'th', version: '2.0.0', contributes: { theme: [theme], locale: [], storage: [], command: [], toolbar: [], sidebar: [] } })]
 		const fetchMock = vi.fn(async () => mockPluginsResp(withTheme))
 		vi.stubGlobal('fetch', fetchMock)
 		const store = await freshStore()

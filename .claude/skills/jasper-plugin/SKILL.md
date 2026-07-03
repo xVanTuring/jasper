@@ -14,12 +14,15 @@ Jasper 插件 = 一个 zip 包（`.jplug`），含 `manifest.toml` + 可选 `plu
 | 想做的事 | 贡献 | 需要 wasm | 示例模板（`plugins-examples/`） |
 |---|---|---|---|
 | 换肤/换图标 | `[[contributes.theme]]` | 否（纯 CSS） | 参见 spec 附录 A（本仓库无纯主题示例，见 `web/src/themes/`） |
+| 加一门界面语言（法语等） | `[[contributes.locale]]`（0.4） | 否（纯 JSON） | spec 附录 C；夹具 `web/e2e/fixtures/locale.jplug`（生成器 `web/e2e/make-plugin-fixtures.py`） |
 | 保存前改写正文 | `[backend] hooks=["before-save"]` | 是 | `trim-trailing/` |
 | 新文件后端（云盘/协议） | `[[contributes.storage]]` + `host:http` | 是 | `webdav-storage/`（HTTP 系）；`s3-storage`（含 SigV4 签名，在 **jasper-plugins 仓库**） |
 | 编辑器工具栏按钮/一次性动作 | `[[contributes.command]]` + `[[contributes.toolbar]]` | 是 | `ai-polish`（在 **jasper-plugins 仓库**；调 AI + 存密钥；provider 切 anthropic/openai 格式，是「多后端格式用一个 select 切换 + provider 感知纯函数」的范式） |
 | 宿主测试夹具 | 手写 ABI | 是 | `testbed/`（不随发行分发） |
 
-**纯主题插件 MUST NOT 含 wasm**，宿主按零代码信任档加载。含 `[backend]` 的插件安装后**默认禁用**，用户在插件面板点启用=对 capabilities 的授权。
+**纯主题 / 纯语言包插件 MUST NOT 含 wasm**，宿主按零代码信任档加载（安装即自动启用）。含 `[backend]` 的插件安装后**默认禁用**，用户在插件面板点启用=对 capabilities 的授权。
+
+> **语言包插件（0.4）**：`[[contributes.locale]]{code,name,base?,messages}`，`messages` 指向扁平 catalog JSON（`"<msgKey>": "<译文>"`）。key 清单以宿主内置 **en** 目录（`web/src/lib/messages.ts` 的 `en`）为权威；只翻想覆盖的键，其余自动回落 `base`（默认 `en`）。`code` 别用 `en`/`zh`（会被内置顶掉）。装好后语言出现在顶栏 LangPicker。
 
 ## 脚手架（后端插件）
 

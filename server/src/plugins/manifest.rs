@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// 宿主支持的插件 API 版本集合（spec §4）。
-pub const HOST_API_VERSIONS: &[&str] = &["0.1", "0.2", "0.3"];
+pub const HOST_API_VERSIONS: &[&str] = &["0.1", "0.2", "0.3", "0.4"];
 
 /// 内置 widget 词汇表（spec §9.2，0.3 冻结）。
 pub const WIDGET_TYPES: &[&str] = &["chat", "list", "tree", "form", "markdown", "button"];
@@ -48,6 +48,27 @@ pub struct ThemeContribution {
     pub name: String,
     pub base: String, // "light" | "dark"
     pub css: String,
+}
+
+/// 语言包贡献（spec §3.10，0.4 新增）：插件给应用**增加一门界面语言**。
+/// 与主题贡献同构（零代码即可）：`messages` 指向一份 catalog JSON（message key → 译文），
+/// 缺失的 key 回落到 `base`（默认 `en`）再回落宿主内置。宿主经资产端点托管该文件、
+/// 前端注册进 i18n（语言切换器随之多出一项）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocaleContribution {
+    /// 语言代码（如 `fr`、`ja`、`pt-BR`）；语言切换器里存/选的值。
+    pub code: String,
+    /// 该语言的自称显示名（如 `Français`），切换器直接展示。
+    pub name: String,
+    /// 缺失键的回落语言（宿主内置之一）；缺省 `en`。
+    #[serde(default = "default_locale_base")]
+    pub base: String,
+    /// catalog JSON 路径（相对包根）：扁平对象 `{ "<msgKey>": "<译文>" }`。
+    pub messages: String,
+}
+
+fn default_locale_base() -> String {
+    "en".to_string()
 }
 
 /// 存储 provider 贡献（spec §3.9，0.2 新增）。
@@ -96,6 +117,8 @@ pub struct SidebarContribution {
 pub struct Contributes {
     #[serde(default)]
     pub theme: Vec<ThemeContribution>,
+    #[serde(default)]
+    pub locale: Vec<LocaleContribution>,
     #[serde(default)]
     pub storage: Vec<StorageContribution>,
     #[serde(default)]
@@ -165,6 +188,14 @@ pub fn is_valid_id(s: &str) -> bool {
     !b.is_empty()
         && b[0].is_ascii_lowercase() | b[0].is_ascii_digit()
         && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+}
+
+/// 语言代码规则（BCP-47 子集）：字母开头，其后字母/数字/`-`（如 `fr`、`pt-BR`、`zh-Hans`）。
+pub fn is_valid_locale_code(s: &str) -> bool {
+    let b = s.as_bytes();
+    !b.is_empty()
+        && b[0].is_ascii_alphabetic()
+        && b.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'-')
 }
 
 /// 包内相对路径规则：正斜杠、非空、不出根（spec §2）。
@@ -244,6 +275,24 @@ fn validate(m: &Manifest) -> Result<()> {
         }
         if !rel_path_ok(&t.css) {
             bail!("主题 {} 的 css 路径非法: {:?}", t.id, t.css);
+        }
+    }
+    let mut locale_codes = std::collections::HashSet::new();
+    for l in &m.contributes.locale {
+        if !is_valid_locale_code(&l.code) {
+            bail!("语言代码非法: {:?}（如 fr / ja / pt-BR）", l.code);
+        }
+        if !locale_codes.insert(l.code.as_str()) {
+            bail!("语言代码重复: {}", l.code);
+        }
+        if l.name.trim().is_empty() {
+            bail!("语言 {} 缺 name", l.code);
+        }
+        if l.base != "en" && l.base != "zh" {
+            bail!("语言 {} 的 base 须为 en|zh", l.code);
+        }
+        if !rel_path_ok(&l.messages) {
+            bail!("语言 {} 的 messages 路径非法: {:?}", l.code, l.messages);
         }
     }
     for s in &m.contributes.storage {
@@ -382,6 +431,63 @@ pass = { type = "secret" }
         assert_eq!(s.id, "webdav");
         assert_eq!(s.config_schema["pass"].field_type, "secret");
         assert_eq!(s.config_schema["url"].required, Some(true));
+    }
+
+    #[test]
+    fn parses_locale_manifest() {
+        let m = parse(
+            r#"
+id = "lang-fr"
+name = "Français"
+version = "1.0.0"
+apiVersion = "0.4"
+
+[[contributes.locale]]
+code = "fr"
+name = "Français"
+messages = "assets/locales/fr.json"
+
+[[contributes.locale]]
+code = "pt-BR"
+name = "Português (Brasil)"
+base = "en"
+messages = "assets/locales/pt-BR.json"
+"#,
+        )
+        .unwrap();
+        assert!(m.is_zero_code()); // 纯语言包无 backend → 零代码自动启用
+        let ls = &m.contributes.locale;
+        assert_eq!(ls.len(), 2);
+        assert_eq!(ls[0].code, "fr");
+        assert_eq!(ls[0].base, "en"); // 缺省
+        assert_eq!(ls[1].code, "pt-BR");
+
+        let base = "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.4\"\n";
+        // 非法 code
+        assert!(parse(&format!(
+            "{base}[[contributes.locale]]\ncode = \"1fr\"\nname = \"F\"\nmessages = \"x.json\"\n"
+        ))
+        .is_err());
+        // 缺 name
+        assert!(parse(&format!(
+            "{base}[[contributes.locale]]\ncode = \"fr\"\nname = \"\"\nmessages = \"x.json\"\n"
+        ))
+        .is_err());
+        // base 非内置
+        assert!(parse(&format!(
+            "{base}[[contributes.locale]]\ncode = \"fr\"\nname = \"F\"\nbase = \"de\"\nmessages = \"x.json\"\n"
+        ))
+        .is_err());
+        // messages 路径逃逸
+        assert!(parse(&format!(
+            "{base}[[contributes.locale]]\ncode = \"fr\"\nname = \"F\"\nmessages = \"../x.json\"\n"
+        ))
+        .is_err());
+        // code 重复
+        assert!(parse(&format!(
+            "{base}[[contributes.locale]]\ncode = \"fr\"\nname = \"A\"\nmessages = \"a.json\"\n[[contributes.locale]]\ncode = \"fr\"\nname = \"B\"\nmessages = \"b.json\"\n"
+        ))
+        .is_err());
     }
 
     #[test]

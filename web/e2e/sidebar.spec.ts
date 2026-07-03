@@ -27,6 +27,7 @@ const PLUGINS_RESP = {
 			error: null,
 			contributes: {
 				theme: [],
+				locale: [],
 				storage: [],
 				command: [
 					{ id: 'chat', title: 'Chat', icon: '', target: 'backend' },

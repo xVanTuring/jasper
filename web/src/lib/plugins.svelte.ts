@@ -4,12 +4,15 @@
 import {
 	api,
 	IS_DEMO,
+	type LocaleContribution,
 	type PluginInfo,
 	type PluginInstallResult,
 	type SidebarContribution,
 	type StorageContribution,
 } from './api'
 import { registerPluginThemes } from './theme.svelte'
+import { registerPluginLocales, type PluginLocale } from './i18n.svelte'
+import type { MsgKey } from './messages'
 
 /** 设置向导可选的存储 provider（enabled 且无 error 的插件的 contributes.storage 摊平）。 */
 export interface StorageProvider {
@@ -102,6 +105,54 @@ export async function loadPlugins(): Promise<void> {
 	registerPluginThemes(
 		pluginThemes().map((t) => ({ id: t.id, name: t.name, base: t.base })),
 	)
+	// 插件语言包 fetch 目录 + 登记进 i18n（切换器多出该语言；来源消失时回落浏览器默认语言）
+	await syncPluginLocales()
+}
+
+// ---------- 插件语言包（spec §3.10）----------
+// enabled 插件的每个 locale 贡献 = 一份 catalog JSON（message key → 译文），
+// 经资产端点 fetch 后登记进 i18n。fetch/解析失败的单条跳过（不拖垮其它语言）。
+
+/** 当前应在场的语言贡献（含未选中的）。 */
+function localeContributions(): { pluginId: string; version: string; contribution: LocaleContribution }[] {
+	return plugins
+		.filter((p) => p.enabled && !p.error)
+		.flatMap((p) =>
+			(p.contributes.locale ?? []).map((l) => ({
+				pluginId: p.id,
+				version: p.version,
+				contribution: l,
+			})),
+		)
+}
+
+async function syncPluginLocales(): Promise<void> {
+	const wanted = localeContributions()
+	const out: PluginLocale[] = []
+	await Promise.all(
+		wanted.map(async ({ pluginId, version, contribution }) => {
+			try {
+				const url = api.pluginAssetUrl(pluginId, contribution.messages, version)
+				const resp = await fetch(url)
+				if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+				const raw: unknown = await resp.json()
+				if (typeof raw !== 'object' || raw === null) throw new Error('catalog 不是对象')
+				const table: Partial<Record<MsgKey, string>> = {}
+				for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+					if (typeof v === 'string') table[k as MsgKey] = v
+				}
+				out.push({
+					code: contribution.code,
+					name: contribution.name,
+					base: contribution.base === 'zh' ? 'zh' : 'en',
+					messages: table,
+				})
+			} catch (e) {
+				console.warn(`plugin locale "${contribution.code}" (${pluginId}) 加载失败`, e)
+			}
+		}),
+	)
+	registerPluginLocales(out)
 }
 
 export async function installPlugin(file: Blob, force = false): Promise<PluginInstallResult> {

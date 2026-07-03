@@ -1,8 +1,8 @@
-# jasper 插件规范 v0.3（草案）
+# jasper 插件规范 v0.4（草案）
 
 > 状态：**草案，征求确认**。这是给「插件作者」和「宿主实现」照着做的**契约**；方案/路线见 [plugin-design.md](./plugin-design.md)。
 > 规范用词遵循 RFC 2119：**MUST/必须**、**SHOULD/应当**、**MAY/可以**。
-> 本版 `apiVersion = "0.3"`。破坏性改动升 MAJOR，向后兼容的新增升 MINOR。
+> 本版 `apiVersion = "0.4"`。破坏性改动升 MAJOR，向后兼容的新增升 MINOR。
 
 **版本历史**
 
@@ -11,6 +11,7 @@
 | 0.1 | 2026-06-30（冻结） | 基础契约：主题 / 后端 wasm / 前端贡献 / 设置 |
 | 0.2 | 2026-07-02 | 向后兼容新增：`[[contributes.storage]]` 存储 provider（§3.9）、`host:http` 能力（§7）、`storage.*` 方法族（§6.5）、§10 增 `required`/`placeholder`、存储类调用限额修正（§11）、SMB/裸 TCP 非目标声明（§11）、v0.2 决策（§12.1） |
 | 0.3 | 2026-07-02 | 向后兼容新增：`notes:*`/`host:ai` 能力落地（§6.5/§7）、写确认=**提案回传**（§6.5/§7/§11）、`[[contributes.sidebar]]` 扩 `command`/`view`（§3.5）、widget 事件契约钉死（§9.2）、UiNode 交互约定（§9.3）、宿主端点 ui / ai-config / auto-approve（§9.5 新）、图标令牌 +3（§9.1）、§10 删除与宿主托管开关矛盾的示例、v0.3 决策（§12.2） |
+| 0.4 | 2026-07-03 | 向后兼容新增：`[[contributes.locale]]` 语言包贡献（§3.10）——插件给应用**增加一门界面语言**（catalog JSON = message key → 译文，缺失回落 base；零代码即可，同主题信任档）、v0.4 决策（§12.3） |
 
 ---
 
@@ -31,12 +32,13 @@
 | 贡献 | 需要 wasm | 典型例子 |
 |---|---|---|
 | **主题** `[[contributes.theme]]` | 否（纯 CSS） | 换肤、换图标 |
+| **语言包** `[[contributes.locale]]`（0.4） | 否（纯 JSON） | 法语/日语等界面翻译 |
 | **后端钩子/命令** `[backend]` | 是 | 保存前格式化、AI 编排 |
 | **前端贡献** `[[contributes.*]]` | 看情况 | 侧边栏面板、工具栏按钮 |
 | **设置** `[settings.schema]` | 否 | 插件配置项 |
 | **存储 provider** `[[contributes.storage]]`（0.2） | 是 | OneDrive/Dropbox 等云盘、WebDAV 变体 |
 
-- **纯主题插件 MUST NOT 含 wasm**，宿主按“零代码”信任档加载（见 §11）。
+- **纯主题 / 纯语言包插件 MUST NOT 含 wasm**，宿主按“零代码”信任档加载（见 §11）。
 - 含 `[backend]` 的插件 MUST 提供合法 wasm 且声明所需 capabilities。
 
 ---
@@ -175,11 +177,48 @@ pass = { type = "secret", label = "密码" }
 - 宿主把该数据源的 config 在**每次** `storage.*` 调用里传给插件（§6.5）；插件 MUST NOT 自行持久化凭据。
 - **秘密回显不对称**（宿主实现约定）：数据源配置（含 `secret` 字段）随宿主 `GET /api/config` 回显以支持设置页预填——与内置 webdav 密码同姿势；而 `[settings.schema]` 的 secret 值**不回显**（§10）。
 
+### 3.10 `[[contributes.locale]]`（数组，可多个；0.4 新增）
+
+插件给应用**增加一门界面语言**（如法语、日语）。与主题贡献（§3.3）同构：**零代码即可**（无需 `[backend]`），
+宿主按“零代码”信任档加载并自动启用。
+
+| 字段 | 类型 | 必须 | 说明 |
+|---|---|---|---|
+| `code` | string | ✅ | 语言代码，BCP-47 子集（字母开头，其后字母/数字/`-`），如 `fr`、`ja`、`pt-BR`。同插件内唯一；作为语言切换器里存/选的值。**不应**与宿主内置代码（`en`/`zh`）相同——若相同，宿主 MUST 以内置为准、忽略该项（防劫持内置语言） |
+| `name` | string | ✅ | 该语言的**自称显示名**（endonym，如 `Français`）；语言切换器直接展示，不再翻译 |
+| `base` | `"en"`\|`"zh"` | ⬜ | 缺失键的回落语言（宿主内置之一），缺省 `en` |
+| `messages` | string | ✅ | catalog JSON 路径（相对包根，规则同 §2） |
+
+**catalog（`messages` 指向的 JSON）**
+- 一个**扁平对象**：`{ "<msgKey>": "<译文>", … }`。key 取宿主的界面 message key 集合，value 为该语言译文。
+- 宿主的 message key 集合是**宿主内部契约**（非本规范冻结）：作者以宿主内置 `en` 目录为**权威 key 清单**照译；宿主 SHOULD 提供其 `en` 目录供作者取用。
+- **缺失/未知 key 宽容**：catalog 未覆盖的 key MUST 回落到 `base`（再回落宿主内置默认）；catalog 里宿主不认识的 key MUST 被忽略（向前兼容，宿主升级不删旧 key 时旧语言包继续可用）。
+- value 为纯文本，`{name}` 形式的插值占位符 SHOULD 与宿主原文保持一致。
+
+```toml
+# manifest.toml —— 纯语言包（零代码，自动启用）
+id = "lang-fr"
+name = "Français"
+version = "1.0.0"
+apiVersion = "0.4"
+
+[[contributes.locale]]
+code = "fr"
+name = "Français"
+messages = "assets/locales/fr.json"
+```
+```json
+// assets/locales/fr.json —— 只需覆盖想翻的 key，其余自动回落 base(en)
+{ "common.save": "Enregistrer", "topbar.search": "Rechercher des notes…" }
+```
+
+- 宿主实现约定：catalog 经资产端点（§12.1-5 的 `GET /api/plugins/{id}/assets/{path}`）托管，前端 fetch 后注册进 i18n；启用/停用/卸载语言包后语言切换器随之增减，当前所选语言的来源插件消失时 MUST 回落到某内置语言。
+
 ---
 
 ## 4. 版本与兼容
 
-- 宿主 MUST 暴露自身支持的 `apiVersion` 集合（如 `["0.1", "0.2", "0.3"]`）。
+- 宿主 MUST 暴露自身支持的 `apiVersion` 集合（如 `["0.1", "0.2", "0.3", "0.4"]`）。
 - 加载时：若 `manifest.apiVersion` 的 MAJOR 不在宿主支持集，MUST 拒绝并提示。MINOR 更高可加载但宿主 MAY 警告。
 - `minHostVersion` 大于当前宿主版本时 MUST 拒绝。
 - 同 `id` 重复安装：以更高 `version` 覆盖；相等或更低 MUST 询问/拒绝。
@@ -487,9 +526,9 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 ## 11. 安全与资源限制
 
 **信任分档**
-- 纯主题（CSS）/ widget 声明：低风险，默认放行。
+- 纯主题（CSS）/ 纯语言包（JSON catalog）/ widget 声明：低风险，默认放行（语言包只作文本注入进 i18n，不含可执行代码）。
 - 后端 wasm：沙箱 + 能力白名单 + 密钥不下放；安装时 MUST 展示申请的 capabilities 并征得同意。
-- **不支持任意前端 JS / iframe**（本版）。
+- **不支持任意前端 JS / iframe**（本版）。语言包 catalog 是纯数据；其文本经宿主既有的文案渲染路径展示，宿主 SHOULD 对含标记的文案照原文本处理（不因语言包而放宽净化）。
 
 **沙箱与上限（后端每次调用）**
 - 默认零 WASI 能力（无 fs/socket/clock，除非未来显式授权）。
@@ -546,9 +585,12 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 7. **pending create 无 id**（§6.5）：id 批准时生成，插件不可链式写。
 8. **只读模式**：commands/ui/auto-approve/ai-config 的写方法全拦（§9.5）。
 
----
+### 12.3 v0.4 决策（2026-07-03）
 
-## 附录 A：最小主题插件
+1. **语言包扩展点** `[[contributes.locale]]`（§3.10）：应用界面语言可由插件运行时新增（法语/日语等），不再把每门语言都编进主体——与主题贡献同构（零代码、纯数据、自动启用、经资产端点托管）。
+2. **catalog = 扁平 key→译文**：宿主 message key 集合是宿主内部契约（不进本规范冻结清单）；缺失键回落 `base`（默认 `en`）再回落内置，未知键忽略。宿主升级只增不删旧 key 时旧语言包继续可用。
+3. **内置语言不可被劫持**：语言 `code` 与内置 `en`/`zh` 相同者以内置为准、忽略插件项。
+4. **纯数据信任档**：语言包不含可执行代码，与主题 CSS 同属低风险默认放行；不因语言包放宽文案净化（§11）。
 
 ```
 my-theme.jplug
@@ -606,5 +648,33 @@ fn before_save(mut note: Note) -> Result<Note, String> {
         .collect::<Vec<_>>()
         .join("\n");
     Ok(note)
+}
+```
+
+## 附录 C：最小语言包插件（0.4）
+
+```
+lang-fr.jplug
+├── manifest.toml
+└── assets/locales/fr.json
+```
+```toml
+# manifest.toml —— 零代码，安装后自动启用
+id = "lang-fr"
+name = "Français"
+version = "1.0.0"
+apiVersion = "0.4"
+
+[[contributes.locale]]
+code = "fr"
+name = "Français"
+messages = "assets/locales/fr.json"
+```
+```json
+// assets/locales/fr.json —— 只列想翻的 key，其余自动回落 base(en)
+{
+  "common.save": "Enregistrer",
+  "common.cancel": "Annuler",
+  "topbar.search": "Rechercher des notes…"
 }
 ```

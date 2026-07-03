@@ -23,6 +23,11 @@
 - **插件管理 UI**：顶栏面板（仿 ResourcePanel），非设置页内嵌。
 - **限额两档 + CPU-only 墙钟**：Normal（64MiB/fuel 1e9/CPU 2s）、Storage（256MiB/fuel 5e9/CPU 10s）；host_call 的 IO 时间不计墙钟（wasmi fuel 切片 + resumable call 检查点实现）。
 
+### 新增决策（2026-07-03，spec 升 0.4）
+- **语言包扩展点** `[[contributes.locale]]`：应用界面语言可由插件运行时新增（法语/日语等），不把每门语言编进主体。与主题（用例 A）同构——**零代码、纯数据、自动启用、经资产端点托管**，无新端点、无 wasm、无能力。
+- **catalog = 扁平 `message key → 译文`**：宿主 message key 集合是宿主内部契约（不进规范冻结）；缺失键回落 `base`(en|zh) 再回落内置，未知键忽略（宿主只增不删旧 key 时旧语言包继续可用）。作者以宿主内置 `en` 目录为权威 key 清单照译。
+- **落点**：宿主仅 `manifest.rs`（`LocaleContribution` + 校验 + `HOST_API_VERSIONS += 0.4`），`Contributes.locale` 随 `PluginInfo` 透传；前端 i18n 去静态化——current locale 泛化为 `string`、内置 `en`/`zh` 之外挂一张插件语言表（`registerPluginLocales`），`LangPicker` 列内置 + 插件语言。内置 `en`/`zh` 不可被同名 `code` 劫持。
+
 ## 1. 背景与目标
 
 ### 1.1 动机

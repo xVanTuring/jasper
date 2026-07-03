@@ -15,10 +15,11 @@
   } from './lib/api'
   import AuthDialog from './lib/AuthDialog.svelte'
   import { draggingFolder } from './lib/dnd.svelte'
-  import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
+  import { t, getLocale } from './lib/i18n.svelte'
   import Button from './lib/Button.svelte'
   import Icon from './lib/Icon.svelte'
   import ThemePicker from './lib/ThemePicker.svelte'
+  import LangPicker from './lib/LangPicker.svelte'
   import FolderTree from './lib/FolderTree.svelte'
   import TagList from './lib/TagList.svelte'
   import NoteList from './lib/NoteList.svelte'
@@ -564,12 +565,7 @@
       oninput={onSearchInput}
     />
     <div class="topbar-actions">
-      <Button
-        variant="default"
-        label={getLocale() === 'zh' ? '中' : 'EN'}
-        title={t('common.langTitle')}
-        onclick={toggleLocale}
-      />
+      <LangPicker />
       <ThemePicker />
       {#if !IS_DEMO}
         {#if locked}

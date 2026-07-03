@@ -5,8 +5,7 @@
   // 约定提交 + on_success（reload/relogin/saved）。纯逻辑在 settingsSchema.ts（可单测）。
   import { onMount } from 'svelte'
   import { api, type FolderNode } from './api'
-  import { t, getLocale, setLocale } from './i18n.svelte'
-  import type { Locale } from './messages'
+  import { t, getLocale, setLocale, availableLocales, localeName } from './i18n.svelte'
   import Icon from './Icon.svelte'
   import Button from './Button.svelte'
   import SchemaForm from './SchemaForm.svelte'
@@ -295,8 +294,11 @@
         <div class="field">
           <span class="field-label">{resolveLabel(f.label_key)}</span>
           <div class="seg">
-            <button class:on={getLocale() === 'zh'} onclick={() => setLocale('zh' as Locale)}>中文</button>
-            <button class:on={getLocale() === 'en'} onclick={() => setLocale('en' as Locale)}>English</button>
+            {#each availableLocales() as loc (loc.code)}
+              <button class:on={getLocale() === loc.code} onclick={() => setLocale(loc.code)}>
+                {localeName(loc.code)}
+              </button>
+            {/each}
           </div>
         </div>
       {:else if f.type === 'multiline'}

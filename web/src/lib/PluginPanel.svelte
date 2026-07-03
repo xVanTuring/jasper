@@ -154,6 +154,7 @@
   function contribBadges(p: PluginInfo): string[] {
     const out: string[] = []
     if (p.contributes.theme.length) out.push(t('plugins.contrib.themes', { n: p.contributes.theme.length }))
+    if (p.contributes.locale?.length) out.push(t('plugins.contrib.locales', { n: p.contributes.locale.length }))
     if (p.contributes.storage.length) out.push(t('plugins.contrib.storage', { n: p.contributes.storage.length }))
     if (p.contributes.sidebar.length) out.push(t('plugins.contrib.sidebar', { n: p.contributes.sidebar.length }))
     if (p.hooks.length) out.push(t('plugins.contrib.hooks', { n: p.hooks.length }))

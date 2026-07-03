@@ -121,6 +121,14 @@ export interface ThemeContribution {
   css: string // 包内相对路径，经 pluginAssetUrl 取
 }
 
+// 语言包贡献（spec §3.10，0.4）：给应用增加一门界面语言；messages 指向 catalog JSON（相对路径，经资产端点取）。
+export interface LocaleContribution {
+  code: string // 语言代码（fr / ja / pt-BR）
+  name: string // 该语言自称显示名（Français）
+  base: 'en' | 'zh' // 缺失键回落语言
+  messages: string // catalog JSON 包内相对路径
+}
+
 export interface StorageContribution {
   id: string
   name: string
@@ -152,6 +160,7 @@ export interface SidebarContribution {
 
 export interface PluginContributes {
   theme: ThemeContribution[]
+  locale: LocaleContribution[]
   storage: StorageContribution[]
   command: CommandContribution[]
   toolbar: ToolbarContribution[]
