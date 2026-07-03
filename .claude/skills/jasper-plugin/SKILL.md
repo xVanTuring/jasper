@@ -68,6 +68,7 @@ sdk::register! { before_save: before_save, command: command }
 - `sdk::core::model::{Note, Folder, …}` —— 与宿主**共享同一套类型**（serde），无需自定义 DTO。
 - `sdk::host::log(level, msg)` —— 免能力；落宿主 stdout（带 `[plugin:id]` 前缀）。调试首选。
 - `sdk::host::now_ms() -> Result<i64>` —— 免能力；**沙箱唯一的取时钟方式**（见坑 #3）。
+- `sdk::host::system_locale() -> Result<String>` —— 免能力（0.4）；当前 UI 语言代码（`en`/`zh`/`fr`…）。用来本地化插件**自己运行时产出的文字**（chat 回复 / 动态 UI 文案）；与语言包正交（那是翻宿主界面）。未设回落 `en`。native-host 测试用 `set_locale()` 注入。
 - `sdk::host::settings_get(key)` / `settings_set(key, value)` —— 能力 `settings`；插件作用域 KV，secret 值前端不回显。
 - `sdk::host::http_request(&HttpRequest) -> Result<HttpResponse>` —— 能力 `host:http`；宿主代理 HTTP(S)。**非 2xx 也返回 Ok（带 status）**，网络失败才 Err。二进制体 SDK 内部 base64。
 - `sdk::storage::Storage` trait —— 8 方法镜像宿主 `StorageBackend`；`from_config(&Value)` 从数据源配置构造。

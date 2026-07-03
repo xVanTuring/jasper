@@ -32,9 +32,12 @@
   import { loadPlugins, pluginsAvailable, sidebarContributions, type SidebarEntry } from './lib/plugins.svelte'
   import { connectEvents, type ChangeEvent } from './lib/events'
 
-  // 让 <html lang> 跟随当前语言（影响断词/无障碍等）
+  // 让 <html lang> 跟随当前语言（影响断词/无障碍等），并把当前语言持久化到服务端
+  // （启动 + 每次切换）——插件经 host_call system.locale 读「系统语言」用同一值。
   $effect(() => {
-    document.documentElement.lang = getLocale()
+    const l = getLocale()
+    document.documentElement.lang = l
+    if (!IS_DEMO) api.putLocale(l)
   })
 
 

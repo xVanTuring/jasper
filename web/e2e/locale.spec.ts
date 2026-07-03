@@ -46,6 +46,11 @@ test.describe('语言包插件', () => {
 		// catalog 命中的 key → 顶栏搜索占位符切法语（未翻的 key 自动回落 base=en）
 		await expect(search).toHaveAttribute('placeholder', FR_SEARCH)
 
+		// 语言持久化到服务端（插件经 host_call system.locale 读同一值，spec 0.4 §6.5）
+		await expect
+			.poll(async () => (await (await page.request.get('/api/locale')).json()).locale)
+			.toBe('fr')
+
 		// 卸载 → 语言来源消失 → 回落内置语言，占位符复原
 		page.on('dialog', (d) => d.accept())
 		await openPluginPanel(page)

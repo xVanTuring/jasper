@@ -20,6 +20,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 thread_local! {
 	static SETTINGS: RefCell<BTreeMap<String, Value>> = RefCell::new(BTreeMap::new());
+	// system.locale 替身（spec 0.4）：默认 en，用 [`set_locale`] 注入
+	static LOCALE: RefCell<String> = RefCell::new(String::from("en"));
 	// notes.*/ai.complete 替身状态（spec 0.3）：内存笔记库 + 预置 AI 回复 + 写确认开关
 	static NOTES: RefCell<BTreeMap<String, Value>> = RefCell::new(BTreeMap::new());
 	static FOLDERS: RefCell<Vec<Value>> = RefCell::new(Vec::new());
@@ -40,6 +42,11 @@ pub fn set_setting(key: &str, value: Value) {
 /// 测试清场：清空本线程的 settings。
 pub fn clear_settings() {
 	SETTINGS.with(|s| s.borrow_mut().clear());
+}
+
+/// 测试注入：预置 `system.locale` 返回的 UI 语言（等价于用户选了某界面语言）。
+pub fn set_locale(code: &str) {
+	LOCALE.with(|l| *l.borrow_mut() = code.to_string());
 }
 
 /// 组一个 core Note 形状的 JSON（与宿主 notes.get 返回逐字段一致），供 [`put_note`] 与断言用。
@@ -117,6 +124,7 @@ pub fn call(method: &str, params: Value) -> Result<Value, PluginError> {
 				.as_millis() as i64;
 			Ok(json!({ "unix_ms": ms }))
 		}
+		"system.locale" => Ok(json!({ "locale": LOCALE.with(|l| l.borrow().clone()) })),
 		"settings.get" => {
 			let key = params
 				.get("key")
@@ -319,6 +327,14 @@ mod tests {
 	fn now_ms_is_sane() {
 		let ms = crate::host::now_ms().unwrap();
 		assert!(ms > 1_600_000_000_000, "unix 毫秒应在 2020 年之后: {ms}");
+	}
+
+	#[test]
+	fn system_locale_through_host_wrapper() {
+		assert_eq!(crate::host::system_locale().unwrap(), "en"); // 默认
+		set_locale("fr");
+		assert_eq!(crate::host::system_locale().unwrap(), "fr");
+		set_locale("en"); // 复位，避免污染同线程其它用例
 	}
 
 	#[test]

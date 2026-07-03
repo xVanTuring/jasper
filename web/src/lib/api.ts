@@ -568,6 +568,19 @@ const httpApi = {
   // notes:write 的「写入免确认」开关（宿主托管，spec §9.5）。
   setPluginAutoApprove: (id: string, enabled: boolean) =>
     sendJson<PluginInfo>(`/api/plugins/${id}/auto-approve`, 'PUT', { enabled }),
+  // 持久化当前 UI 语言到服务端（供插件经 host_call system.locale 读取）。尽力而为：
+  // 只读/未授权时会 4xx——静默忽略（前端展示仍由 localStorage 驱动）。
+  putLocale: async (locale: string): Promise<void> => {
+    try {
+      await fetch('/api/locale', {
+        method: 'PUT',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ locale }),
+      })
+    } catch {
+      /* 网络失败忽略 */
+    }
+  },
   // 宿主级 AI 配置（api_key 回显，与数据源密码同姿势）。
   getAiConfig: () => getJson<AiConfig>('/api/ai/config'),
   saveAiConfig: async (cfg: AiConfig) => {

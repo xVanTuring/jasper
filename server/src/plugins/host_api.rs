@@ -23,6 +23,9 @@ pub fn handle(ctx: &mut HostCtx, method: &str, params: Value) -> Value {
         // 沙箱无时钟（SystemTime 在 wasm32 panic）；签名类协议（S3 SigV4 等）需要当前时间。
         // 与 log 一样免能力：粒度毫秒，泄露面可忽略。
         "time.now" => Ok(json!({ "unix_ms": crate::serialize::now_ms() })),
+        // 当前 UI 语言（免能力，spec 0.4 §6.5）：插件据此本地化自己运行时产出的文字
+        // （chat 回复 / 动态 UI 文案等）。宿主持久化在 config.db，前端切换时同步。
+        "system.locale" => Ok(json!({ "locale": ctx.config.lock().unwrap().ui_locale() })),
         "settings.get" => need(ctx, "settings").and_then(|_| settings_get(ctx, &params)),
         "settings.set" => need(ctx, "settings").and_then(|_| settings_set(ctx, &params)),
         "http.request" => need(ctx, "host:http").and_then(|_| http_request(ctx, &params)),

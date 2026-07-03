@@ -45,6 +45,8 @@ fn dispatch_impl(method: &str, params: Value) -> Result<Value, PluginError> {
             let args = params.get("args").cloned().unwrap_or(Value::Null);
             match id {
                 "echo-args" => Ok(json!({ "echoed": args })),
+                // 免能力读「系统语言」（spec 0.4 §6.5 system.locale）：验证插件运行时能拿到 UI 语言
+                "read-locale" => Ok(json!({ "locale": sdk::host::system_locale()? })),
                 "relay" => {
                     let url = sdk::host::settings_get("target_url")?;
                     let Some(url) = url.as_str().filter(|s| !s.is_empty()) else {
