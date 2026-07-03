@@ -122,17 +122,17 @@
 
         <button
           class="folder"
-          draggable={!!onMoveFolder}
-          ondragstart={onMoveFolder ? (e) => onFolderDragStart(e, f) : undefined}
-          ondragend={onMoveFolder ? endFolderDrag : undefined}
+          draggable={!!onMoveFolder && f.id !== ''}
+          ondragstart={onMoveFolder && f.id !== '' ? (e) => onFolderDragStart(e, f) : undefined}
+          ondragend={onMoveFolder && f.id !== '' ? endFolderDrag : undefined}
           onclick={() => onSelect(f.id)}
         >
           <span class="ic"><Icon name={f.children.length ? 'folder' : 'file'} size={14} /></span>
-          <span class="name">{f.title || t('common.unnamed')}</span>
+          <span class="name">{f.id === '' ? t('tree.unfiled') : f.title || t('common.unnamed')}</span>
           {#if f.note_count > 0}<span class="count">{f.note_count}</span>{/if}
         </button>
 
-        {#if onRenameFolder}
+        {#if onRenameFolder && f.id !== ''}
           <button
             class="rename"
             title={t('common.rename')}

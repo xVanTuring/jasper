@@ -199,7 +199,8 @@
       if (await restoreLastNote()) return
       const first = findFirstWithNotes(folders)
       if (first) {
-        selectFolder(first.id, first.title)
+        // 不传显式 title：合成的「未分类笔记」节点(id=="")后端留空标题，交给 findTitle 按语言取词
+        selectFolder(first.id)
       } else {
         notes = []
         selectedFolderId = null
@@ -251,10 +252,12 @@
   }
 
   function findTitle(list: FolderNode[], id: string): string {
+    // 合成的「未分类笔记」节点（id==""）标题由后端留空，这里按当前语言取词。
+    if (id === '') return t('tree.unfiled')
     for (const f of list) {
       if (f.id === id) return f.title
-      const t = findTitle(f.children, id)
-      if (t) return t
+      const child = findTitle(f.children, id)
+      if (child) return child
     }
     return ''
   }
@@ -363,6 +366,13 @@
       detail = n
       selectedNoteId = n.id
       saveLastNoteId(n.id)
+      // 之前未选中任何笔记本（如空白库）时，把选中态落到笔记实际所在的 parent，
+      // 否则 refreshList 的 selectedFolderId!=null 判断会跳过拉取，新笔记不会出现在列表里。
+      if (!searchMode && selectedFolderId == null) {
+        selectedFolderId = parent // parent 在此分支恒为 ''（未分类笔记）
+        listTitle = t('tree.unfiled')
+      }
+      folders = await api.folders() // 未分类笔记数/笔记本篇数变化
       await refreshList()
     } catch (e) {
       error = `${e}`
@@ -391,6 +401,13 @@
       detail = n
       selectedNoteId = n.id
       saveLastNoteId(n.id)
+      // 之前未选中任何笔记本（如空白库）时，把选中态落到笔记实际所在的 parent，
+      // 否则 refreshList 的 selectedFolderId!=null 判断会跳过拉取，新笔记不会出现在列表里。
+      if (!searchMode && selectedFolderId == null) {
+        selectedFolderId = parent // parent 在此分支恒为 ''（未分类笔记）
+        listTitle = t('tree.unfiled')
+      }
+      folders = await api.folders() // 未分类笔记数/笔记本篇数变化
       await refreshList()
     } catch (e) {
       error = `${e}`

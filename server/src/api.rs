@@ -372,7 +372,15 @@ fn build_folder_tree(lib: &Library, parent_id: &str) -> Vec<FolderNode> {
 
 async fn folders(State(state): State<Arc<AppState>>) -> Json<Vec<FolderNode>> {
     let lib = state.library.read().unwrap();
-    Json(build_folder_tree(&lib, ""))
+    let mut nodes = build_folder_tree(&lib, "");
+    // 未挂在任何笔记本下的笔记（parent_id==""）用一个合成节点表示，放最前面；
+    // id 仍是 ""，前端已有的 selectFolder("")/api.notes("") 直接复用。标题留空，
+    // 由前端按 id==="" 特判取本地化文案（服务端不做 i18n）。
+    let root_count = lib.note_count("");
+    if root_count > 0 {
+        nodes.insert(0, FolderNode { id: String::new(), title: String::new(), note_count: root_count, children: Vec::new() });
+    }
+    Json(nodes)
 }
 
 #[derive(Deserialize)]
@@ -997,5 +1005,34 @@ mod tests {
         let ev = rx.try_recv().expect("写入后应有事件");
         assert_eq!((ev.kind, ev.op), ("note", "upsert"));
         assert_eq!(ev.id, id);
+    }
+
+    async fn folders_json(state: Arc<AppState>) -> serde_json::Value {
+        let req = Request::builder().method("GET").uri("/api/folders").body(Body::empty()).unwrap();
+        let resp = router(state).oneshot(req).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// 没有笔记本归属(parent_id=="")的笔记（Bug: 不能看没有分组的笔记）——
+    /// /api/folders 应合成一个 id=="" 的节点带上根笔记数，前端据此渲染「未分类笔记」入口。
+    #[tokio::test]
+    async fn folders_endpoint_synthesizes_unfiled_node_for_root_notes() {
+        let state = state_with_read_only(false);
+
+        // 空库：没有未分类笔记 → 不出现合成节点
+        assert_eq!(folders_json(state.clone()).await, serde_json::json!([]));
+
+        // 插入一条不属于任何笔记本的笔记
+        let id = "b".repeat(32);
+        let content = serialize::new_note_md(&id, "", "无归属", "正文", false, 0);
+        state.library.write().unwrap().upsert_note(&content).unwrap();
+
+        let nodes = folders_json(state.clone()).await;
+        let arr = nodes.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], "");
+        assert_eq!(arr[0]["note_count"], 1);
+        assert_eq!(arr[0]["children"], serde_json::json!([]));
     }
 }

@@ -119,6 +119,7 @@ const zh = {
 	// 笔记本树
 	'tree.toggle': '展开/折叠',
 	'tree.moveToTop': '移到顶层',
+	'tree.unfiled': '未分类笔记',
 
 	// 资源管理
 	'res.title': '资源管理',
@@ -336,6 +337,7 @@ const en: typeof zh = {
 
 	'tree.toggle': 'Expand/collapse',
 	'tree.moveToTop': 'Move to top level',
+	'tree.unfiled': 'Unfiled notes',
 
 	'res.title': 'Resources',
 	'res.count': '{n} resources',
