@@ -7,7 +7,7 @@
 	import { api, type UiNode } from './api'
 	import type { SidebarEntry } from './plugins.svelte'
 	import { enqueuePendingWrites } from './pendingWrites.svelte'
-	import { t } from './i18n.svelte'
+	import { t, resolveText } from './i18n.svelte'
 	import Button from './Button.svelte'
 	import Icon from './Icon.svelte'
 	import ChatWidget from './ChatWidget.svelte'
@@ -75,7 +75,8 @@
 		if (!command) return null
 		const result = await runCommand(command, { messages, input })
 		const reply = result?.reply
-		return typeof reply === 'string' ? reply : null
+		// reply 可为字符串或 locale map（多语言回复），前端按当前语言挑（spec §9.2）
+		return reply == null ? null : resolveText(reply)
 	}
 
 	// 静态非 chat widget：合成单节点树（command 由贡献声明提供）

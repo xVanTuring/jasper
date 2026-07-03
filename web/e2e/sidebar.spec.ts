@@ -47,9 +47,10 @@ const PLUGINS_RESP = {
 
 const UI_TREE = {
 	ui: {
+		// 文本字段用 locale map（spec §9.2.1）：前端按当前语言挑（e2e 浏览器默认 en → 取 en 值）
 		type: 'markdown',
-		props: { source: '**tools panel**' },
-		children: [{ type: 'button', props: { label: 'Rewrite', command: 'propose' } }],
+		props: { source: { en: '**tools panel**', zh: '**工具面板**' } },
+		children: [{ type: 'button', props: { label: { en: 'Rewrite', zh: '改写' }, command: 'propose' } }],
 	},
 	pending_writes: [],
 }

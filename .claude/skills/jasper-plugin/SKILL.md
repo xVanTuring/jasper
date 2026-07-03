@@ -69,6 +69,7 @@ sdk::register! { before_save: before_save, command: command }
 - `sdk::host::log(level, msg)` —— 免能力；落宿主 stdout（带 `[plugin:id]` 前缀）。调试首选。
 - `sdk::host::now_ms() -> Result<i64>` —— 免能力；**沙箱唯一的取时钟方式**（见坑 #3）。
 - `sdk::host::system_locale() -> Result<String>` —— 免能力（0.4）；当前 UI 语言代码（`en`/`zh`/`fr`…）。用来本地化插件**自己运行时产出的文字**（chat 回复 / 动态 UI 文案）；与语言包正交（那是翻宿主界面）。未设回落 `en`。native-host 测试用 `set_locale()` 注入。
+  - 另一条路（spec §9.2.1）：server-driven UI / 命令 `reply` 的**用户可见文本字段**可直接返回 locale map `{ en, zh, fr }`，前端按当前语言挑——**固定标签**用这个（省一次 host_call）；`system.locale` 留给**生成内容**（不必产每一门）。
 - `sdk::host::settings_get(key)` / `settings_set(key, value)` —— 能力 `settings`；插件作用域 KV，secret 值前端不回显。
 - `sdk::host::http_request(&HttpRequest) -> Result<HttpResponse>` —— 能力 `host:http`；宿主代理 HTTP(S)。**非 2xx 也返回 Ok（带 status）**，网络失败才 Err。二进制体 SDK 内部 base64。
 - `sdk::storage::Storage` trait —— 8 方法镜像宿主 `StorageBackend`；`from_config(&Value)` 从数据源配置构造。

@@ -11,7 +11,7 @@
 | 0.1 | 2026-06-30（冻结） | 基础契约：主题 / 后端 wasm / 前端贡献 / 设置 |
 | 0.2 | 2026-07-02 | 向后兼容新增：`[[contributes.storage]]` 存储 provider（§3.9）、`host:http` 能力（§7）、`storage.*` 方法族（§6.5）、§10 增 `required`/`placeholder`、存储类调用限额修正（§11）、SMB/裸 TCP 非目标声明（§11）、v0.2 决策（§12.1） |
 | 0.3 | 2026-07-02 | 向后兼容新增：`notes:*`/`host:ai` 能力落地（§6.5/§7）、写确认=**提案回传**（§6.5/§7/§11）、`[[contributes.sidebar]]` 扩 `command`/`view`（§3.5）、widget 事件契约钉死（§9.2）、UiNode 交互约定（§9.3）、宿主端点 ui / ai-config / auto-approve（§9.5 新）、图标令牌 +3（§9.1）、§10 删除与宿主托管开关矛盾的示例、v0.3 决策（§12.2） |
-| 0.4 | 2026-07-03 | 向后兼容新增：`[[contributes.locale]]` 语言包贡献（§3.10）——插件给应用**增加一门界面语言**（catalog JSON = message key → 译文，缺失回落 base；零代码即可，同主题信任档）；`system.locale` 免能力 host 方法（§6.5）——插件读**当前 UI 语言**以本地化自己运行时的产出（宿主持久化 UI 语言）、v0.4 决策（§12.3） |
+| 0.4 | 2026-07-03 | 向后兼容新增：`[[contributes.locale]]` 语言包贡献（§3.10）——插件给应用**增加一门界面语言**（catalog JSON = message key → 译文，缺失回落 base；零代码即可，同主题信任档）；`system.locale` 免能力 host 方法（§6.5）——插件读**当前 UI 语言**以本地化自己运行时的产出（宿主持久化 UI 语言）；widget/命令 result 的文本字段可为 **locale map**（§9.2.1）——插件**返回多语言 UI**、前端按当前语言挑、v0.4 决策（§12.3） |
 
 ---
 
@@ -454,9 +454,22 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 
 统一约定：
 - 侧边栏内一切命令调用 MUST 并入 `note_id`（当前选中笔记 id，可为 `null`）。
-- 命令 result 中：`ui`（UiNode）→ 替换面板树（动态模式）；`reply`（string）→ 追加进 chat；其余键宿主忽略（向前兼容）。
+- 命令 result 中：`ui`（UiNode）→ 替换面板树（动态模式）；`reply`（string 或 §9.2.1 的 locale map）→ 追加进 chat；其余键宿主忽略（向前兼容）。
 - HTTP 响应顶层 `pending_writes`（§9.5）交给宿主确认弹窗，与 widget 无关。
 - 未来按需扩词汇表（升 MINOR）。
+
+#### 9.2.1 可本地化文本字段（0.4）
+
+以上 widget 里**面向用户的文本字段**——`markdown.source`、`button.label`、`form.submit_label`、`chat.placeholder`、`list.items[].title`/`subtitle`、`tree.nodes[].title`、命令 result 的 `reply`——**MAY 是纯字符串，或一张 locale map** `{ [locale]: string }`（键为语言代码，同 §3.10 的 `code`）。这样插件可**返回多语言 UI**，由宿主/前端按当前 UI 语言挑合适的一门显示。
+
+```json
+{ "type": "button", "props": { "label": { "en": "Save", "zh": "保存", "fr": "Enregistrer" }, "command": "save" } }
+```
+
+- 宿主解析规则：纯字符串原样用；locale map 按**当前 UI 语言**取值，缺失回落链 **当前语言 → `en` → `zh` → 任意首个非空 → 空串**。切换语言即时重解析（无需插件重算）。
+- 非文本字段（`command`/`icon`/`id`/`args`/`fields` 等）**不**本地化，仍是原类型。
+- 与 `system.locale`（§6.5）**互补**：固定标签用「返回多语言、前端挑」最省事；运行时生成的文字（如 AI 回复正文）用 `system.locale` 只产一门。二者可在同一插件并用。
+- 键用语言代码（`en`/`zh`/`fr`…）；用户装了对应语言包时（§3.10）该语言也会被选中。宿主对未知键宽容忽略。
 
 ### 9.3 server-driven UI 声明树
 
@@ -598,6 +611,7 @@ provider = { type = "select", options = ["claude", "openai"], default = "claude"
 3. **内置语言不可被劫持**：语言 `code` 与内置 `en`/`zh` 相同者以内置为准、忽略插件项。
 4. **纯数据信任档**：语言包不含可执行代码，与主题 CSS 同属低风险默认放行；不因语言包放宽文案净化（§11）。
 5. **`system.locale`（免能力 host 方法）**：与语言包正交——语言包翻宿主界面，`system.locale` 让**任意插件**读当前 UI 语言以本地化自己运行时的产出（chat 回复 / 动态 UI 文案等）。宿主**持久化** UI 语言（jasper 存 config.db，`GET/PUT /api/locale`；前端切换/启动时同步；未设回落 `en`）。这是「插件自己运行时的多语言」的落点，不属于语言包特性。
+6. **返回多语言 UI**（§9.2.1）：widget/命令 result 的用户可见文本字段可为 locale map `{ [locale]: string }`，宿主/前端按当前语言挑（回落 当前→en→zh→首个非空→''）。与 `system.locale` 互补——固定标签用「返回多语言」（省一次 host_call），生成内容用 `system.locale`（不必产每一门）。纯前端解析，服务端把 `ui`/`reply` 原样透传，无端点/无格式变更。
 
 ```
 my-theme.jplug

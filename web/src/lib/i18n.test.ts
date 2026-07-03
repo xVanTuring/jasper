@@ -8,6 +8,7 @@ import {
 	registerPluginLocales,
 	availableLocales,
 	localeName,
+	resolveText,
 } from './i18n.svelte'
 
 beforeEach(() => {
@@ -77,6 +78,41 @@ describe('locale state', () => {
 		expect(getLocale()).toBe('en')
 		toggleLocale()
 		expect(getLocale()).toBe('zh')
+	})
+})
+
+describe('resolveText (localizable runtime UI text)', () => {
+	it('passes plain strings through', () => {
+		setLocale('zh')
+		expect(resolveText('hello')).toBe('hello')
+	})
+
+	it('picks the current locale from a map', () => {
+		setLocale('zh')
+		expect(resolveText({ en: 'Save', zh: '保存' })).toBe('保存')
+		setLocale('en')
+		expect(resolveText({ en: 'Save', zh: '保存' })).toBe('Save')
+	})
+
+	it('falls back current → en → zh → first non-empty', () => {
+		setLocale('zh')
+		expect(resolveText({ en: 'OnlyEn' })).toBe('OnlyEn') // 无 zh → en
+		expect(resolveText({ fr: 'Bonjour' })).toBe('Bonjour') // 无 zh/en → 首个非空
+	})
+
+	it('resolves plugin locale, then its base via en', () => {
+		registerPluginLocales([{ code: 'fr', name: 'Français', base: 'en', messages: {} }])
+		setLocale('fr')
+		expect(resolveText({ fr: 'Bonjour', en: 'Hello' })).toBe('Bonjour')
+		expect(resolveText({ en: 'Hello' })).toBe('Hello') // 无 fr → en
+	})
+
+	it('is defensive on empties/non-objects', () => {
+		setLocale('zh')
+		expect(resolveText({})).toBe('')
+		expect(resolveText(undefined)).toBe('')
+		expect(resolveText(null)).toBe('')
+		expect(resolveText(42)).toBe('42')
 	})
 })
 

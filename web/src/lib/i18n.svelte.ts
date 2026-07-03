@@ -107,6 +107,30 @@ export function registerPluginLocales(list: PluginLocale[]) {
 	if (!isKnownLocale(current)) setLocale(browserDefault())
 }
 
+/**
+ * 解析可本地化的**运行时 UI 文本**（spec §9.2）：插件在 server-driven UI / chat 回复里，
+ * 文本字段可以是纯字符串，或一张 `{ [locale]: string }` 表——由前端按当前语言挑。
+ * 纯字符串原样返回；locale map 回落链：当前语言 → en → zh → 任意首个非空 → ''。
+ * 读 `current`（rune）→ 切换语言即时重解析，无需插件重算。
+ */
+export function resolveText(v: unknown): string {
+	if (typeof v === 'string') return v
+	if (v !== null && typeof v === 'object') {
+		const m = v as Record<string, unknown>
+		const at = (k: string): string | undefined => (typeof m[k] === 'string' ? (m[k] as string) : undefined)
+		for (const k of [current, 'en', 'zh']) {
+			const s = at(k)
+			if (s !== undefined) return s
+		}
+		for (const k in m) {
+			const s = at(k)
+			if (s) return s // 首个非空
+		}
+		return ''
+	}
+	return v == null ? '' : String(v)
+}
+
 /** 在某语言里查一个 key：内置直查；插件语言查 catalog，缺失回落其 base。 */
 function lookup(code: string, key: MsgKey): string | undefined {
 	if (isBuiltin(code)) return messages[code][key]

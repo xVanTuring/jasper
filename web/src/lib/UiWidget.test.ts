@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, fireEvent } from '@testing-library/svelte'
 import UiWidget from './UiWidget.svelte'
 import type { UiNode } from './api'
+import { setLocale } from './i18n.svelte'
 
 const noop = vi.fn(async () => null)
 
@@ -69,6 +70,40 @@ describe('UiWidget', () => {
 		await fireEvent.input(input, { target: { value: 'jasper' } })
 		await fireEvent.click(getByText('保存'))
 		expect(onCommand).toHaveBeenCalledWith('save', { values: { name: 'jasper' } })
+	})
+
+	it('文本字段本地化：locale map 按当前语言挑（markdown/button/list/tree）', () => {
+		setLocale('zh')
+		const node: UiNode = {
+			type: 'markdown',
+			props: { source: { en: 'English', zh: '中文正文' } },
+			children: [
+				{ type: 'button', props: { label: { en: 'Save', zh: '保存' }, command: 'c' } },
+				{ type: 'list', props: { items: [{ id: '1', title: { en: 'one', zh: '一' } }] } },
+				{ type: 'tree', props: { nodes: [{ id: 'a', title: { en: 'root', zh: '根' } }] } },
+			],
+		}
+		const { container } = render(UiWidget, { props: { node, onCommand: noop } })
+		const txt = container.textContent ?? ''
+		expect(txt).toContain('中文正文')
+		expect(txt).toContain('保存')
+		expect(txt).toContain('一')
+		expect(txt).toContain('根')
+		expect(txt).not.toContain('English') // 未选中的语言不出现
+		setLocale('en')
+	})
+
+	it('缺当前语言的 map 回落 en；纯字符串照旧', () => {
+		setLocale('zh') // map 只有 en → 回落 en
+		const node: UiNode = {
+			type: 'button',
+			props: { label: { en: 'OnlyEnglish' }, command: 'c' },
+			children: [{ type: 'button', props: { label: 'PlainString', command: 'c2' } }],
+		}
+		const { container } = render(UiWidget, { props: { node, onCommand: noop } })
+		expect(container.textContent).toContain('OnlyEnglish')
+		expect(container.textContent).toContain('PlainString')
+		setLocale('en')
 	})
 
 	it('tree 节点递归渲染并可点击', async () => {
