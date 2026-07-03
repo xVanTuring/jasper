@@ -15,10 +15,11 @@
   } from './lib/api'
   import AuthDialog from './lib/AuthDialog.svelte'
   import { draggingFolder } from './lib/dnd.svelte'
-  import { t, getLocale, toggleLocale } from './lib/i18n.svelte'
+  import { t, getLocale } from './lib/i18n.svelte'
   import Button from './lib/Button.svelte'
   import Icon from './lib/Icon.svelte'
   import ThemePicker from './lib/ThemePicker.svelte'
+  import LangPicker from './lib/LangPicker.svelte'
   import FolderTree from './lib/FolderTree.svelte'
   import TagList from './lib/TagList.svelte'
   import NoteList from './lib/NoteList.svelte'
@@ -31,9 +32,12 @@
   import { loadPlugins, pluginsAvailable, sidebarContributions, type SidebarEntry } from './lib/plugins.svelte'
   import { connectEvents, type ChangeEvent } from './lib/events'
 
-  // 让 <html lang> 跟随当前语言（影响断词/无障碍等）
+  // 让 <html lang> 跟随当前语言（影响断词/无障碍等），并把当前语言持久化到服务端
+  // （启动 + 每次切换）——插件经 host_call system.locale 读「系统语言」用同一值。
   $effect(() => {
-    document.documentElement.lang = getLocale()
+    const l = getLocale()
+    document.documentElement.lang = l
+    if (!IS_DEMO) api.putLocale(l)
   })
 
 
@@ -564,12 +568,7 @@
       oninput={onSearchInput}
     />
     <div class="topbar-actions">
-      <Button
-        variant="default"
-        label={getLocale() === 'zh' ? '中' : 'EN'}
-        title={t('common.langTitle')}
-        onclick={toggleLocale}
-      />
+      <LangPicker />
       <ThemePicker />
       {#if !IS_DEMO}
         {#if locked}

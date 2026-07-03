@@ -249,6 +249,19 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// 当前 UI 语言（前端在切换/启动时持久化到此；插件经免能力的 host_call `system.locale`
+    /// 读取「系统语言」，spec 0.4 §6.5）。未设置时回落 `"en"`，保证插件总能拿到有效代码。
+    pub fn ui_locale(&self) -> String {
+        match self.setting("ui_locale") {
+            Some(s) if !s.trim().is_empty() => s,
+            _ => "en".to_string(),
+        }
+    }
+
+    pub fn set_ui_locale(&self, locale: &str) -> Result<()> {
+        self.set_setting("ui_locale", locale)
+    }
+
     /// 读宿主级 AI 配置；未配置的键为空串（provider 为空 = 未配置）。
     pub fn ai_config(&self) -> AiConfig {
         AiConfig {
@@ -475,6 +488,16 @@ mod tests {
         assert_eq!(cfg.base_url, "http://127.0.0.1:11434/v1");
         assert_eq!(cfg.api_key, "sk-test");
         assert_eq!(cfg.model, "qwen3");
+    }
+
+    #[test]
+    fn ui_locale_round_trips() {
+        let store = ConfigStore::in_memory().unwrap();
+        assert_eq!(store.ui_locale(), "en"); // 未设置回落 en
+        store.set_ui_locale("fr").unwrap();
+        assert_eq!(store.ui_locale(), "fr");
+        store.set_ui_locale("").unwrap(); // 空值也回落 en（不返回空串给插件）
+        assert_eq!(store.ui_locale(), "en");
     }
 
     #[test]

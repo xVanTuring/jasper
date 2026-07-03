@@ -79,6 +79,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/config", get(get_config).put(apply_config))
         // 服务器驱动的设置描述符（分区目录 + 字段 schema + 当前值 + 动作）：前端通用渲染器据此渲染设置面板
         .route("/api/settings/schema", get(settings_schema))
+        // UI 语言持久化（前端切换/启动时写）：插件经免能力 host_call `system.locale` 读同一值
+        .route("/api/locale", get(get_locale).put(put_locale))
         // 访问鉴权（access control）：登录取 token / 登出 / 读写访问控制设置
         .route("/api/auth/login", post(auth_login))
         .route("/api/auth/logout", post(auth_logout))
@@ -123,7 +125,8 @@ async fn guard_read_only(State(state): State<Arc<AppState>>, req: Request, next:
     );
     let exempt = matches!(
         req.uri().path(),
-        "/api/config" | "/api/auth/login" | "/api/auth/logout" | "/api/auth/settings"
+        // `/api/locale` 是 UI 偏好而非库数据：只读态也允许 owner 持久化语言（鉴权守卫照常）。
+        "/api/config" | "/api/locale" | "/api/auth/login" | "/api/auth/logout" | "/api/auth/settings"
     );
     if is_write && !exempt && state.read_only.load(Ordering::Relaxed) {
         return (
@@ -396,6 +399,30 @@ async fn status(
         passwordless_read,
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+#[derive(Deserialize)]
+struct LocaleReq {
+    locale: String,
+}
+
+/// GET /api/locale —— 当前持久化的 UI 语言（插件经 host_call `system.locale` 读同一值）。
+async fn get_locale(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let locale = state.config.lock().unwrap().ui_locale();
+    Json(serde_json::json!({ "locale": locale }))
+}
+
+/// PUT /api/locale —— 前端切换/启动时持久化 UI 语言（偏好，非库数据）。
+/// 免只读守卫（owner 只读态也能设）；鉴权守卫照常（设了密码时匿名不可改系统语言）。
+async fn put_locale(State(state): State<Arc<AppState>>, Json(req): Json<LocaleReq>) -> Response {
+    match state.config.lock().unwrap().set_ui_locale(req.locale.trim()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "internal", "message": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_config(State(state): State<Arc<AppState>>) -> Json<SourceConfig> {
@@ -1735,6 +1762,24 @@ mod tests {
         // /api/config 豁免（PUT 不应被守卫拦成 403）
         assert_ne!(
             status_of(state_with_read_only(true), "PUT", "/api/config", "{\"source_type\":\"\"}").await,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[tokio::test]
+    async fn locale_persist_round_trip_and_read_only_exempt() {
+        let state = state_with_read_only(false);
+        // 默认回落 en
+        let body = body_json(send(state.clone(), "GET", "/api/locale", "", None).await).await;
+        assert_eq!(body["locale"], "en");
+        // 写入 fr → 204，回读 fr
+        let resp = send(state.clone(), "PUT", "/api/locale", "{\"locale\":\"fr\"}", None).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let body = body_json(send(state, "GET", "/api/locale", "", None).await).await;
+        assert_eq!(body["locale"], "fr");
+        // 只读态豁免（UI 偏好，不被 guard_read_only 拦成 403）
+        assert_ne!(
+            status_of(state_with_read_only(true), "PUT", "/api/locale", "{\"locale\":\"ja\"}").await,
             StatusCode::FORBIDDEN
         );
     }

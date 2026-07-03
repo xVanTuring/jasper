@@ -21,6 +21,7 @@ const FAKE_PLUGINS = {
 			error: null,
 			contributes: {
 				theme: [],
+				locale: [],
 				storage: [
 					{
 						id: 'cloud',

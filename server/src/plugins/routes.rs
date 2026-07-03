@@ -773,6 +773,68 @@ token = { type = "secret" }
         assert_eq!(st, StatusCode::FORBIDDEN);
     }
 
+    /// system.locale 全链路（spec 0.4 §6.5）：宿主持久化 UI 语言 → 插件免能力读到同一值。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn plugin_reads_system_locale() {
+        let examples =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/testbed");
+        if !examples.join("plugin.wasm").exists() {
+            eprintln!("skipping: testbed/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("testbed");
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::copy(examples.join("plugin.wasm"), dst.join("plugin.wasm")).unwrap();
+        // read-locale 命令无需任何能力（system.locale 免能力）
+        std::fs::write(
+            dst.join("manifest.toml"),
+            r#"
+id = "testbed"
+name = "Testbed"
+version = "0.1.0"
+apiVersion = "0.4"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = []
+
+[[contributes.command]]
+id = "read-locale"
+title = "Read locale"
+target = "backend"
+"#,
+        )
+        .unwrap();
+        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
+        // 前端持久化过的 UI 语言（这里直接写库模拟）
+        config.lock().unwrap().set_ui_locale("fr").unwrap();
+        let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
+        let state = Arc::new(AppState {
+            library: Arc::new(RwLock::new(Library::default())),
+            storage: RwLock::new(None),
+            config,
+            cache: crate::cache::CacheStore::in_memory().unwrap(),
+            read_only: AtomicBool::new(false),
+            auth: crate::auth::AuthState::from_config(&crate::config::AuthConfig::default()),
+            plugins: Some(host),
+            events: crate::events::EventBus::new(),
+        });
+        let (st, _) =
+            send(state.clone(), "POST", "/api/plugins/testbed/enable", b"{\"enabled\":true}".to_vec()).await;
+        assert_eq!(st, StatusCode::OK);
+
+        let (st, body) = send(
+            state.clone(),
+            "POST",
+            "/api/plugins/testbed/commands/read-locale",
+            b"{\"args\":{}}".to_vec(),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["result"]["locale"], "fr"); // 插件读到宿主持久化的 UI 语言
+    }
+
     /// pending_writes 全链路 + ui 端点 + auto-approve 开关（spec 0.3 §9.5）。
     #[tokio::test(flavor = "multi_thread")]
     async fn ui_and_pending_writes_full_chain() {

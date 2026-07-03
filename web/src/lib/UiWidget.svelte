@@ -10,7 +10,7 @@
 	import Icon from './Icon.svelte'
 	import ChatWidget from './ChatWidget.svelte'
 	import Self from './UiWidget.svelte'
-	import { t } from './i18n.svelte'
+	import { t, resolveText } from './i18n.svelte'
 
 	let {
 		node,
@@ -24,17 +24,20 @@
 	const KNOWN = ['chat', 'list', 'tree', 'form', 'markdown', 'button']
 
 	let nodeProps = $derived(node.props ?? {})
+	// 纯字符串字段（命令 id / 图标令牌，不本地化）
 	let str = (k: string): string => (typeof nodeProps[k] === 'string' ? (nodeProps[k] as string) : '')
+	// 可本地化文本字段（string | { [locale]: string }，前端按当前语言挑，spec §9.2）
+	let text = (k: string): string => resolveText(nodeProps[k])
 
 	interface ListItem {
 		id: string
-		title: string
-		subtitle?: string
+		title: unknown // string | locale map
+		subtitle?: unknown
 		icon?: string
 	}
 	interface TreeNode {
 		id: string
-		title: string
+		title: unknown // string | locale map
 		children?: TreeNode[]
 	}
 	let listItems = $derived(
@@ -77,19 +80,20 @@
 		if (!command) return null
 		const result = await onCommand(command, { messages, input })
 		const reply = result?.reply
-		return typeof reply === 'string' ? reply : null
+		// reply 可为字符串或 locale map（多语言回复）；缺省 null（动态模式走 result.ui）
+		return reply == null ? null : resolveText(reply)
 	}
 </script>
 
 {#if KNOWN.includes(node.type)}
 	{#if node.type === 'markdown'}
 		<!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMarkdown 已过 DOMPurify -->
-		<div class="w-md">{@html renderMarkdown(str('source'))}</div>
+		<div class="w-md">{@html renderMarkdown(text('source'))}</div>
 	{:else if node.type === 'button'}
 		<div class="w-btn">
 			<Button
 				icon={str('icon') || undefined}
-				label={str('label')}
+				label={text('label')}
 				disabled={running}
 				onclick={() => void run(str('command'), (nodeProps.args as Record<string, unknown>) ?? {})}
 			/>
@@ -103,7 +107,7 @@
 			}}
 		>
 			<SchemaForm schema={formSchema} bind:values={formValues} errors={formErrors} />
-			<Button type="submit" label={str('submit_label') || t('form.submit')} variant="primary" disabled={running} />
+			<Button type="submit" label={text('submit_label') || t('form.submit')} variant="primary" disabled={running} />
 		</form>
 	{:else if node.type === 'list'}
 		<ul class="w-list">
@@ -112,14 +116,14 @@
 					{#if str('command')}
 						<button class="row" disabled={running} onclick={() => void run(str('command'), { id: item.id })}>
 							{#if item.icon}<Icon name={item.icon} size={14} />{/if}
-							<span class="title">{item.title}</span>
-							{#if item.subtitle}<span class="sub">{item.subtitle}</span>{/if}
+							<span class="title">{resolveText(item.title)}</span>
+							{#if item.subtitle}<span class="sub">{resolveText(item.subtitle)}</span>{/if}
 						</button>
 					{:else}
 						<span class="row plain">
 							{#if item.icon}<Icon name={item.icon} size={14} />{/if}
-							<span class="title">{item.title}</span>
-							{#if item.subtitle}<span class="sub">{item.subtitle}</span>{/if}
+							<span class="title">{resolveText(item.title)}</span>
+							{#if item.subtitle}<span class="sub">{resolveText(item.subtitle)}</span>{/if}
 						</span>
 					{/if}
 				</li>
@@ -132,10 +136,10 @@
 					<li>
 						{#if str('command')}
 							<button class="row" disabled={running} onclick={() => void run(str('command'), { id: n.id })}>
-								{n.title}
+								{resolveText(n.title)}
 							</button>
 						{:else}
-							<span class="row plain">{n.title}</span>
+							<span class="row plain">{resolveText(n.title)}</span>
 						{/if}
 						{#if n.children?.length}
 							{@render branch(n.children)}
@@ -146,7 +150,7 @@
 		{/snippet}
 		{@render branch(treeNodes)}
 	{:else if node.type === 'chat'}
-		<ChatWidget placeholder={str('placeholder')} onSend={chatSend} />
+		<ChatWidget placeholder={text('placeholder')} onSend={chatSend} />
 	{/if}
 
 	{#each node.children ?? [] as child, i (i)}

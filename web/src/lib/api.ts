@@ -121,6 +121,14 @@ export interface ThemeContribution {
   css: string // 包内相对路径，经 pluginAssetUrl 取
 }
 
+// 语言包贡献（spec §3.10，0.4）：给应用增加一门界面语言；messages 指向 catalog JSON（相对路径，经资产端点取）。
+export interface LocaleContribution {
+  code: string // 语言代码（fr / ja / pt-BR）
+  name: string // 该语言自称显示名（Français）
+  base: 'en' | 'zh' // 缺失键回落语言
+  messages: string // catalog JSON 包内相对路径
+}
+
 export interface StorageContribution {
   id: string
   name: string
@@ -152,6 +160,7 @@ export interface SidebarContribution {
 
 export interface PluginContributes {
   theme: ThemeContribution[]
+  locale: LocaleContribution[]
   storage: StorageContribution[]
   command: CommandContribution[]
   toolbar: ToolbarContribution[]
@@ -559,6 +568,19 @@ const httpApi = {
   // notes:write 的「写入免确认」开关（宿主托管，spec §9.5）。
   setPluginAutoApprove: (id: string, enabled: boolean) =>
     sendJson<PluginInfo>(`/api/plugins/${id}/auto-approve`, 'PUT', { enabled }),
+  // 持久化当前 UI 语言到服务端（供插件经 host_call system.locale 读取）。尽力而为：
+  // 只读/未授权时会 4xx——静默忽略（前端展示仍由 localStorage 驱动）。
+  putLocale: async (locale: string): Promise<void> => {
+    try {
+      await fetch('/api/locale', {
+        method: 'PUT',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ locale }),
+      })
+    } catch {
+      /* 网络失败忽略 */
+    }
+  },
   // 宿主级 AI 配置（api_key 回显，与数据源密码同姿势）。
   getAiConfig: () => getJson<AiConfig>('/api/ai/config'),
   saveAiConfig: async (cfg: AiConfig) => {

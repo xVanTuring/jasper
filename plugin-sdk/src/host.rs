@@ -22,6 +22,17 @@ pub fn now_ms() -> Result<i64, PluginError> {
         .ok_or_else(|| PluginError::internal("time.now 响应缺 unix_ms"))
 }
 
+/// `system.locale`：当前 UI 语言代码（如 `en`/`zh`/`fr`；无需能力，spec 0.4）。
+/// 供插件本地化**自己运行时产出的文字**（chat 回复 / 动态 UI 文案等）。宿主把 UI 语言
+/// 持久化在配置里，前端切换时同步；未设置时回落 `"en"`（总返回有效代码）。
+pub fn system_locale() -> Result<String, PluginError> {
+    let r = call_host("system.locale", json!({}))?;
+    r.get("locale")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| PluginError::internal("system.locale 响应缺 locale"))
+}
+
 /// `settings.get`：读插件作用域 KV（能力 `settings`）。键不存在返回 Null。
 pub fn settings_get(key: &str) -> Result<Value, PluginError> {
     let result = call_host("settings.get", json!({ "key": key }))?;
