@@ -414,6 +414,18 @@ impl PluginHost {
                 .unwrap_or(false)
     }
 
+    /// editor.transform 端点守卫：该插件是否为相位 `phase` 声明了 contributes.editor（spec §3.7/§6.5）。
+    pub fn has_editor_transform(&self, plugin_id: &str, phase: &str) -> bool {
+        let map = self.plugins.read().unwrap();
+        let Some(p) = map.get(plugin_id) else { return false };
+        p.enabled
+            && p.module.is_some()
+            && p.manifest
+                .as_ref()
+                .map(|m| m.contributes.editor.iter().any(|e| e.on == phase))
+                .unwrap_or(false)
+    }
+
     /// 插件目录（资产托管用）；返回前须确认 enabled。
     pub fn asset_root(&self, plugin_id: &str) -> Option<PathBuf> {
         let map = self.plugins.read().unwrap();

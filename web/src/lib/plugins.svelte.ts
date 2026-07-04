@@ -90,6 +90,17 @@ export function editorCommands(): EditorCommand[] {
 	return out
 }
 
+/**
+ * 声明了 input 相位编辑器钩子的插件 id（enabled 且无 error）。源码编辑器在 debounce 输入后
+ * 依次调它们的 editor.transform 改写缓冲（spec §3.7）。多个插件按加载顺序串联。
+ */
+export function editorInputPlugins(): string[] {
+	return plugins
+		// editor 是 0.4 新键：老宿主/伪造响应可能缺它 → `?? []` 兜底，绝不因缺键抛错
+		.filter((p) => p.enabled && !p.error && (p.contributes.editor ?? []).some((e) => e.on === 'input'))
+		.map((p) => p.id)
+}
+
 /** 探测 + 拉取插件列表；同步主题 <link> 注入。demo 构建直接视为不可用。 */
 export async function loadPlugins(): Promise<void> {
 	if (IS_DEMO) {

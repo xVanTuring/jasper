@@ -1,8 +1,11 @@
 // plugins.svelte.ts：探测（含 SPA-fallback 坑）、provider 过滤、主题 <link> 注入。
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { PluginInfo } from './api'
+import type { PluginContributes, PluginInfo } from './api'
 
-function pluginInfo(over: Partial<PluginInfo>): PluginInfo {
+function pluginInfo(
+	over: Partial<Omit<PluginInfo, 'contributes'>> & { contributes?: Partial<PluginContributes> },
+): PluginInfo {
+	const { contributes, ...rest } = over
 	return {
 		id: 'p',
 		name: 'P',
@@ -15,10 +18,11 @@ function pluginInfo(over: Partial<PluginInfo>): PluginInfo {
 		capabilities: [],
 		hooks: [],
 		error: null,
-		contributes: { theme: [], locale: [], storage: [], command: [], toolbar: [], sidebar: [] },
+		// 全键默认 + 按需覆盖（测试只需给关心的贡献键，其余含 editor 默认空数组）
+		contributes: { theme: [], locale: [], storage: [], command: [], toolbar: [], sidebar: [], editor: [], ...contributes },
 		settings_schema: {},
 		write_auto_approve: false,
-		...over,
+		...rest,
 	}
 }
 
@@ -132,6 +136,27 @@ describe('editorCommands', () => {
 		const cmds = store.editorCommands()
 		expect(cmds.map((c) => c.pluginId)).toEqual(['ai'])
 		expect(cmds[0]).toMatchObject({ commandId: 'polish', title: '优化', icon: 'rich' })
+	})
+})
+
+describe('editorInputPlugins', () => {
+	it('只取 enabled 且无 error、声明了 input 相位 editor 钩子的插件 id', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				mockPluginsResp([
+					pluginInfo({ id: 'fmt', contributes: { editor: [{ on: 'input' }] } }),
+					// 只声明 before-save 相位 → 不进 input 列表
+					pluginInfo({ id: 'save-only', contributes: { editor: [{ on: 'before-save' }] } }),
+					// 禁用 / 出错的不计入
+					pluginInfo({ id: 'off', enabled: false, contributes: { editor: [{ on: 'input' }] } }),
+					pluginInfo({ id: 'bad', error: 'x', contributes: { editor: [{ on: 'input' }] } }),
+				]),
+			),
+		)
+		const store = await freshStore()
+		await store.loadPlugins()
+		expect(store.editorInputPlugins()).toEqual(['fmt'])
 	})
 })
 

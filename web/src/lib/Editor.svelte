@@ -6,6 +6,7 @@
   import Button from './Button.svelte'
   import { toggleBlockLines, type BlockKind } from './editor/markdown'
   import type { EditorHandle } from './editor/types'
+  import { editorInputPlugins } from './plugins.svelte'
 
   let {
     value,
@@ -24,6 +25,44 @@
 
   let uploading = $state(0)
   let uploadErr = $state('')
+
+  // ---------- 编辑期插件钩子（spec §3.7 contributes.editor，phase="input"） ----------
+  // 用户输入停顿后，把整段源码依次交给声明了 input 相位的插件的 editor.transform 改写，
+  // 结果保守地替换编辑缓冲。仅源码模式接入（富文本会整篇重排，风险高）。
+  const TRANSFORM_DEBOUNCE_MS = 700
+  let transformTimer: ReturnType<typeof setTimeout> | undefined
+
+  function scheduleTransform() {
+    if (!view || editorInputPlugins().length === 0) return
+    clearTimeout(transformTimer)
+    transformTimer = setTimeout(runTransforms, TRANSFORM_DEBOUNCE_MS)
+  }
+
+  async function runTransforms() {
+    if (!view) return
+    const ids = editorInputPlugins()
+    if (ids.length === 0) return
+    const sent = view.state.doc.toString()
+    const anchor = view.state.selection.main.anchor
+    let out = sent
+    for (const id of ids) {
+      try {
+        // 串联：每个插件吃上一个的结果（任一失败即跳过它，不丢用户输入）
+        out = await api.editorTransform(id, 'input', out)
+      } catch {
+        /* 插件禁用/网络/只读等 → 跳过该插件 */
+      }
+    }
+    if (!view) return
+    // 陈旧保护：等待期间用户又敲了字（当前 doc ≠ 送出的文本）→ 丢弃，绝不覆盖新输入
+    if (view.state.doc.toString() !== sent || out === sent) return
+    // 保守替换整篇 + 把光标夹到等长偏移（变换通常很小，等偏移足够）。
+    // 该 dispatch 非 user event → updateListener 不会再排下一轮变换（天然防环）。
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: out },
+      selection: { anchor: Math.min(anchor, out.length) },
+    })
+  }
 
   // 在光标处插入文本（替换选区），插入后聚焦并把光标移到末尾。
   function insertAtCursor(text: string) {
@@ -151,7 +190,12 @@
         EditorView.lineWrapping,
         ...(dark ? [oneDark] : []),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) onChange(u.state.doc.toString())
+          if (!u.docChanged) return
+          onChange(u.state.doc.toString())
+          // 仅在**真实用户输入**（打字/删除/粘贴文本）后排编辑期变换——排除 setValue/工具栏
+          // 等程序化 dispatch（含变换自身的回写），避免打开笔记/外部同步时误触发或成环。
+          if (u.transactions.some((tr) => tr.isUserEvent('input') || tr.isUserEvent('delete')))
+            scheduleTransform()
         }),
         // 粘贴/拖拽文件即上传为资源；只有确实含文件时才拦截默认行为
         EditorView.domEventHandlers({
@@ -190,7 +234,10 @@
     return out
   }
 
-  onDestroy(() => view?.destroy())
+  onDestroy(() => {
+    clearTimeout(transformTimer)
+    view?.destroy()
+  })
 </script>
 
 <div class="editor-col">

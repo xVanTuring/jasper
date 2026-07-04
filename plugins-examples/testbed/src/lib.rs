@@ -133,6 +133,13 @@ fn dispatch_impl(method: &str, params: Value) -> Result<Value, PluginError> {
                 other => Err(PluginError::not_found(format!("未知 view: {other}"))),
             }
         }
+        // 编辑期文本变换（spec §3.7/§6.5 editor.transform）：可观测的确定性变换——
+        // 标出相位 + 全大写，供宿主/前端链路断言。手写 ABI，不经 register! 的 editor 槽。
+        "editor.transform" => {
+            let phase = params.get("phase").and_then(Value::as_str).unwrap_or("");
+            let text = params.get("text").and_then(Value::as_str).unwrap_or("");
+            Ok(json!({ "text": format!("[{phase}] {}", text.to_uppercase()) }))
+        }
         other => Err(PluginError::unsupported(format!("未知方法: {other}"))),
     }
 }

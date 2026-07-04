@@ -46,38 +46,43 @@ mod rand_shim {
 /// - `storage`：impl [`storage::Storage`] 的类型
 /// - `command`：`fn(&str /* 命令 id */, Value /* args */) -> Result<Value, PluginError>`
 /// - `ui`：`fn(&str /* view */, Value /* state */) -> Result<Value, PluginError>`（返回 UiNode 树，spec §9.3）
+/// - `editor`：`fn(&str /* phase: before-save|input */, String /* text */) -> Result<String, PluginError>`
+///   （编辑期文本变换，`contributes.editor` → `editor.transform`，spec §3.7/§6.5）
 #[macro_export]
 macro_rules! register {
     ( $($rest:tt)* ) => {
-        $crate::__register_accum! { hook = (), storage = (), command = (), ui = (); $($rest)* }
+        $crate::__register_accum! { hook = (), storage = (), command = (), ui = (), editor = (); $($rest)* }
     };
 }
 
-// 累积器：按键收集四个可选槽位，与书写顺序无关。
+// 累积器：按键收集五个可选槽位，与书写顺序无关。
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __register_accum {
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); before_save: $f:path $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($f), storage = ($($s)?), command = ($($c)?), ui = ($($u)?); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?), editor = ($($e:path)?); before_save: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($f), storage = ($($s)?), command = ($($c)?), ui = ($($u)?), editor = ($($e)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); storage: $t:ty $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($($h)?), storage = ($t), command = ($($c)?), ui = ($($u)?); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?), editor = ($($e:path)?); storage: $t:ty $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($t), command = ($($c)?), ui = ($($u)?), editor = ($($e)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); command: $f:path $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($f), ui = ($($u)?); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?), editor = ($($e:path)?); command: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($f), ui = ($($u)?), editor = ($($e)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); ui: $f:path $(, $($rest:tt)*)? ) => {
-        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($f); $($($rest)*)? }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?), editor = ($($e:path)?); ui: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($f), editor = ($($e)?); $($($rest)*)? }
     };
-    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?); ) => {
-        $crate::__register_dispatch! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($($u)?) }
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?), editor = ($($e:path)?); editor: $f:path $(, $($rest:tt)*)? ) => {
+        $crate::__register_accum! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($($u)?), editor = ($f); $($($rest)*)? }
+    };
+    ( hook = ($($h:path)?), storage = ($($s:ty)?), command = ($($c:path)?), ui = ($($u:path)?), editor = ($($e:path)?); ) => {
+        $crate::__register_dispatch! { hook = ($($h)?), storage = ($($s)?), command = ($($c)?), ui = ($($u)?), editor = ($($e)?) }
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __register_dispatch {
-    ( hook = ($($hook:path)?), storage = ($($st:ty)?), command = ($($cmd:path)?), ui = ($($ui:path)?) ) => {
+    ( hook = ($($hook:path)?), storage = ($($st:ty)?), command = ($($cmd:path)?), ui = ($($ui:path)?), editor = ($($editor:path)?) ) => {
         // 业务路由：storage.* 方法族优先，其余按 method 匹配。native 下仅供测试。
         #[allow(dead_code)]
         fn __jasper_dispatch(
@@ -132,6 +137,26 @@ macro_rules! __register_dispatch {
                             $crate::serde_json::Value,
                         ) -> ::std::result::Result<$crate::serde_json::Value, $crate::PluginError> = $ui;
                         render(&view, state)
+                    }
+                )?
+                $(
+                    "editor.transform" => {
+                        let phase = params
+                            .get("phase")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let text = params
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let transform: fn(
+                            &str,
+                            String,
+                        ) -> ::std::result::Result<String, $crate::PluginError> = $editor;
+                        let out = transform(&phase, text)?;
+                        Ok($crate::serde_json::json!({ "text": out }))
                     }
                 )?
                 other => Err($crate::PluginError::unsupported(format!("未知方法: {other}"))),
@@ -229,6 +254,29 @@ mod ui_slot_tests {
 
         // 未挂 before_save → 该方法落到 unsupported
         let e = __jasper_dispatch("hook.before_save", json!({ "note": null })).unwrap_err();
+        assert_eq!(e.code, "unsupported");
+    }
+}
+
+#[cfg(test)]
+mod editor_slot_tests {
+    use crate::PluginError;
+    use serde_json::json;
+
+    // 编辑期变换：把文本连同相位打成可观测的结果
+    fn transform(phase: &str, text: String) -> Result<String, PluginError> {
+        Ok(format!("[{phase}] {}", text.to_uppercase()))
+    }
+
+    crate::register! { editor: transform }
+
+    #[test]
+    fn dispatch_routes_editor_transform() {
+        let r = __jasper_dispatch("editor.transform", json!({ "phase": "input", "text": "hi there" })).unwrap();
+        assert_eq!(r["text"], "[input] HI THERE");
+
+        // 未挂 command → 落到 unsupported（证明只注册了 editor 槽）
+        let e = __jasper_dispatch("command", json!({ "id": "x" })).unwrap_err();
         assert_eq!(e.code, "unsupported");
     }
 }

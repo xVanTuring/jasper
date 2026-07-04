@@ -21,7 +21,7 @@
 		onCommand: (command: string, args: Record<string, unknown>) => Promise<Record<string, unknown> | null>
 	} = $props()
 
-	const KNOWN = ['chat', 'list', 'tree', 'form', 'markdown', 'button']
+	const KNOWN = ['chat', 'list', 'tree', 'form', 'markdown', 'button', 'checkbox', 'select', 'divider', 'heading']
 
 	let nodeProps = $derived(node.props ?? {})
 	// 纯字符串字段（命令 id / 图标令牌，不本地化）
@@ -51,10 +51,31 @@
 	let formSchema = $derived((nodeProps.fields ?? {}) as Schema)
 	let formValues = $state<FieldValues>({})
 	let formErrors = $state<Partial<Record<string, FieldError>>>({})
+
+	// select widget：options 可为 string[] 或 {value,label}[]（label 可本地化）
+	interface SelectOption {
+		value: string
+		label: unknown // string | locale map
+	}
+	let selectOptions = $derived(
+		Array.isArray(nodeProps.options)
+			? (nodeProps.options as (string | { value: unknown; label?: unknown })[])
+					.filter((o) => o != null)
+					.map((o) =>
+						typeof o === 'string' ? { value: o, label: o } : { value: String(o.value), label: o.label ?? o.value },
+					)
+			: [],
+	)
+
+	// checkbox/select 的本地反馈值（树替换后按 props 重置，同 form）
+	let checkboxChecked = $state(false)
+	let selectValue = $state('')
 	$effect(() => {
 		// 树替换后重置表单值（以 props.values 优先，缺省用 schema 默认值）
 		formValues = { ...defaultValues(formSchema), ...((nodeProps.values as FieldValues) ?? {}) }
 		formErrors = {}
+		checkboxChecked = nodeProps.checked === true
+		selectValue = typeof nodeProps.value === 'string' ? nodeProps.value : ''
 	})
 
 	let running = $state(false)
@@ -151,6 +172,44 @@
 		{@render branch(treeNodes)}
 	{:else if node.type === 'chat'}
 		<ChatWidget placeholder={text('placeholder')} onSend={chatSend} />
+	{:else if node.type === 'checkbox'}
+		<label class="w-check">
+			<input
+				type="checkbox"
+				checked={checkboxChecked}
+				disabled={running}
+				onchange={(e) => {
+					checkboxChecked = e.currentTarget.checked
+					void run(str('command'), {
+						...((nodeProps.args as Record<string, unknown>) ?? {}),
+						checked: checkboxChecked,
+					})
+				}}
+			/>
+			<span>{text('label')}</span>
+		</label>
+	{:else if node.type === 'select'}
+		<label class="w-select">
+			{#if text('label')}<span class="lbl">{text('label')}</span>{/if}
+			<select
+				disabled={running}
+				value={selectValue}
+				onchange={(e) => {
+					selectValue = e.currentTarget.value
+					void run(str('command'), { value: selectValue })
+				}}
+			>
+				{#each selectOptions as opt (opt.value)}
+					<option value={opt.value}>{resolveText(opt.label)}</option>
+				{/each}
+			</select>
+		</label>
+	{:else if node.type === 'divider'}
+		<hr class="w-divider" />
+	{:else if node.type === 'heading'}
+		<div class="w-heading" data-level={typeof nodeProps.level === 'number' ? nodeProps.level : 2}>
+			{text('text')}
+		</div>
 	{/if}
 
 	{#each node.children ?? [] as child, i (i)}
@@ -217,5 +276,55 @@
 	.row .sub {
 		color: var(--text-dim);
 		font-size: 12px;
+	}
+	.w-check {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 6px 0;
+		font-size: 13px;
+		cursor: pointer;
+	}
+	.w-check input {
+		cursor: pointer;
+	}
+	.w-select {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		margin: 6px 0;
+		font-size: 13px;
+	}
+	.w-select .lbl {
+		color: var(--text-dim);
+		font-size: 12px;
+	}
+	.w-select select {
+		padding: 5px 8px;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--bg);
+		color: var(--text);
+		font: inherit;
+		font-size: 13px;
+	}
+	.w-divider {
+		border: none;
+		border-top: 1px solid var(--border);
+		margin: 10px 0;
+	}
+	.w-heading {
+		font-weight: 600;
+		margin: 10px 0 4px;
+	}
+	.w-heading[data-level='1'] {
+		font-size: 16px;
+	}
+	.w-heading[data-level='2'] {
+		font-size: 14px;
+	}
+	.w-heading[data-level='3'] {
+		font-size: 13px;
+		color: var(--text-dim);
 	}
 </style>
