@@ -134,6 +134,7 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 - 一键重出：`cd web && pnpm shoot`（`scripts/shoot.mjs`）。前置：先 `pnpm build`（要 `web/dist`）+ `cd server && cargo build`（要 debug 二进制）。它对 en/zh 各自：`scripts/demo-library.mjs` 生成对应语言的演示库（临时目录，隔离配置）→ 起真后端 → Playwright（1280×820 @2x=2560×1640，浅色）截 4 张图。
 - 浏览器：默认用 Playwright 自带 chromium；本机未下载对应版本时设 `SHOOT_CHANNEL=chrome` 用系统 Chrome（`pnpm shoot` 亦可 `SHOOT_CHANNEL=chrome pnpm shoot`）。
 - `scripts/demo-library.mjs` 是 `docs/gen-demo-library.py` 的双语 JS 版（结构对齐、字段对齐 `serialize.rs`），仅供出图；改文案时两语言都要改。
+- `06-access-control(.zh).png`（访问控制生效时的登录闸门）走独立脚本 `cd web && pnpm shoot:auth`（`scripts/shoot-auth.mjs`）：起后端后先 `PUT /api/auth/settings` 设一个演示密码（`passwordless_read:false`）→ 全新浏览器 context（无 `jasper.token`）→ 截 `.locked-gate`。与 `shoot.mjs` 分开是因为其余 4 张图要保持「未配置鉴权」的默认状态，不能共用同一次启动。
 
 ## 数据源与配置
 
@@ -229,10 +230,9 @@ GET/PUT /api/ai/config                 宿主级 AI 配置（0.3）{ provider, b
 
 - **两档 `Access`**：未设密码 → 恒 `Full`（行为与无鉴权时完全一致，向后兼容）；设了密码 → 带**有效会话 token**（`Authorization: Bearer`，`getrandom` 随机 hex 存**内存** `HashSet`，重启失效/改密码全清/登出移除）为 `Full`（读全部 + 写），否则 `Anonymous`。
 - **匿名可见范围 `Scope`**（`AuthState::scope`）：`passwordless_read`（总开关）**关** → `None`（什么都看不到，前端 `App.svelte` 显示登录闸门）；**开** → 据笔记本黑白名单 `list_mode`：`none`=全库、`whitelist`=仅名单笔记本**及子树**、`blacklist`=名单**及子树**以外（子树用 `Library::subtree_folder_ids` 展开）。
-- **两道中间件**：`guard_auth`（最外层）据 Bearer 定 `Access` 塞进请求扩展，拦未授权的写（`/api/auth/login|logout` 豁免）与机密读（`/api/config`、`/api/ai/config`、`GET /api/auth/settings`、`GET /api/resources` 资源清单）；`guard_read_only`（内层）照旧。读 handler（folders/notes/note_detail/search/events_sse）经 `Extension<Access>` 按 `Scope` 过滤内容，`events_sse` 对受限匿名把事件折算为 reload（不泄露私有 id）。
+- **两道中间件**：`guard_auth`（最外层）据 Bearer 定 `Access` 塞进请求扩展，拦未授权的写（`/api/auth/login|logout` 豁免）与机密读（`/api/config`、`/api/ai/config`、`GET /api/auth/settings`、`GET /api/resources` 资源清单）；`guard_read_only`（内层）照旧。读 handler（folders/notes/note_detail/search/events_sse **及标签读端点** `tags_list`/`tag_notes`/`note_tags_list`）经 `Extension<Access>` 按 `Scope` 过滤内容，`events_sse` 对受限匿名把事件折算为 reload（不泄露私有 id）。
 - **前端**：`api.ts` 存 token 于 `localStorage['jasper.token']`、`authHeaders()` 注入所有写请求、401 清 token 触发 `setAuthErrorHandler`；`AuthDialog.svelte` 登录框；`App.svelte` 的 `readOnly = IS_DEMO || serverReadOnly || (authEnabled && !authenticated)` 统一写闸门 + 顶栏解锁/登出按钮 + 私有空态登录闸门；`Settings.svelte`「访问控制」段（设/改/清密码、无密码阅读开关、黑白名单笔记本勾选；设/改密码后自动用新密码重登以保持管理员在线）。
 - **已知权衡**：资源二进制 `GET /api/resources/{id}` 按不可猜的 32-hex id 放行（不做 resource→note→folder ACL）；会话内存态（重启需重登）；`config.db` 本就明文存 webdav_pass/AI key，访问密码则哈希存。
-- **合并提示**：本特性基于 `main`（1b9db5c）实现，**未覆盖标签相关读端点**（`/api/tags*`、`/api/notes/{id}/tags`）——它们随 `feat/tag-view` 合入后需照 folders/search 的姿势补 `Extension<Access>` + `Scope` 过滤。
 
 ## Joplin 格式要点（详见 docs/joplin-data-format.md）
 

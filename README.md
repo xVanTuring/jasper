@@ -47,6 +47,13 @@ A lightweight, **read-write** [Joplin](https://joplinapp.org/)-compatible client
 - A local SQLite cache stores each item's content + modification time, scoped per data source.
 - On startup it only fetches **new or changed** items — over WebDAV the second launch makes **zero** `GET` requests for unchanged notes, just one directory listing.
 
+### 🔒 Access control
+- Optional **access password** (Settings → Access control): once set, every write requires login; visitors without a session get read-only access or nothing, per the rule below.
+- **Passwordless read** toggle: on lets logged-out visitors browse read-only (scoped by a per-notebook allow/deny list); off shows a login gate to anyone without a session — handy for sharing an instance for others to read.
+- Sessions are Bearer tokens held in memory only (cleared on restart or logout); the password itself is salted + hashed, never stored in plaintext.
+
+![Login gate shown when access control is on](docs/screenshots/06-access-control.png)
+
 ### 📝 Editor & 🔎 Search
 
 | Editor (paste / drag / attach) | Full-text search |
@@ -85,7 +92,7 @@ The server scans the sync directory, parses every `<id>.md` item into an in-memo
 - Targets the **Joplin v3.x sync format** (sync target version 3), **unencrypted** libraries.
 - Handles notes, notebooks, resources, tags, and note-tags; revisions and other internal types are skipped.
 - This client does **not** participate in Joplin's sync lock protocol — fine for personal use; if both sides edit the same note, Joplin creates a conflict copy as usual.
-- No authentication yet — bind to `127.0.0.1` (default), or put it behind your own auth before exposing on a LAN.
+- Access-password auth (see **Access control** above) is built in for casual sharing; sessions are in-memory only (lost on restart) and there's no full resource-level ACL (resource files are reachable by their unguessable ID) — for anything more sensitive, still front it with your own auth/reverse proxy.
 - WebDAV passwords are stored **in plaintext** in the local config DB.
 
 ## Tech stack
