@@ -193,7 +193,7 @@ PUT    /api/notes/{id}/move   移动笔记到另一笔记本 { parent_id }（校
 DELETE /api/notes/{id}        删除笔记
 GET    /api/resources         资源清单（含 used_by 引用计数，孤儿在前）
 POST   /api/resources         上传资源（原始二进制为体，?filename= + Content-Type=mime）→ {id,markdown,…}
-GET    /api/resources/{id}    资源二进制（带 mime 头）
+GET    /api/resources/{id}    资源二进制（带 mime 头；按 Scope 过滤，resource→note→folder）
 PUT    /api/resources/{id}    重命名资源 { title }
 DELETE /api/resources/{id}    删除资源（二进制 + 元数据条目）
 GET    /api/search?q=...      标题/正文全文搜索
@@ -230,9 +230,9 @@ GET/PUT /api/ai/config                 宿主级 AI 配置（0.3）{ provider, b
 
 - **两档 `Access`**：未设密码 → 恒 `Full`（行为与无鉴权时完全一致，向后兼容）；设了密码 → 带**有效会话 token**（`Authorization: Bearer`，`getrandom` 随机 hex 存**内存** `HashSet`，重启失效/改密码全清/登出移除）为 `Full`（读全部 + 写），否则 `Anonymous`。
 - **匿名可见范围 `Scope`**（`AuthState::scope`）：`passwordless_read`（总开关）**关** → `None`（什么都看不到，前端 `App.svelte` 显示登录闸门）；**开** → 据笔记本黑白名单 `list_mode`：`none`=全库、`whitelist`=仅名单笔记本**及子树**、`blacklist`=名单**及子树**以外（子树用 `Library::subtree_folder_ids` 展开）。
-- **两道中间件**：`guard_auth`（最外层）据 Bearer 定 `Access` 塞进请求扩展，拦未授权的写（`/api/auth/login|logout` 豁免）与机密读（`/api/config`、`/api/ai/config`、`GET /api/auth/settings`、`GET /api/resources` 资源清单）；`guard_read_only`（内层）照旧。读 handler（folders/notes/note_detail/search/events_sse **及标签读端点** `tags_list`/`tag_notes`/`note_tags_list`）经 `Extension<Access>` 按 `Scope` 过滤内容，`events_sse` 对受限匿名把事件折算为 reload（不泄露私有 id）。
+- **两道中间件**：`guard_auth`（最外层）据 Bearer 定 `Access` 塞进请求扩展，拦未授权的写（`/api/auth/login|logout` 豁免）与机密读（`/api/config`、`/api/ai/config`、`GET /api/auth/settings`、`GET /api/resources` 资源清单）；`guard_read_only`（内层）照旧。读 handler（folders/notes/note_detail/search/events_sse **及标签读端点** `tags_list`/`tag_notes`/`note_tags_list`）经 `Extension<Access>` 按 `Scope` 过滤内容，`events_sse` 对受限匿名把事件折算为 reload（不泄露私有 id）。**资源二进制**（`GET /api/resources/{id}`）同样按 `Scope` 过滤：资源本身不知道所在笔记本，靠 `Library::notes_referencing_resource`（据笔记正文 `:/<id>` 引用建的反向索引）找到引用它的笔记 → 取其 `parent_id` 过 `scope.allows_folder`，任一可见即放行；孤儿资源（无笔记引用）在受限范围下判定不可见。
 - **前端**：`api.ts` 存 token 于 `localStorage['jasper.token']`、`authHeaders()` 注入所有写请求、401 清 token 触发 `setAuthErrorHandler`；`AuthDialog.svelte` 登录框；`App.svelte` 的 `readOnly = IS_DEMO || serverReadOnly || (authEnabled && !authenticated)` 统一写闸门 + 顶栏解锁/登出按钮 + 私有空态登录闸门；`Settings.svelte`「访问控制」段（设/改/清密码、无密码阅读开关、黑白名单笔记本勾选；设/改密码后自动用新密码重登以保持管理员在线）。
-- **已知权衡**：资源二进制 `GET /api/resources/{id}` 按不可猜的 32-hex id 放行（不做 resource→note→folder ACL）；会话内存态（重启需重登）；`config.db` 本就明文存 webdav_pass/AI key，访问密码则哈希存。
+- **已知权衡**：会话内存态（重启需重登）；`config.db` 本就明文存 webdav_pass/AI key，访问密码则哈希存。
 
 ## Joplin 格式要点（详见 docs/joplin-data-format.md）
 
@@ -343,4 +343,8 @@ App.svelte 去抖合并刷新 + NoteView.applyExternal 保守回显（design doc
 **访问鉴权 / 访问控制**（2026-07-03 落地；详见上「访问鉴权 / 访问控制」节）：容器级访问密码（设置页配置、加盐迭代 SHA-256 存 config.db）+
 会话 token（Bearer，内存态）+ `guard_auth` 中间件（写/机密读门控 + `Extension<Access>`）+ 读路径按 `Scope` 过滤——覆盖 folders/notes/search/detail **及标签读端点（tags_list/tag_notes/note_tags_list）**（无密码阅读总开关 + 笔记本黑白名单子树）+
 `/api/auth/{login,logout,settings}` + 前端 AuthDialog/统一 readOnly 闸门/设置页「访问控制」段。未设密码时行为零变化。
+**资源二进制访问控制补齐**（2026-07-04 落地）：`GET /api/resources/{id}` 接入 `Extension<Access>` + `Scope`——`core::library` 新增
+`resource_notes` 反向索引（`build_indexes()` 里据笔记正文 `:/<id>` 引用构建）+ `notes_referencing_resource`，handler 据此把
+resource→note→folder 的权限链路接进既有黑白名单规则（同一资源被多篇笔记引用取并集、有一篇可见即放行；孤儿资源受限范围下默认拒绝；
+`Scope::All` 零开销跳过）。消除了此前"资源 id 猜不出来"的唯一防线。
 待办：全局改标签名/删标签（写/删 tag 条目 + 级联 note_tag）、E2EE 解密（按需）；插件阶段 4（编辑钩子 input 时检测 + 扩词汇表，见 docs/plugin-design.md §11）。
