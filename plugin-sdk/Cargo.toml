@@ -1,8 +1,8 @@
 [package]
 name = "jasper-plugin-sdk"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
-description = "Jasper plugin SDK: ABI glue (plugin_dispatch/host_call), typed host wrappers, storage trait, notes/ai + system.locale host APIs (spec 0.4)"
+description = "Jasper plugin SDK: ABI glue (plugin_dispatch/host_call), typed host wrappers, storage trait, notes/ai + system.locale host APIs, editor.transform slot (spec 0.4)"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/jasper-note/jasper"
 readme = "README.md"
