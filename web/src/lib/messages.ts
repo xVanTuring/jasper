@@ -222,6 +222,13 @@ const zh = {
 	'chat.send': '发送',
 	'chat.busy': '思考中…',
 	'chat.empty': '开始对话吧。',
+	'chat.newChat': '新对话',
+	'chat.newSession': '新建会话',
+	'chat.renameSession': '重命名会话',
+	'chat.deleteSession': '删除会话',
+	'chat.sessions': '会话列表',
+	'chat.selectionAttached': '已选中 {n} 字，将随消息发送',
+	'chat.selectionClear': '取消附带选区',
 	'form.submit': '提交',
 
 	// 插件写提案确认（pending_writes）
@@ -491,6 +498,13 @@ const en: typeof zh = {
 	'chat.send': 'Send',
 	'chat.busy': 'Thinking…',
 	'chat.empty': 'Start the conversation.',
+	'chat.newChat': 'New chat',
+	'chat.newSession': 'New session',
+	'chat.renameSession': 'Rename session',
+	'chat.deleteSession': 'Delete session',
+	'chat.sessions': 'Sessions',
+	'chat.selectionAttached': '{n} chars selected — will be sent with your message',
+	'chat.selectionClear': 'Drop selection',
 	'form.submit': 'Submit',
 
 	// Plugin write proposals (pending_writes)

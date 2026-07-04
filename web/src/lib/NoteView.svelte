@@ -238,7 +238,7 @@
         oninput={scheduleSave}
         placeholder={t('note.titlePlaceholder')}
       />
-      <div class="editor-wrap">
+      <div class="editor-wrap" data-ai-selectable>
         {#if engine === 'wysiwyg'}
           <WysiwygEditor value={body} onChange={onBodyChange} />
         {:else}
@@ -263,7 +263,7 @@
       <!-- 滚动容器占满整栏宽 → 滚动条贴窗口右缘；内层 .content 才是阅读宽度 -->
       <div class="content-scroll">
         <!-- 内容已由 DOMPurify 净化 -->
-        <div class="content" onclick={onContentClick}>{@html html}</div>
+        <div class="content" data-ai-selectable onclick={onContentClick}>{@html html}</div>
       </div>
     {/if}
   </article>

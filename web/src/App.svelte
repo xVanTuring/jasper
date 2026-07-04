@@ -30,6 +30,7 @@
   import PluginSidebar from './lib/PluginSidebar.svelte'
   import PendingWriteDialog from './lib/PendingWriteDialog.svelte'
   import { loadPlugins, pluginsAvailable, sidebarContributions, type SidebarEntry } from './lib/plugins.svelte'
+  import { installSelectionCapture, clearSelection } from './lib/selection.svelte'
   import { connectEvents, type ChangeEvent } from './lib/events'
 
   // 让 <html lang> 跟随当前语言（影响断词/无障碍等），并把当前语言持久化到服务端
@@ -255,6 +256,14 @@
       void checkStatus()
     })
     void checkStatus()
+    // 捕获笔记内容区的文字选区（供插件侧栏把「选中的文字」并入命令 args）
+    installSelectionCapture()
+  })
+
+  // 切换打开的笔记 → 清掉上一篇的陈旧选区
+  $effect(() => {
+    void selectedNoteId
+    clearSelection()
   })
 
   async function checkStatus() {

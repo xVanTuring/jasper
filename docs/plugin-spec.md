@@ -445,7 +445,7 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 
 | widget | props | 交互契约 |
 |---|---|---|
-| `chat` | `placeholder?`, `command?`（动态模式；静态模式用 sidebar 的 `command`） | 消息列表由**前端持有**（会话内存，不落盘）。发送 → 调 command，`args = { messages: Message[]（含刚输入的 user 消息）, input: string, note_id: string\|null }`；result 含字符串 **`reply`** → 以 assistant 消息追加（markdown 渲染）；动态模式下 result 含 `ui` → 替换整棵树 |
+| `chat` | `placeholder?`, `command?`（动态模式；静态模式用 sidebar 的 `command`） | 消息列表由**前端持有**（静态 sidebar chat 会话可由宿主持久化 + 多会话，见下）。发送 → 调 command，`args = { messages: Message[]（含刚输入的 user 消息）, input: string, note_id: string\|null, selection?: {text} }`；result 含字符串 **`reply`** → 以 assistant 消息追加（markdown 渲染）；动态模式下 result 含 `ui` → 替换整棵树 |
 | `button` | `label`, `icon?`, `command`, `args?` | 点击 → command，`args = props.args ?? {}` 并入 `note_id` |
 | `form` | `fields`（§10 词汇）, `values?`, `submit_label?`, `command` | 前端按 §10 校验通过后提交 → command，`args = { values }` 并入 `note_id` |
 | `list` | `items: {id,title,subtitle?,icon?}[]`, `command?` | 点条目 → command，`args = { id }` 并入 `note_id`；无 `command` 则纯展示 |
@@ -454,6 +454,8 @@ Message   = { role: "system"|"user"|"assistant", content: string }
 
 统一约定：
 - 侧边栏内一切命令调用 MUST 并入 `note_id`（当前选中笔记 id，可为 `null`）。
+- **选区上下文（向后兼容新增）**：当用户在**笔记内容区**（阅读视图 / 编辑器）里选中了文字时，命令 args 并入 `selection = { text: string }`（当前选区文字）；无选区则不带该键。插件据此实现「改写/翻译选中段落」等——**可选、宿主实现说明**：jasper 全局监听 `selectionchange` 记住笔记内容区里的选区、发送时并入（切换笔记时清空）；老宿主不带此键，插件 MUST 容忍缺失。
+- **会话持久化（宿主实现说明，非契约）**：静态 sidebar chat 的消息历史 MAY 由宿主持久化并支持**多会话**（jasper 按 `pluginId/panelId` 存 localStorage，chat 面板带会话切换/新建/删除/重命名）。这对插件透明——契约仍是每次发送把完整 `messages` 传给命令；插件保持无状态。
 - 命令 result 中：`ui`（UiNode）→ 替换面板树（动态模式）；`reply`（string 或 §9.2.1 的 locale map）→ 追加进 chat；其余键宿主忽略（向前兼容）。
 - HTTP 响应顶层 `pending_writes`（§9.5）交给宿主确认弹窗，与 widget 无关。
 - 未来按需扩词汇表（升 MINOR）。

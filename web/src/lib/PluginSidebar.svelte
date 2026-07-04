@@ -7,6 +7,8 @@
 	import { api, type UiNode } from './api'
 	import type { SidebarEntry } from './plugins.svelte'
 	import { enqueuePendingWrites } from './pendingWrites.svelte'
+	import { currentSelectionText } from './selection.svelte'
+	import { storageKeyFor } from './chatSessions'
 	import { t, resolveText } from './i18n.svelte'
 	import Button from './Button.svelte'
 	import Icon from './Icon.svelte'
@@ -51,11 +53,14 @@
 		}
 	}
 
-	/** 统一命令出口：并入 note_id、提案入队、result.ui 换树；失败挂到面板错误条并返回 null。 */
+	/** 统一命令出口：并入 note_id + 当前笔记选区、提案入队、result.ui 换树；失败挂到面板错误条并返回 null。 */
 	async function runCommand(command: string, args: Record<string, unknown>): Promise<Record<string, unknown> | null> {
 		error = ''
 		try {
-			const r = await api.runPluginCommand(entry.pluginId, command, { ...args, note_id: noteId })
+			// 当前在笔记内容区选中的文字（spec §9.2）：非空才并入，供「优化选中段落」等场景
+			const selText = currentSelectionText()
+			const selection = selText ? { text: selText } : undefined
+			const r = await api.runPluginCommand(entry.pluginId, command, { ...args, note_id: noteId, selection })
 			enqueuePendingWrites(r.pending_writes)
 			const ui = r.result.ui
 			if (ui && typeof ui === 'object' && typeof (ui as UiNode).type === 'string') {
@@ -103,7 +108,7 @@
 				<UiWidget node={tree} onCommand={runCommand} />
 			{/if}
 		{:else if entry.contribution.widget === 'chat'}
-			<ChatWidget onSend={chatSend} />
+			<ChatWidget onSend={chatSend} storageKey={storageKeyFor(entry.pluginId, entry.contribution.id)} />
 		{:else}
 			<UiWidget node={staticNode} onCommand={runCommand} />
 		{/if}
