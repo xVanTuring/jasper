@@ -2,9 +2,9 @@
 
 **English** · [中文](README.zh-CN.md)
 
-[![Deploy WASM demo to Pages](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml)
+[![Deploy WASM demo to Pages](https://github.com/jasper-note/jasper/actions/workflows/pages.yml/badge.svg)](https://github.com/jasper-note/jasper/actions/workflows/pages.yml)
 
-> 🌐 **Live demo (runs entirely in your browser via WASM, no server):** https://xvanturing.github.io/jasper/
+> 🌐 **Live demo (runs entirely in your browser via WASM, no server):** https://jasper-note.github.io/jasper/
 
 A lightweight, **read-write** [Joplin](https://joplinapp.org/)-compatible client: a local **Rust (axum) server + browser SPA** — no Electron, Tauri, or WebView. It reads and writes your existing Joplin sync library directly, so edits are picked up by Joplin on its next sync.
 
@@ -61,7 +61,7 @@ The quickest way to run Jasper is the pre-built Docker image — a single self-c
 
 ```bash
 docker run -p 27583:27583 -v jasper-config:/config \
-  ghcr.io/xvanturing/jasper:latest
+  ghcr.io/jasper-note/jasper:latest
 ```
 
 Then open **http://127.0.0.1:27583/**. On first run a setup wizard lets you pick *existing library* / *new library* × *local folder* / *WebDAV*. The `/config` volume keeps your data-source settings and cache across restarts. To expose it on a LAN, add `-e JASPER_HOST=0.0.0.0` (see the [limitations](#compatibility--limitations) first).

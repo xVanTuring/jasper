@@ -9,7 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures')
-const INDEX_URL = 'https://raw.githubusercontent.com/xVanTuring/jasper-plugin-registry/main/plugins.json'
+const INDEX_URL = 'https://raw.githubusercontent.com/jasper-note/jasper-plugin-registry/main/plugins.json'
 
 const themeBytes = readFileSync(path.join(FIXTURES, 'theme.jplug'))
 const themeSha = createHash('sha256').update(themeBytes).digest('hex')

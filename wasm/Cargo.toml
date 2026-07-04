@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "浏览器 WASM demo：jasper-core 编进浏览器，配内置演示库（无 server）"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/xVanTuring/jasper"
+repository = "https://github.com/jasper-note/jasper"
 publish = false
 
 [lib]

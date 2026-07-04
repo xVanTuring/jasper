@@ -82,7 +82,7 @@ Multi-stage build: Node builds the frontend → Rust embeds it with
 `--features embed` → the runtime image is a single self-contained binary on
 `debian-slim`. Published images (via
 [`.github/workflows/docker.yml`](.github/workflows/docker.yml)) go to
-`ghcr.io/xvanturing/jasper`: `main` builds `latest` (+ `sha-…`), and version
+`ghcr.io/jasper-note/jasper`: `main` builds `latest` (+ `sha-…`), and version
 tags (`v1.2.3`) get semver tags.
 
 ## Try it with demo content
@@ -219,7 +219,7 @@ docker compose up --build   # 然后访问 http://localhost:27583/
 多阶段构建：Node 构建前端 → Rust 用 `--features embed` 把前端内嵌进二进制 →
 运行镜像是 `debian-slim` 上的单个自带前端二进制。发布镜像（由
 [`.github/workflows/docker.yml`](.github/workflows/docker.yml)）推到
-`ghcr.io/xvanturing/jasper`：`main` 构建 `latest`（+ `sha-…`），版本 tag
+`ghcr.io/jasper-note/jasper`：`main` 构建 `latest`（+ `sha-…`），版本 tag
 （`v1.2.3`）打语义化版本标签。
 
 ## 用演示内容试一试

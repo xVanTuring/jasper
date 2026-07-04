@@ -2,7 +2,7 @@ services:
   jasper:
     # 从 GHCR 拉取最新镜像（amd64/arm64 多架构）
     # Pull the latest image from GHCR (multi-arch: amd64/arm64)
-    image: ghcr.io/xvanturing/jasper:latest
+    image: ghcr.io/jasper-note/jasper:latest
     container_name: jasper
     ports:
       - "27583:27583"

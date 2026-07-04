@@ -2,9 +2,9 @@
 
 [English](README.md) · **中文**
 
-[![Deploy WASM demo to Pages](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml/badge.svg)](https://github.com/xVanTuring/jasper-web/actions/workflows/pages.yml)
+[![Deploy WASM demo to Pages](https://github.com/jasper-note/jasper/actions/workflows/pages.yml/badge.svg)](https://github.com/jasper-note/jasper/actions/workflows/pages.yml)
 
-> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://xvanturing.github.io/jasper/
+> 🌐 **在线 demo（全程在浏览器内由 WASM 运行，无后端）：** https://jasper-note.github.io/jasper/
 
 一个轻量、**可读可写**的 [Joplin](https://joplinapp.org/) 兼容客户端：**本地 Rust (axum) 服务 + 浏览器 SPA**，不依赖 Electron / Tauri / WebView。直接读写你已有的 Joplin 同步库，改动会被 Joplin 下次同步自动拾取。
 
@@ -61,7 +61,7 @@
 
 ```bash
 docker run -p 27583:27583 -v jasper-config:/config \
-  ghcr.io/xvanturing/jasper:latest
+  ghcr.io/jasper-note/jasper:latest
 ```
 
 然后打开 **http://127.0.0.1:27583/**。首次启动可在向导里选择 *现有库* / *新建库* × *本地文件夹* / *WebDAV*。`/config` 数据卷会持久化数据源设置与缓存。要暴露到局域网，加 `-e JASPER_HOST=0.0.0.0`（请先看[限制](#兼容性与限制)）。

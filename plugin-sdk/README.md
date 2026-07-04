@@ -1,11 +1,11 @@
 # jasper-plugin-sdk
 
-SDK for writing [Jasper](https://github.com/xVanTuring/jasper) plugins in Rust,
+SDK for writing [Jasper](https://github.com/jasper-note/jasper) plugins in Rust,
 compiled to `wasm32-unknown-unknown` and run inside the host's wasmi sandbox.
 
 The crate's **minor version tracks the plugin API spec version** (SDK 0.2.x ⇔
 `apiVersion = "0.2"` in `manifest.toml`). The full contract lives in
-[`docs/plugin-spec.md`](https://github.com/xVanTuring/jasper/blob/main/docs/plugin-spec.md).
+[`docs/plugin-spec.md`](https://github.com/jasper-note/jasper/blob/main/docs/plugin-spec.md).
 
 ## Quick start
 
@@ -67,7 +67,7 @@ limits. It never affects the wasm build.
   features) — the sandbox is plain wasm, not a JS environment. The SDK registers
   a `getrandom` error stub so `wasm32-unknown-unknown` links.
 - Reference plugins live in
-  [`plugins-examples/`](https://github.com/xVanTuring/jasper/tree/main/plugins-examples)
+  [`plugins-examples/`](https://github.com/jasper-note/jasper/tree/main/plugins-examples)
   (before-save hook, storage providers, editor command).
 
 ## License

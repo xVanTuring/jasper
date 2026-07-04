@@ -4,7 +4,7 @@ version = "2026.7.3"
 edition = "2021"
 description = "Lightweight read-only Joplin client — local HTTP server + browser UI"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/xVanTuring/jasper"
+repository = "https://github.com/jasper-note/jasper"
 publish = false
 
 [dependencies]

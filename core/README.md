@@ -1,7 +1,7 @@
 # jasper-core
 
 Pure-logic core for the [Joplin](https://joplinapp.org/) sync format, used by
-[Jasper](https://github.com/xVanTuring/jasper) — a lightweight Joplin-compatible client.
+[Jasper](https://github.com/jasper-note/jasper) — a lightweight Joplin-compatible client.
 
 - `model` — `Note` / `Folder` / `Resource` / `Tag` / `NoteTag` plus `ItemType` / `MarkupLanguage` enums
 - `parser` — parses Joplin `<32hex>.md` sync items (title / body / trailing `key:value` metadata block)
@@ -10,7 +10,7 @@ Pure-logic core for the [Joplin](https://joplinapp.org/) sync format, used by
 
 No IO anywhere — the crate compiles unchanged to `wasm32` targets (it powers both the
 Jasper server and its browser-only WASM demo). The data format itself is documented in
-[`docs/joplin-data-format.md`](https://github.com/xVanTuring/jasper/blob/main/docs/joplin-data-format.md).
+[`docs/joplin-data-format.md`](https://github.com/jasper-note/jasper/blob/main/docs/joplin-data-format.md).
 
 ## Features
 

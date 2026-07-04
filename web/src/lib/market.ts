@@ -3,7 +3,7 @@
 
 /** 市场索引地址（raw.githubusercontent 带 CORS，浏览器可直接 fetch）。 */
 export const MARKET_INDEX_URL =
-	'https://raw.githubusercontent.com/xVanTuring/jasper-plugin-registry/main/plugins.json'
+	'https://raw.githubusercontent.com/jasper-note/jasper-plugin-registry/main/plugins.json'
 
 /** 宿主支持的插件 API 大版本（镜像 server/src/plugins/manifest.rs 的 HOST_API_VERSIONS）。 */
 export const HOST_PLUGIN_API_MAJORS = ['0']
