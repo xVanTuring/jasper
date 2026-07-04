@@ -26,6 +26,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/api/plugins/{id}/settings", get(get_settings).put(put_settings))
         .route("/api/plugins/{id}/commands/{cmd}", post(run_command))
         .route("/api/plugins/{id}/ui/{view}", post(ui_view))
+        .route("/api/plugins/{id}/editor/transform", post(editor_transform))
         .route("/api/plugins/{id}/auto-approve", axum::routing::put(put_auto_approve))
         .route("/api/plugins/{id}/assets/{*path}", get(asset))
         // 宿主级 AI 配置（spec 0.3 §9.5）：host:ai 的密钥/端点，插件永不可见。
@@ -322,6 +323,61 @@ async fn ui_view(
             let writes = std::mem::take(&mut *pending.lock().unwrap());
             Json(json!({ "ui": ui, "pending_writes": writes })).into_response()
         }
+        Ok(Err(e)) => dispatch_error(e),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct EditorTransformReq {
+    #[serde(default)]
+    phase: String,
+    #[serde(default)]
+    text: String,
+}
+
+/// POST /api/plugins/{id}/editor/transform（spec §3.7/§6.5，0.4 阶段 4）：编辑期把编辑缓冲
+/// 文本交给 wasm 的 `editor.transform` 改写（`phase`∈before-save|input）。纯文本 in/out——
+/// **不带 notes/ai 上下文**（走无上下文的 `dispatch`，notes.* 得 unsupported，防写入重入）。
+/// 写方法（POST）→ 只读模式下被 guard_read_only 拦截（只读时编辑器隐藏，本就不会触发）。
+async fn editor_transform(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<EditorTransformReq>,
+) -> Response {
+    let host = match host_of(&state) {
+        Ok(h) => h,
+        Err(r) => return r,
+    };
+    if !manifest::EDITOR_PHASES.contains(&req.phase.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "invalid", "message": "phase 须为 before-save|input" })),
+        )
+            .into_response();
+    }
+    if !host.has_editor_transform(&id, &req.phase) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "not_found", "message": "插件未启用或未声明该相位的 editor 钩子" })),
+        )
+            .into_response();
+    }
+    let params = json!({ "phase": req.phase, "text": req.text });
+    let r = tokio::task::spawn_blocking(move || {
+        host.dispatch(&id, "editor.transform", params, super::runtime::CallClass::Normal)
+    })
+    .await;
+    match r {
+        // 结果须含字符串 text；缺省/非串按插件内部错误处理（前端捕获后不改缓冲）
+        Ok(Ok(result)) => match result.get("text").and_then(|v| v.as_str()) {
+            Some(text) => Json(json!({ "text": text })).into_response(),
+            None => (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": "internal", "message": "editor.transform 未返回 text 字符串" })),
+            )
+                .into_response(),
+        },
         Ok(Err(e)) => dispatch_error(e),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
@@ -770,6 +826,80 @@ token = { type = "secret" }
             b"{\"args\":{}}".to_vec(),
         )
         .await;
+        assert_eq!(st, StatusCode::FORBIDDEN);
+    }
+
+    /// editor.transform 全链路（spec §3.7/§6.5，0.4 阶段 4）：装带 contributes.editor 的插件 →
+    /// 启用 → POST editor/transform → wasm 返回变换后的 text；相位/守卫/只读各分支。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn editor_transform_end_to_end() {
+        let examples =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../plugins-examples/testbed");
+        if !examples.join("plugin.wasm").exists() {
+            eprintln!("skipping: testbed/plugin.wasm not built (run plugins-examples/build-wasm.sh first)");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let dst = dir.path().join("testbed");
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::copy(examples.join("plugin.wasm"), dst.join("plugin.wasm")).unwrap();
+        // editor.transform 无需任何能力（纯文本 in/out）；只声明 input 相位
+        std::fs::write(
+            dst.join("manifest.toml"),
+            r#"
+id = "testbed"
+name = "Testbed"
+version = "0.1.0"
+apiVersion = "0.4"
+
+[backend]
+wasm = "plugin.wasm"
+capabilities = []
+
+[[contributes.editor]]
+on = "input"
+"#,
+        )
+        .unwrap();
+        let config = Arc::new(Mutex::new(ConfigStore::in_memory().unwrap()));
+        let host = PluginHost::init_at(dir.path().to_path_buf(), config.clone()).unwrap();
+        let state = Arc::new(AppState {
+            library: Arc::new(RwLock::new(Library::default())),
+            storage: RwLock::new(None),
+            config,
+            cache: crate::cache::CacheStore::in_memory().unwrap(),
+            read_only: AtomicBool::new(false),
+            auth: crate::auth::AuthState::from_config(&crate::config::AuthConfig::default()),
+            plugins: Some(host),
+            events: crate::events::EventBus::new(),
+        });
+
+        let uri = "/api/plugins/testbed/editor/transform";
+        // 未启用 → 404
+        let (st, _) = send(state.clone(), "POST", uri, br#"{"phase":"input","text":"hi"}"#.to_vec()).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+
+        // 启用（capabilities=[] → 无需 consent，enable=true）
+        let (st, body) =
+            send(state.clone(), "POST", "/api/plugins/testbed/enable", b"{\"enabled\":true}".to_vec()).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+
+        // 变换生效：testbed 的 editor.transform = 标相位 + 全大写
+        let (st, body) = send(state.clone(), "POST", uri, br#"{"phase":"input","text":"hi there"}"#.to_vec()).await;
+        assert_eq!(st, StatusCode::OK, "{body}");
+        assert_eq!(body["text"], "[input] HI THERE");
+
+        // 未声明的相位（before-save）→ 404（该插件只声明了 input）
+        let (st, _) = send(state.clone(), "POST", uri, br#"{"phase":"before-save","text":"x"}"#.to_vec()).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+
+        // 非法相位 → 400
+        let (st, _) = send(state.clone(), "POST", uri, br#"{"phase":"blur","text":"x"}"#.to_vec()).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST);
+
+        // 只读模式下被写方法守卫拦截
+        state.read_only.store(true, std::sync::atomic::Ordering::Relaxed);
+        let (st, _) = send(state.clone(), "POST", uri, br#"{"phase":"input","text":"hi"}"#.to_vec()).await;
         assert_eq!(st, StatusCode::FORBIDDEN);
     }
 

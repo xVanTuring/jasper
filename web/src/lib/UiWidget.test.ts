@@ -119,4 +119,53 @@ describe('UiWidget', () => {
 		await fireEvent.click(getByText('leaf'))
 		expect(onCommand).toHaveBeenCalledWith('open', { id: 'b' })
 	})
+
+	it('checkbox 勾选 → onCommand(command, {...args, checked})', async () => {
+		const onCommand = vi.fn(async () => null)
+		const node: UiNode = {
+			type: 'checkbox',
+			props: { label: '启用', checked: false, command: 'toggle', args: { key: 'k' } },
+		}
+		const { container } = render(UiWidget, { props: { node, onCommand } })
+		const box = container.querySelector('input[type="checkbox"]') as HTMLInputElement
+		expect(box.checked).toBe(false)
+		await fireEvent.click(box)
+		expect(onCommand).toHaveBeenCalledWith('toggle', { key: 'k', checked: true })
+	})
+
+	it('select 变更 → onCommand(command, {value})；label 可本地化', async () => {
+		setLocale('zh')
+		const onCommand = vi.fn(async () => null)
+		const node: UiNode = {
+			type: 'select',
+			props: {
+				label: { en: 'Mode', zh: '模式' },
+				options: ['a', { value: 'b', label: { en: 'Bee', zh: '乙' } }],
+				value: 'a',
+				command: 'pick',
+			},
+		}
+		const { container } = render(UiWidget, { props: { node, onCommand } })
+		expect(container.textContent).toContain('模式') // 本地化 label
+		expect(container.textContent).toContain('乙') // 本地化 option label
+		const sel = container.querySelector('select') as HTMLSelectElement
+		await fireEvent.change(sel, { target: { value: 'b' } })
+		expect(onCommand).toHaveBeenCalledWith('pick', { value: 'b' })
+		setLocale('en')
+	})
+
+	it('divider 渲染 <hr>，heading 渲染带 level 的标题（可本地化）', () => {
+		setLocale('zh')
+		const node: UiNode = {
+			type: 'heading',
+			props: { text: { en: 'Section', zh: '小节' }, level: 1 },
+			children: [{ type: 'divider', props: {} }],
+		}
+		const { container } = render(UiWidget, { props: { node, onCommand: noop } })
+		const h = container.querySelector('.w-heading') as HTMLElement
+		expect(h.textContent?.trim()).toBe('小节')
+		expect(h.getAttribute('data-level')).toBe('1')
+		expect(container.querySelector('hr.w-divider')).toBeTruthy()
+		setLocale('en')
+	})
 })

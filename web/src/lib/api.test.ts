@@ -129,3 +129,29 @@ describe('auth token (access control)', () => {
 		expect(handler).toHaveBeenCalledOnce()
 	})
 })
+
+describe('editorTransform (spec §3.7/§6.5)', () => {
+	afterEach(() => vi.unstubAllGlobals())
+
+	it('POSTs {phase,text} and returns the transformed text', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ text: '[input] HELLO' }),
+		})
+		vi.stubGlobal('fetch', fetchMock)
+		const out = await api.editorTransform('fmt', 'input', 'hello')
+		expect(out).toBe('[input] HELLO')
+		const [url, init] = fetchMock.mock.calls[0]
+		expect(url).toBe('/api/plugins/fmt/editor/transform')
+		expect(JSON.parse((init as RequestInit).body as string)).toEqual({ phase: 'input', text: 'hello' })
+	})
+
+	it('throws on non-ok / missing text', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({ error: 'not_found' }) }),
+		)
+		await expect(api.editorTransform('fmt', 'input', 'x')).rejects.toThrow()
+	})
+})

@@ -30,12 +30,17 @@
 - 现状：项目定位明确**不实现** Joplin 的端到端加密解密；加密条目按兜底处理（不可读）。
 - 需要：暂无强需求，仅在用户明确要求时才考虑；工作量大（需对齐 Joplin 的加密协议）。
 
-## 5. 插件系统阶段 4 —— 编辑钩子 + 扩展 widget 词汇表
+## 5. 插件系统阶段 4 —— 编辑钩子 + 扩展 widget 词汇表 ✅ 已完成（2026-07-04，apiVersion 不变仍 0.4）
 
-详见 `docs/plugin-design.md` §11「分阶段路线」第 4 条：
+落地两处**规范早已定义、此前未实现**的契约（均向后兼容，不升 apiVersion）：
 
-- **编辑期钩子**：目前只有 `before_save`（保存时触发）；阶段 4 要加"输入时检测"钩子（编辑器打字过程中触发插件逻辑，例如实时校验/联想），需要设计新的 ABI 方法 + 前端编辑器接入点（`Editor.svelte` / `WysiwygEditor.svelte`）。
-- **扩展 widget 词汇表**：当前 `UiWidget.svelte` 支持 6 种 widget（chat/list/tree/form/markdown/button），阶段 4 计划按需再加。
+- **编辑期钩子** `contributes.editor` → `editor.transform`（spec §3.7/§6.5/§8）：
+  - 后端：`server/src/plugins/manifest.rs` 解析/校验 `[[contributes.editor]]{on}`（`on`∈before-save|input、需 `[backend]`、相位不重复）+ `WIDGET_TYPES`/`EDITOR_PHASES` 常量；`host.rs::has_editor_transform` 守卫；`routes.rs` 挂 `POST /api/plugins/{id}/editor/transform {phase,text}→{text}`（非法相位 400、未声明/禁用 404、只读拦截）——**纯文本 in/out，走无 notes/ai 上下文的 `dispatch`**（防写入重入），任一插件失败即跳过（不丢输入）。
+  - SDK：`register!` 增 `editor` 槽（`fn(&str /*phase*/, String /*text*/)->Result<String,PluginError>`，处理 `editor.transform` 方法）。
+  - 前端：`api.ts::editorTransform`、`plugins.svelte.ts::editorInputPlugins`；**仅源码编辑器**（`Editor.svelte`）接 `input` 相位——CodeMirror debounce 输入停顿后依次调声明插件、保守替换缓冲（仅真实用户输入触发、程序化 dispatch 不触发故天然防环、等待期间用户又敲字则丢弃变换）。富文本不接（整篇重排风险高）。
+  - 测试：`manifest`（parses_and_validates_editor_contribution）/`routes`（editor_transform_end_to_end 全链路）Rust 单测 + testbed 夹具 `editor.transform`（标相位+全大写）；`api`/`plugins`/`UiWidget` 前端单测。
+  - **后置**：`before-save` 相位前端接入、spec §3.7 可选 `command` 复用、富文本模式接入（现有服务端 `hook.before_save` 已覆盖保存前改写场景）。
+- **扩展 widget 词汇表**：`UiWidget.svelte` 从 6 种扩到 10 种——补齐设计文档 §7.2 早列入的 `checkbox`/`select`（独立交互控件）+ 布局原语 `divider`/`heading`；`WIDGET_TYPES` 同步。文本字段（label / option label / heading text）遵循 §9.2.1 locale map。
 
 > 注：`docs/plugin-design.md` §11 原文括注"远程 URI / 市场后置"，但插件市场（`market.ts`/`market.svelte.ts` + registry 仓库）已在「插件生态 + 市场」阶段完成，此处该括注已过时，不算未完成项。
 

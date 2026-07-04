@@ -158,6 +158,11 @@ export interface SidebarContribution {
   view?: string
 }
 
+// 编辑器钩子贡献（spec §3.7，0.4 阶段 4）：编辑期把编辑缓冲文本交给 wasm 的 editor.transform 改写。
+export interface EditorContribution {
+  on: 'before-save' | 'input'
+}
+
 export interface PluginContributes {
   theme: ThemeContribution[]
   locale: LocaleContribution[]
@@ -165,6 +170,7 @@ export interface PluginContributes {
   command: CommandContribution[]
   toolbar: ToolbarContribution[]
   sidebar: SidebarContribution[]
+  editor: EditorContribution[]
 }
 
 export interface PluginInfo {
@@ -564,6 +570,25 @@ const httpApi = {
       | null
     if (!res.ok || !body?.ui) throw new Error(body?.message || body?.error || `ui -> ${res.status}`)
     return { ui: body.ui, pending_writes: body.pending_writes ?? [] }
+  },
+  // 编辑期文本变换（spec §3.7/§6.5，0.4 阶段 4）：把编辑缓冲文本交给插件 editor.transform，
+  // 返回变换后的文本。纯文本 in/out，无 pending_writes。失败抛带服务端 message 的 Error。
+  editorTransform: async (
+    pluginId: string,
+    phase: 'before-save' | 'input',
+    text: string,
+  ): Promise<string> => {
+    const res = await fetch(`/api/plugins/${pluginId}/editor/transform`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ phase, text }),
+    })
+    const body = (await res.json().catch(() => null)) as
+      | { text?: string; error?: string; message?: string }
+      | null
+    if (!res.ok || typeof body?.text !== 'string')
+      throw new Error(body?.message || body?.error || `editor.transform -> ${res.status}`)
+    return body.text
   },
   // notes:write 的「写入免确认」开关（宿主托管，spec §9.5）。
   setPluginAutoApprove: (id: string, enabled: boolean) =>

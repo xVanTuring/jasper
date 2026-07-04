@@ -7,8 +7,14 @@ use std::collections::BTreeMap;
 /// 宿主支持的插件 API 版本集合（spec §4）。
 pub const HOST_API_VERSIONS: &[&str] = &["0.1", "0.2", "0.3", "0.4"];
 
-/// 内置 widget 词汇表（spec §9.2，0.3 冻结）。
-pub const WIDGET_TYPES: &[&str] = &["chat", "list", "tree", "form", "markdown", "button"];
+/// 内置 widget 词汇表（spec §9.2）。0.3 冻结 6 种；0.4 阶段 4 补齐设计文档 §7.2 早已
+/// 列入的 `checkbox`/`select`（独立交互控件）+ `divider`/`heading`（布局原语）。
+/// 词汇表是前端渲染契约：server-driven UI 树里未知 type 前端安全忽略，故新增向前兼容。
+pub const WIDGET_TYPES: &[&str] =
+    &["chat", "list", "tree", "form", "markdown", "button", "checkbox", "select", "divider", "heading"];
+
+/// 编辑器钩子相位（spec §3.7）：保存前 / debounce 输入时。
+pub const EDITOR_PHASES: &[&str] = &["before-save", "input"];
 
 /// 设置/存储配置表单的字段定义（spec §10 词汇）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +119,16 @@ pub struct SidebarContribution {
     pub view: Option<String>,
 }
 
+/// 编辑器钩子贡献（spec §3.7，0.4 阶段 4 落地）：编辑期把编辑缓冲的文本交给
+/// wasm 的 `editor.transform`（spec §6.5）改写。`before-save`=编辑器保存前、
+/// `input`=debounce 输入时（实时校验/联想）。纯文本 in/out——不带 notes/ai 上下文。
+/// 注：spec §3.7 的可选 `command`（复用某命令）本版未实现，dispatch 恒走 `editor.transform`；
+/// 声明了 `command` 的旧 manifest 该字段被 serde 忽略（向前兼容）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditorContribution {
+    pub on: String, // "before-save" | "input"
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Contributes {
     #[serde(default)]
@@ -127,6 +143,8 @@ pub struct Contributes {
     pub toolbar: Vec<ToolbarContribution>,
     #[serde(default)]
     pub sidebar: Vec<SidebarContribution>,
+    #[serde(default)]
+    pub editor: Vec<EditorContribution>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -371,6 +389,19 @@ fn validate(m: &Manifest) -> Result<()> {
         // 静态 chat 的交互只能走 command（spec §3.5）
         if sb.widget == "chat" && sb.view.is_none() && sb.command.is_none() {
             bail!("sidebar {}：widget=chat 且无 view 时必须给 command", sb.id);
+        }
+    }
+    // 编辑器钩子（spec §3.7）：相位合法 + 需要 [backend]（editor.transform 由 wasm 实现）+ 相位不重复
+    let mut editor_phases = std::collections::HashSet::new();
+    for ed in &m.contributes.editor {
+        if !EDITOR_PHASES.contains(&ed.on.as_str()) {
+            bail!("editor.on 未知: {:?}（支持: {:?}）", ed.on, EDITOR_PHASES);
+        }
+        if m.backend.is_none() {
+            bail!("editor 钩子（on={:?}）需要 [backend]（editor.transform 由 wasm 实现）", ed.on);
+        }
+        if !editor_phases.insert(ed.on.as_str()) {
+            bail!("editor 相位重复: {}", ed.on);
         }
     }
     validate_schema(&m.settings.schema, "settings.schema")?;
@@ -634,6 +665,44 @@ view = "main"
     #[test]
     fn api_version_0_3_accepted() {
         assert!(parse("id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.3\"").is_ok());
+    }
+
+    #[test]
+    fn parses_and_validates_editor_contribution() {
+        let base = "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.4\"\n";
+        let backend = "[backend]\nwasm = \"plugin.wasm\"\n";
+        // 合法：两相位各一
+        let m = parse(&format!(
+            "{base}{backend}[[contributes.editor]]\non = \"input\"\n[[contributes.editor]]\non = \"before-save\"\n"
+        ))
+        .unwrap();
+        assert_eq!(m.contributes.editor.len(), 2);
+        assert_eq!(m.contributes.editor[0].on, "input");
+        // 未知相位
+        assert!(parse(&format!("{base}{backend}[[contributes.editor]]\non = \"blur\"\n")).is_err());
+        // 需要 [backend]
+        assert!(parse(&format!("{base}[[contributes.editor]]\non = \"input\"\n")).is_err());
+        // 相位重复
+        assert!(parse(&format!(
+            "{base}{backend}[[contributes.editor]]\non = \"input\"\n[[contributes.editor]]\non = \"input\"\n"
+        ))
+        .is_err());
+        // spec §3.7 的可选 command 字段被 serde 忽略（向前兼容），不影响解析
+        assert!(parse(&format!(
+            "{base}{backend}[[contributes.editor]]\non = \"input\"\ncommand = \"whatever\"\n"
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn extended_widget_vocabulary_accepted_in_sidebar() {
+        let base = "id = \"a\"\nname = \"x\"\nversion = \"1\"\napiVersion = \"0.4\"\n";
+        for w in ["checkbox", "select", "divider", "heading"] {
+            assert!(
+                parse(&format!("{base}[[contributes.sidebar]]\nid = \"s\"\ntitle = \"S\"\nwidget = \"{w}\"\n")).is_ok(),
+                "widget {w} 应被接受"
+            );
+        }
     }
 
     #[test]

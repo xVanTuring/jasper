@@ -57,7 +57,14 @@ fn before_save(mut note: sdk::core::model::Note) -> Result<sdk::core::model::Not
 // 命令：fn(&str /*命令id*/, Value /*args*/) -> Result<Value, PluginError>
 fn command(id: &str, args: sdk::serde_json::Value) -> Result<sdk::serde_json::Value, sdk::PluginError> { todo!() }
 
-sdk::register! { before_save: before_save, command: command }
+// server-driven UI（0.3）：fn(&str /*view*/, Value /*state*/) -> Result<Value /*UiNode 树*/, PluginError>
+fn ui(view: &str, state: sdk::serde_json::Value) -> Result<sdk::serde_json::Value, sdk::PluginError> { todo!() }
+
+// 编辑期文本变换（0.4，contributes.editor → editor.transform）：
+//   fn(&str /*phase: before-save|input*/, String /*text*/) -> Result<String, PluginError>
+fn editor(phase: &str, text: String) -> Result<String, sdk::PluginError> { Ok(text) }
+
+sdk::register! { before_save: before_save, command: command, ui: ui, editor: editor }
 // storage 插件：sdk::register! { storage: MyStorage }（MyStorage: impl sdk::storage::Storage）
 ```
 
@@ -85,7 +92,7 @@ sdk::register! { before_save: before_save, command: command }
 
 4. **验证 wasm 干净**：构建后 dump imports。`trim-trailing` 应 **零 import**；用到 host 能力的插件应**只**有 `joplin.host_call`。若看到 `__wbindgen_*` import，说明有 wasm-bindgen 依赖漏进来了（回去查坑 #2）。快速检查（Python 解析 import 段）见本仓库历史做法，或用 `wasm-tools print plugin.wasm | grep import`。
 
-5. **`register!` 宏是累积器**：`before_save`/`storage`/`command` 三槽任选、任意顺序、可组合。不用宏也行（`testbed/` 手写了 `plugin_alloc`/`plugin_free`/`plugin_dispatch` 三个 `#[no_mangle] extern "C"` 导出——参考它做特殊 ABI）。
+5. **`register!` 宏是累积器**：`before_save`/`storage`/`command`/`ui`（0.3）/`editor`（0.4）五槽任选、任意顺序、可组合。不用宏也行（`testbed/` 手写了 `plugin_alloc`/`plugin_free`/`plugin_dispatch` 三个 `#[no_mangle] extern "C"` 导出——参考它做特殊 ABI）。
 
 6. **ABI 内存归属**（手写 ABI 时才需在意）：`plugin_dispatch` 的入参缓冲**归宿主**（宿主 alloc、读完响应后宿主 free），插件别释放它；`host_call` 的响应缓冲**归插件**（读完插件 free）。SDK 的 `rt::dispatch`/`call_host` 已处理好。
 
