@@ -1,17 +1,16 @@
 # TODO
 
-未完成功能清单，整理自 `CLAUDE.md`「路线 / TODO」节与 `docs/plugin-design.md` §11。核对时间：2026-07-03（对照当前源码，见下方每项的验证方式）。
+未完成功能清单，整理自 `CLAUDE.md`「路线 / TODO」节与 `docs/plugin-design.md` §11。核对时间：2026-07-04（对照当前源码，见下方每项的验证方式）。
 
 ## 1. LAN 鉴权 / 访问口令 ✅ 已完成（2026-07-03，访问鉴权 / 访问控制）
 
 - 已实现：`server/src/auth.rs` 的容器级访问密码（设置页配置，加盐迭代 SHA-256 存 `config.db`）+ 会话 token（`Authorization: Bearer`，内存态）+ `guard_auth` 中间件（写操作与机密读的门控 + `Extension<Access>`）+ 读路径按 `Scope`（无密码阅读总开关 + 笔记本黑白名单子树）过滤，覆盖 folders/notes/search/detail 及标签读端点（`tags_list`/`tag_notes`/`note_tags_list`，已核对 `server/src/api.rs` 均带 `Scope` 过滤）；前端 `AuthDialog.svelte` + 统一 `readOnly` 闸门 + 设置页「访问控制」段。详见 `CLAUDE.md`「访问鉴权 / 访问控制」节。
-- 已知权衡（非阻塞，见 CLAUDE.md 同节「已知权衡」）：资源二进制按不可猜 id 放行、会话仅内存态（重启需重登）。
+- 已知权衡（非阻塞，见 CLAUDE.md 同节「已知权衡」）：会话仅内存态（重启需重登）。
 
-## 2. 资源二进制访问控制（ACL）补齐
+## 2. 资源二进制访问控制（ACL）补齐 ✅ 已完成（2026-07-04，资源二进制访问控制补齐）
 
-- 现状：`GET /api/resources/{id}`（`server/src/api.rs::resource` handler）不带 `Extension<Access>`，不做 `Scope` 过滤——不管有没有登录、笔记本黑白名单怎么配置，只要知道 32-hex 资源 id 就能直接下载对应二进制。当前安全性纯靠"id 猜不出来"（security through obscurity），没有 resource→note→folder 的权限链路。
-- 需要：比照 folders/notes/search 的姿势，给 `resource` handler 接入 `Extension<Access>` + `Scope`——按资源的引用者（`library::resource_usage` 已有反向索引）找到笔记 → 笔记本，套用同一套黑白名单规则拒绝访问。
-- 关联：`CLAUDE.md`「访问鉴权 / 访问控制」节「已知权衡」已记录此限制；README 的兼容性/限制一节也据此提示用户。
+- 已实现：`core::library` 新增 `resource_notes` 反向索引（`build_indexes()` 里据笔记正文 `:/<id>` 引用构建，笔记增删改已有的 `build_indexes()` 调用自动保鲜）+ `notes_referencing_resource`；`server/src/api.rs::resource` handler 接入 `Extension<Access>` + `Scope`——resource→note→folder 权限链路：找到引用该资源的笔记，取其 `parent_id` 过 `scope.allows_folder`，任一可见即放行（多笔记引用取并集，语义同标签视图）；孤儿资源（无笔记引用）在受限范围下判定不可见；`Scope::All`（未设密码/已登录/passwordless+none）零开销跳过检查。详见 `CLAUDE.md`「访问鉴权 / 访问控制」节与「路线 / TODO」的完成记录。
+- 测试：`core/src/library.rs` 的 `notes_referencing_resource_finds_cross_folder_refs_and_empty_for_orphan`；`server/src/api.rs` 的 `anonymous_resource_acl_scopes_by_referencing_note_folder`（白名单/黑名单/passwordless 关/孤儿资源/多笔记引用并集/Full 不受限，均已跑过）。
 
 ## 3. 标签视图 + 打标签 ✅ 已完成（2026-07-03，浏览 + 读写，兼容 Joplin）
 

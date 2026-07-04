@@ -1108,17 +1108,30 @@ async fn remove_note_tag(
     Ok(Json(lib.tags_of_note(&id).into_iter().map(tag_ref).collect()))
 }
 
-async fn resource(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
-    let storage = match storage_of(&state) {
-        Some(s) => s,
-        None => return StatusCode::NOT_FOUND.into_response(),
-    };
+/// GET /api/resources/{id} —— 资源二进制。资源自身不知道所在笔记本，故按引用它的笔记的
+/// parent_id 间接判定可见性（resource→note→folder），同 `note_detail` 一律 404 不区分不存在/无权。
+/// 孤儿资源（无笔记引用）在受限范围下没有可归属的权限链路 → 默认拒绝。
+async fn resource(
+    State(state): State<Arc<AppState>>,
+    Extension(access): Extension<Access>,
+    Path(id): Path<String>,
+) -> Response {
     let mime = {
         let lib = state.library.read().unwrap();
+        let scope = state.auth.scope(&lib, access);
+        if !matches!(scope, Scope::All)
+            && !lib.notes_referencing_resource(&id).iter().any(|n| scope.allows_folder(&n.parent_id))
+        {
+            return StatusCode::NOT_FOUND.into_response();
+        }
         lib.resource(&id)
             .map(|r| r.mime.clone())
             .filter(|m| !m.is_empty())
             .unwrap_or_else(|| "application/octet-stream".to_string())
+    };
+    let storage = match storage_of(&state) {
+        Some(s) => s,
+        None => return StatusCode::NOT_FOUND.into_response(),
     };
     let bytes = tokio::task::spawn_blocking(move || storage.get_resource(&id)).await;
     match bytes {
@@ -2025,6 +2038,103 @@ mod tests {
         // a 笔记 404、d 笔记 200
         assert_eq!(send(state.clone(), "GET", &format!("/api/notes/{n_a}"), "", None).await.status(), StatusCode::NOT_FOUND);
         assert_eq!(send(state, "GET", &format!("/api/notes/{n_d}"), "", None).await.status(), StatusCode::OK);
+    }
+
+    /// 资源二进制的 ACL：resource→note→folder 权限链路。白名单/黑名单只放行被可见笔记本内笔记
+    /// 引用过的资源；孤儿资源（无引用）受限时一律拒绝；多篇引用取并集（有一篇可见即放行）；
+    /// passwordless 关则恒 404；Full 访问不受影响。
+    #[tokio::test]
+    async fn anonymous_resource_acl_scopes_by_referencing_note_folder() {
+        let visible_f = "a".repeat(32);
+        let hidden_f = "b".repeat(32);
+        let n_visible = "1".repeat(32);
+        let n_hidden = "2".repeat(32);
+        let n_visible2 = "3".repeat(32);
+        let r_in_visible = "c".repeat(32); // 只被可见笔记本内的笔记引用
+        let r_in_hidden = "d".repeat(32); // 只被隐藏笔记本内的笔记引用
+        let r_shared = "e".repeat(32); // 同时被可见/隐藏笔记引用（并集：至少一篇可见即放行）
+        let r_orphan = "f".repeat(32); // 无笔记引用
+
+        let dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(crate::storage::local::LocalStorage::new(dir.path())) as Arc<dyn StorageBackend>;
+        for (rid, body) in [
+            (&r_in_visible, b"visible-bytes" as &[u8]),
+            (&r_in_hidden, b"hidden-bytes"),
+            (&r_shared, b"shared-bytes"),
+        ] {
+            storage.put_resource(rid, body).unwrap();
+        }
+
+        // n_hidden 引用 r_in_hidden；另有一篇隐藏笔记本内的笔记也引用 r_shared（并集测试的另一半）。
+        let build = || {
+            vec![
+                format!("Visible\n\nid: {visible_f}\nparent_id: \ntype_: 2"),
+                format!("Hidden\n\nid: {hidden_f}\nparent_id: \ntype_: 2"),
+                serialize::new_note_md(&n_visible, &visible_f, "in visible", &format!("![x](:/{r_in_visible})"), false, 1),
+                serialize::new_note_md(&n_hidden, &hidden_f, "in hidden", &format!("![x](:/{r_in_hidden})"), false, 2),
+                serialize::new_note_md(&n_visible2, &visible_f, "also visible", &format!("![x](:/{r_shared})"), false, 3),
+                serialize::new_note_md(&"9".repeat(32), &hidden_f, "hidden shares too", &format!("![x](:/{r_shared})"), false, 4),
+            ]
+        };
+
+        let state = state_with_lib(auth_config(Some("pw"), true, "whitelist", &[&visible_f]), build());
+        *state.storage.write().unwrap() = Some(storage.clone());
+
+        // 仅被可见笔记本引用 → 200 + 正确字节
+        let resp = send(state.clone(), "GET", &format!("/api/resources/{r_in_visible}"), "", None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        assert_eq!(&bytes[..], b"visible-bytes");
+
+        // 仅被隐藏笔记本引用 → 404（即使二进制本身在存储里存在，前面短路拒绝）
+        assert_eq!(
+            send(state.clone(), "GET", &format!("/api/resources/{r_in_hidden}"), "", None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+
+        // 同时被可见/隐藏笔记引用 → 并集放行，200
+        assert_eq!(
+            send(state.clone(), "GET", &format!("/api/resources/{r_shared}"), "", None).await.status(),
+            StatusCode::OK
+        );
+
+        // 孤儿资源（无引用）在受限范围下没有权限链路 → 404
+        assert_eq!(
+            send(state.clone(), "GET", &format!("/api/resources/{r_orphan}"), "", None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+
+        // 黑名单（挡 hidden_f）：可见资源同上，隐藏资源仍拒绝
+        let bl_state = state_with_lib(auth_config(Some("pw"), true, "blacklist", &[&hidden_f]), build());
+        *bl_state.storage.write().unwrap() = Some(storage.clone());
+        assert_eq!(
+            send(bl_state.clone(), "GET", &format!("/api/resources/{r_in_visible}"), "", None).await.status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            send(bl_state, "GET", &format!("/api/resources/{r_in_hidden}"), "", None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+
+        // passwordless 关（整站私有）：即使资源被引用，也一律 404
+        let priv_state = state_with_lib(auth_config(Some("pw"), false, "none", &[]), build());
+        *priv_state.storage.write().unwrap() = Some(storage.clone());
+        assert_eq!(
+            send(priv_state, "GET", &format!("/api/resources/{r_in_visible}"), "", None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+
+        // Full（已登录）：Scope::All 跳过 ACL 检查——r_in_hidden 在匿名 whitelist 下 404（上面已验证），
+        // 带 token 则放行，证明限制只对匿名生效。
+        let token = body_json(send(state.clone(), "POST", "/api/auth/login", "{\"password\":\"pw\"}", None).await)
+            .await["token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            send(state, "GET", &format!("/api/resources/{r_in_hidden}"), "", Some(&token)).await.status(),
+            StatusCode::OK
+        );
     }
 
     /// 标签读端点也按范围过滤：篇数只数可见笔记、tag_notes 过滤、私有笔记的 tags 404、私有态全空。

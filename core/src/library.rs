@@ -21,6 +21,9 @@ pub struct Library {
     child_folders: HashMap<String, Vec<String>>,
     /// tag_id -> 打了该标签且仍存在的笔记 id（去重；据 note_tags 关联表构建）
     notes_by_tag: HashMap<String, Vec<String>>,
+    /// resource_id -> 引用它的笔记 id（据笔记正文里的 `:/<id>` 扫描构建；用于资源访问控制的
+    /// resource→note→folder 权限链路，见 server::api::resource）
+    resource_notes: HashMap<String, Vec<String>>,
 
     /// 笔记的原始 .md 内容（用于保存时保留元数据，避免重新拉取）
     raw_notes: HashMap<String, String>,
@@ -139,9 +142,17 @@ impl Library {
                 notes_by_tag.entry(nt.tag_id.clone()).or_default().push(nt.note_id.clone());
             }
         }
+        // 资源 → 引用它的笔记：扫每篇笔记正文的 `:/<id>` 引用（每篇笔记内已去重）。
+        let mut resource_notes: HashMap<String, Vec<String>> = HashMap::new();
+        for n in self.notes.values() {
+            for rid in scan_resource_refs(&n.body) {
+                resource_notes.entry(rid).or_default().push(n.id.clone());
+            }
+        }
         self.notes_by_folder = notes_by_folder;
         self.child_folders = child_folders;
         self.notes_by_tag = notes_by_tag;
+        self.resource_notes = resource_notes;
     }
 
     /// 某笔记本（含根 ""）直属笔记数。
@@ -378,16 +389,20 @@ impl Library {
         self.resources.remove(id);
     }
 
-    /// 每个资源被多少篇笔记引用（扫描所有笔记正文里的 `:/<id>`）。
+    /// 每个资源被多少篇笔记引用（据 `resource_notes` 反向索引求长度）。
     /// 未出现在结果中的资源即为无人引用的“孤儿”。
     pub fn resource_usage(&self) -> HashMap<String, usize> {
-        let mut usage: HashMap<String, usize> = HashMap::new();
-        for n in self.notes.values() {
-            for id in scan_resource_refs(&n.body) {
-                *usage.entry(id).or_insert(0) += 1;
-            }
-        }
-        usage
+        self.resource_notes.iter().map(|(id, notes)| (id.clone(), notes.len())).collect()
+    }
+
+    /// 引用某资源的笔记（用于访问控制的 resource→note→folder 权限链路：
+    /// 资源本身不知道自己在哪个笔记本下，只能通过引用它的笔记归属间接判定可见性）。
+    /// 无人引用（孤儿资源）→ 空 vec。
+    pub fn notes_referencing_resource(&self, resource_id: &str) -> Vec<&Note> {
+        self.resource_notes
+            .get(resource_id)
+            .map(|ids| ids.iter().filter_map(|id| self.notes.get(id)).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -673,5 +688,31 @@ mod tests {
         assert_eq!(usage.get(&r_orphan).copied(), None); // 孤儿：不出现
         assert!(lib.resource(&r_used).is_some());
         assert_eq!(lib.resource(&r_used).unwrap().mime, "image/png");
+    }
+
+    /// `notes_referencing_resource`：跨文件夹的多篇引用都能找到；孤儿资源返回空。
+    /// 用于访问控制的 resource→note→folder 权限链路（server::api::resource）。
+    #[test]
+    fn notes_referencing_resource_finds_cross_folder_refs_and_empty_for_orphan() {
+        let folder_a = hid(0xa0);
+        let folder_b = hid(0xb0);
+        let (r_used, r_orphan) = (hid(0xe0), hid(0xf0));
+        let contents = vec![
+            format!("A\n\nid: {folder_a}\nparent_id: \ntype_: 2"),
+            format!("B\n\nid: {folder_b}\nparent_id: \ntype_: 2"),
+            new_note_md(&hid(1), &folder_a, "n1", &format!("![x](:/{r_used})"), false, 1),
+            new_note_md(&hid(2), &folder_b, "n2", &format!("again :/{r_used}"), false, 2),
+            new_resource_md(&r_used, "used.png", "image/png", "png", 10, 1),
+            new_resource_md(&r_orphan, "orphan.png", "image/png", "png", 10, 1),
+        ];
+        let (lib, _) = Library::from_contents(contents);
+
+        let mut parents: Vec<String> =
+            lib.notes_referencing_resource(&r_used).iter().map(|n| n.parent_id.clone()).collect();
+        parents.sort();
+        assert_eq!(parents, vec![folder_a, folder_b]);
+
+        assert!(lib.notes_referencing_resource(&r_orphan).is_empty());
+        assert!(lib.notes_referencing_resource(&hid(0xff)).is_empty()); // 未知 id
     }
 }

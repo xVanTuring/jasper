@@ -92,7 +92,7 @@ The server scans the sync directory, parses every `<id>.md` item into an in-memo
 - Targets the **Joplin v3.x sync format** (sync target version 3), **unencrypted** libraries.
 - Handles notes, notebooks, resources, tags, and note-tags; revisions and other internal types are skipped.
 - This client does **not** participate in Joplin's sync lock protocol — fine for personal use; if both sides edit the same note, Joplin creates a conflict copy as usual.
-- Access-password auth (see **Access control** above) is built in for casual sharing; sessions are in-memory only (lost on restart) and there's no full resource-level ACL (resource files are reachable by their unguessable ID) — for anything more sensitive, still front it with your own auth/reverse proxy.
+- Access-password auth (see **Access control** above) is built in for casual sharing; sessions are in-memory only (lost on restart) — for anything more sensitive, still front it with your own auth/reverse proxy.
 - WebDAV passwords are stored **in plaintext** in the local config DB.
 
 ## Tech stack
