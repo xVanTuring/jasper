@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { slide } from 'svelte/transition'
+  import { fade, slide } from 'svelte/transition'
   import {
     api,
     localFolder,
@@ -71,6 +71,24 @@
   // 本地可写应用的真实文件夹数据源（FSA，仅 Chromium）：当前打开的文件夹名 / 待重连的文件夹名
   let folderName = $state<string | null>(null)
   let pendingFolder = $state<string | null>(null)
+  // 首次提示：Chrome 用户第一次进来时，在「打开文件夹」按钮下方悬浮一次性 tip（可离线选本地文件夹）
+  let showFolderHint = $state(false)
+  const FS_HINT_KEY = 'jasper.fsHintSeen'
+  function fsHintSeen(): boolean {
+    try {
+      return localStorage.getItem(FS_HINT_KEY) === '1'
+    } catch {
+      return false
+    }
+  }
+  function dismissFolderHint() {
+    try {
+      localStorage.setItem(FS_HINT_KEY, '1')
+    } catch {
+      /* localStorage 不可用 → 仅本次隐藏 */
+    }
+    showFolderHint = false
+  }
 
   // 访问鉴权（access control）状态（来自 /api/status）
   let authEnabled = $state(false) // 是否设了访问密码
@@ -293,6 +311,8 @@
     if (!localFolder) return
     folderName = localFolder.name()
     pendingFolder = folderName ? null : await localFolder.pending()
+    // 支持真实文件夹、当前用浏览器存储、且从未看过提示 → 首次悬浮 tip
+    showFolderHint = localFolder.supported() && !folderName && !pendingFolder && !fsHintSeen()
   }
   // 数据源切换后重载库（清选中 → 重新拉笔记本/标签/笔记）。
   async function reloadFromSource() {
@@ -305,6 +325,7 @@
   async function openFolder() {
     try {
       await localFolder!.open()
+      dismissFolderHint() // 打开过即视为已知，避免关闭文件夹后再弹
       await reloadFromSource()
     } catch (e) {
       // 用户取消目录选择器（AbortError）→ 静默；其它错误提示。
@@ -631,7 +652,15 @@
           {#if pendingFolder}
             <Button variant="ghost" icon="folder" label={t('local.reconnect', { name: pendingFolder })} onclick={reconnectFolder} />
           {:else}
-            <Button variant="ghost" iconOnly icon="folder" label={t('local.openFolder')} title={t('local.openFolderTip')} onclick={openFolder} />
+            <div class="folder-cta">
+              <Button variant="ghost" iconOnly icon="folder" label={t('local.openFolder')} title={t('local.openFolderTip')} onclick={openFolder} />
+              {#if showFolderHint}
+                <div class="folder-hint" role="status" transition:fade={{ duration: 150 }}>
+                  <span class="msg">{@html t('local.hint')}</span>
+                  <button type="button" class="hint-got" onclick={dismissFolderHint}>{t('local.hintGot')}</button>
+                </div>
+              {/if}
+            </div>
           {/if}
         {:else}
           <span class="source-hint" title={t('local.notSupported')}><Icon name="folder" size={14} /></span>
@@ -864,6 +893,61 @@
     color: var(--text-dim);
     opacity: 0.5;
     cursor: help;
+  }
+  /* 首次悬浮提示：锚在「打开文件夹」按钮下方 */
+  .folder-cta {
+    position: relative;
+    display: inline-flex;
+  }
+  .folder-hint {
+    position: absolute;
+    top: calc(100% + 9px);
+    right: 0;
+    z-index: 60;
+    width: max-content;
+    max-width: 250px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 9px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.55;
+    text-align: left;
+    white-space: normal;
+  }
+  .folder-hint::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: 12px;
+    width: 11px;
+    height: 11px;
+    background: var(--bg);
+    border-left: 1px solid var(--accent);
+    border-top: 1px solid var(--accent);
+    transform: rotate(45deg);
+  }
+  .folder-hint .msg :global(b) {
+    color: var(--accent);
+  }
+  .folder-hint .hint-got {
+    align-self: flex-end;
+    padding: 3px 12px;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .folder-hint .hint-got:hover {
+    opacity: 0.9;
   }
   .search {
     flex: 1;

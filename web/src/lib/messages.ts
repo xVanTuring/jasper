@@ -54,6 +54,8 @@ const zh = {
 	'local.reconnect': '重新连接「{name}」',
 	'local.folderTip': '数据源：文件夹「{name}」（改动直接写回磁盘，Joplin 可同步）',
 	'local.notSupported': '打开真实文件夹仅 Chromium 支持；Firefox/Safari 请用完整版或导入/导出',
+	'local.hint': '💡 <b>完全离线</b>：可直接打开本机的 Joplin 文件夹，读写都在本地、不经任何服务器（Chrome 专属）。',
+	'local.hintGot': '知道了',
 
 	// 设置 / 首次向导
 	'settings.welcomeTitle': '欢迎使用 Jasper',
@@ -345,6 +347,9 @@ const en: typeof zh = {
 	'local.folderTip': 'Source: folder "{name}" (edits are written straight to disk; Joplin can sync)',
 	'local.notSupported':
 		'Opening a real folder needs Chromium; on Firefox/Safari use the full version or import/export',
+	'local.hint':
+		'💡 <b>Fully offline</b>: open a real Joplin folder on your machine — all read/write stays local, no server involved (Chrome only).',
+	'local.hintGot': 'Got it',
 
 	'settings.welcomeTitle': 'Welcome to Jasper',
 	'settings.title': 'Settings',
