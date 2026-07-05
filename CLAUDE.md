@@ -126,10 +126,13 @@ docker compose -f docker-compose.dev.yml down -v   # 用完清理（含数据卷
 
 - **两个门闸标志**：`IS_WASM`（= DEMO||LOCAL，无后端构建，events/plugins 据此关闭）、`WASM_WRITABLE`（= LOCAL，可写持久）、`IS_DEMO`（= IS_WASM && !WASM_WRITABLE，只读展示横幅 + 只读闸门）。`readOnly = IS_DEMO || serverReadOnly || locked`。
 - **只读展示站**（`pnpm build:demo` = `build:wasm` + `VITE_DEMO=1 vite build`）：内置纯文本演示库（`wasm/src/demo.rs`，含标签），GitHub Pages 可挂；隐藏所有写入入口，顶部「演示预览」横幅。`demoApi` 走 `new Demo()`（内置库）。截图 `docs/screenshots/05-wasm-demo.png`。
-- **可写本地应用**（`pnpm build:local` = `build:wasm` + `VITE_LOCAL=1 vite build`；`pnpm dev:local` 热更）：笔记/笔记本/标签增删改移 + 资源图片，经 WASM 内核读写、**IndexedDB 持久**，刷新不丢。`localApi` 走 `Demo.fromRaws(从 IndexedDB 恢复/首次用 seedItems 播种)`；每次写后 `saveRaws(inst.snapshot())` 全量快照落库（`web/src/lib/localStore.ts`）。资源二进制存 IndexedDB、`resourceUrl` 返回 blob URL。设置页（数据源/鉴权/AI 无从谈起）隐藏，语言/主题在顶栏独立切换。
+- **可写本地应用**（`pnpm build:local` = `build:wasm` + `VITE_LOCAL=1 vite build`；`pnpm dev:local` 热更）：笔记/笔记本/标签增删改移 + 资源图片，经 WASM 内核读写。`localApi` 走 `Demo.fromRaws(...)`；持久后端**运行时二选一**（`LocalBackend` 抽象：`loadRaws`/`persist`/资源读写）。设置页（数据源/鉴权/AI 无从谈起）隐藏，语言/主题在顶栏独立切换。
+  - **idbBackend**（默认，`web/src/lib/localStore.ts`）：从 IndexedDB 恢复/首次用 `seedItems` 播种；每次写后 `saveRaws(inst.snapshot())` 全量快照落库；资源二进制存 IndexedDB。刷新不丢。
+  - **fsaBackend**（真实 Joplin 文件夹，`web/src/lib/fsStore.ts`，仅 Chromium）：`showDirectoryPicker` 选文件夹 → 读 `<id>.md`（过滤 `^[0-9a-fA-F]{32}\.md$`）→ `fromRaws`；写 = **per-file 增量**（`idOfRaw` 解析 id + `prevSnapshot` diff，只写改动/删已移除的 `<id>.md`，不整目录重写）；`.resource/<id>` 二进制直读写。写回同 `serialize.rs` 格式 → Joplin 可同步。句柄存 IndexedDB `jasper-fs` 持久，回访 `queryPermission` 自动重连、过期 UI 提示「重新连接」（`requestPermission` 需用户手势）。顶栏「打开文件夹」控制挂 `export const localFolder = WASM_WRITABLE ? {...} : undefined`（native 折叠）。Firefox/Safari 无目录选择器 → 显示不支持提示（导入/导出降级待做，见设计文档 §9.1）。
+  - `resourceUrl` 同步返回 blob URL（启动/切后端时按当前后端预载资源建映射）。
 - **WASM 内核写方法**（`wasm/src/lib.rs`）：镜像 `api.rs` handler（createNote/updateNote/moveNote/deleteNote/create|rename|moveFolder/add|removeNoteTag/upsertResourceMeta/rename|deleteResource），`Demo` 除 `Library` 外另存全类型 `raws: id→原始.md`（rename/move 笔记本/标签/资源需原始内容、也是 snapshot 来源）。**坑：`serialize::now_ms()` 用 `SystemTime::now()` 在 wasm32 上 panic**——所有写方法把 `now:f64` 当参数由 JS 注入 `Date.now()`，本层禁调 `now_ms()`；`new_id()` 走 getrandom js 后端可用。
-- **不影响原生**：`DEMO`/`LOCAL` 是编译期常量，`false` 时三元折叠、`demoApi`/`localApi` 连同 wasm 动态 import 一起被 tree-shake 掉，原生构建既不打包也不依赖 `web/src/wasm-pkg`（wasm-pack 生成、已 gitignore）。需先装 `rustup target add wasm32-unknown-unknown` 与 `wasm-pack`。
-- 测试：`localStore.test.ts`（IndexedDB 往返/播种，fake-indexeddb）；端到端由 `pnpm build:local` 实机验证（读+写+刷新持久）。
+- **不影响原生**：`DEMO`/`LOCAL` 是编译期常量，`false` 时三元折叠、`demoApi`/`localApi`/`localFolder` 连同 wasm 动态 import 与 fsStore 一起被 tree-shake 掉，原生构建既不打包也不依赖 `web/src/wasm-pkg`（wasm-pack 生成、已 gitignore）。需先装 `rustup target add wasm32-unknown-unknown` 与 `wasm-pack`。
+- 测试：`localStore.test.ts`（IndexedDB 往返/播种，fake-indexeddb）+ `fsStore.test.ts`（fake `FileSystemDirectoryHandle` 内存实现，读/写/删/资源/文件名过滤）；端到端 `build:local` 实机验证（IndexedDB：读+写+刷新持久；FSA：Playwright 注入 fake `showDirectoryPicker` 驱动 打开文件夹→读→新建→per-file 写回）。
 
 ## README 预览图（截图）
 

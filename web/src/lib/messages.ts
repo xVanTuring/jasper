@@ -47,6 +47,14 @@ const zh = {
 		'<b>演示预览</b> · 全程在浏览器内由 Rust&nbsp;→&nbsp;WASM 运行，<b>无后端</b>。可浏览笔记本/笔记、Markdown 渲染（代码 · 表格 · 公式 · 任务清单）、全文搜索。',
 	'demo.bannerDim': '编辑、图片资源、WebDAV / 本地读写为完整版（本地 server）能力。',
 
+	// 本地可写应用：真实文件夹（File System Access，仅 Chromium）
+	'local.openFolder': '打开 Joplin 文件夹',
+	'local.openFolderTip': '直接读写本机上真实的 Joplin 同步文件夹（Chromium）',
+	'local.closeFolder': '关闭文件夹，回浏览器存储',
+	'local.reconnect': '重新连接「{name}」',
+	'local.folderTip': '数据源：文件夹「{name}」（改动直接写回磁盘，Joplin 可同步）',
+	'local.notSupported': '打开真实文件夹仅 Chromium 支持；Firefox/Safari 请用完整版或导入/导出',
+
 	// 设置 / 首次向导
 	'settings.welcomeTitle': '欢迎使用 Jasper',
 	'settings.title': '设置',
@@ -329,6 +337,14 @@ const en: typeof zh = {
 		'<b>Demo preview</b> · Runs entirely in your browser via Rust&nbsp;→&nbsp;WASM, <b>no backend</b>. Browse notebooks/notes, Markdown rendering (code · tables · math · task lists), and full-text search.',
 	'demo.bannerDim':
 		'Editing, image resources, and WebDAV / local read-write are full-version (local server) features.',
+
+	'local.openFolder': 'Open Joplin folder',
+	'local.openFolderTip': 'Read and write a real Joplin sync folder on this machine (Chromium)',
+	'local.closeFolder': 'Close folder, back to browser storage',
+	'local.reconnect': 'Reconnect "{name}"',
+	'local.folderTip': 'Source: folder "{name}" (edits are written straight to disk; Joplin can sync)',
+	'local.notSupported':
+		'Opening a real folder needs Chromium; on Firefox/Safari use the full version or import/export',
 
 	'settings.welcomeTitle': 'Welcome to Jasper',
 	'settings.title': 'Settings',

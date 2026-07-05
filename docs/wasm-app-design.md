@@ -1,11 +1,13 @@
 # jasper WASM 应用化设计方案
 
-> 状态：**P0–P3 已落地（2026-07-05，feat/wasm-write）**——无后端「可写本地应用」构建 `pnpm build:local`：
-> 笔记/笔记本/标签的增删改移 + 资源图片，经 WASM 内核读写、IndexedDB 持久，刷新不丢。P4（File System
-> Access API 实文件夹、导出备份）仍为远期可选。本文档保留作架构决策存档。
+> 状态：**P0–P3 + P4(Chromium) 已落地**——无后端「可写本地应用」构建 `pnpm build:local`：笔记/笔记本/标签的
+> 增删改移 + 资源图片，经 WASM 内核读写。持久后端**运行时二选一**：① IndexedDB（默认，刷新不丢；2026-07-05
+> feat/wasm-write）；② **真实 Joplin 文件夹**（File System Access，仅 Chromium；顶栏「打开文件夹」，读写直落磁盘、
+> Joplin 可同步；2026-07-05 feat/wasm-fsa）。Firefox/Safari 无目录选择器，降级（webkitdirectory 导入 / zip 导出）仍待做（见 §9）。
 > 目标读者：项目作者本人。
 > 相关：[joplin-data-format.md](./joplin-data-format.md)（写回格式依据）、`wasm/src/lib.rs`（WASM 内核：读+写）、
-> `web/src/lib/api.ts`（三态 api：httpApi/demoApi/localApi）、`web/src/lib/localStore.ts`（IndexedDB 持久层）。
+> `web/src/lib/api.ts`（三态 api + 可插拔本地后端 idb/fsa）、`web/src/lib/localStore.ts`（IndexedDB）、
+> `web/src/lib/fsStore.ts`（FSA 真实文件夹）。
 
 ## 0. 一句话
 
@@ -153,6 +155,22 @@ export const api = WASM_WRITABLE ? localApi : IS_WASM ? demoApi : httpApi
 - **导出/备份**：浏览器数据易被清。是否 P3/P4 就提供「导出为 zip/`.jex`」以防丢数据。
 - **多标签页并发**：同一 IndexedDB 被多标签页写。是否需要 `BroadcastChannel` 或简单「后写覆盖 + 载入时提示」。（个人单标签使用低风险，先不做。）
 
-## 9. 远期可选：File System Access API（真实文件夹）
+## 9. P4：File System Access API（真实文件夹）—— Chromium 已落地
 
-`showDirectoryPicker()`（Chromium 系）可让浏览器构建**直接读写真实 Joplin 同步文件夹**：读 `<id>.md` + `.resource/<id>`，编辑写回真实文件（Joplin 下次同步拾取）。这会把「无后端构建」从「浏览器内私有库」升级成「无 server 的完整本地客户端」，是 §2 非目标里唯一有升级空间的一项。约束：仅 Chromium 系、需用户授权弹窗、权限重启需重授。列为 P4 独立探索，不阻塞 P0–P3。
+`showDirectoryPicker()`（Chromium 系）让浏览器构建**直接读写真实 Joplin 同步文件夹**，把「无后端构建」从「浏览器内私有库」升级成「无 server 的完整本地客户端」。
+
+**落点（`web/src/lib/fsStore.ts` + `api.ts` 可插拔后端）**：
+- **数据源 = 后端二选一，运行时切换**：`LocalBackend` 抽象（`loadRaws`/`persist`/资源读写）；`idbBackend`（IndexedDB，默认）与 `fsaBackend(handle)`（真实文件夹）。切换即重建 wasm 实例 + 资源 blob URL 映射。
+- **读**：`readAllItems` 遍历根目录、过滤 `^[0-9a-fA-F]{32}\.md$`（对齐 `server::storage::is_item_filename`）→ raws → `Demo.fromRaws`；`.resource/<id>` 二进制懒读成 blob URL。
+- **写 = per-file 增量**：`persist` diff 快照（JS 侧 `idOfRaw` 解析 id，`prevSnapshot` 比对）→ 只 `writeItem` 改动的 `<id>.md`、`deleteItemFile` 已移除的；不整目录重写。写回同 `serialize.rs` 格式，Joplin 下次同步拾取。`createWritable().close()` 提交（原子性够用）。
+- **句柄持久**：`FileSystemDirectoryHandle` 可 structuredClone → 存 IndexedDB（`jasper-fs`）；回访 `queryPermission`，权限仍在则自动重连，过期则 UI 提示「重新连接」（`requestPermission` 需用户手势）。
+- **门闸/tree-shake**：控制挂 `export const localFolder = WASM_WRITABLE ? {...} : undefined`——native 构建 `WASM_WRITABLE` 折叠常量 false → `localFolder=undefined`、fsStore/backend/wasm 一并 tree-shake（已验证原生 dist 无 wasm 资产）。
+- **UI**：`App.svelte` 顶栏（仅 `localFolder` 存在时）——Chromium 显示「打开 Joplin 文件夹」→ 打开后 chip 显示文件夹名 + 「关闭文件夹」回浏览器存储；Firefox（`!supported()`）显示不支持提示。
+
+**测试**：`fsStore.test.ts`（内存版 fake `FileSystemDirectoryHandle` 覆盖读/写/删/资源/文件名过滤）；端到端由 Playwright 注入 fake `showDirectoryPicker`（类实现 → structuredClone 不抛）驱动真实应用：打开文件夹 → 读现有 → 新建笔记 → 断言真实文件夹 per-file 写回新 `<id>.md`。
+
+**约束/未决**：仅 Chromium；权限重启需重授（已处理为「重新连接」）；打开中 Joplin 外部改文件不自动刷新（无 mtime 轮询，MVP 略）；`.resource` 二进制启动全量预载成 blob URL（大库可后续改懒加载）。
+
+## 9.1 Firefox / Safari 降级（待做）
+
+无 `showDirectoryPicker`（Mozilla 将本地磁盘选择器列为 harmful；OPFS 是源私有沙箱，Joplin 看不到 → 无用）。降级路径：`<input webkitdirectory>` 一次性**导入**真实文件夹 → IndexedDB 本地库；改动经 **zip 导出**下载、手动放回 Joplin 目录。非实时，但可 round-trip。列为后续。

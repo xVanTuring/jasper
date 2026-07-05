@@ -1,4 +1,5 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
+import * as fsStore from './fsStore'
 import { t } from './i18n.svelte'
 import * as localStore from './localStore'
 import type { Schema } from './schema'
@@ -692,8 +693,10 @@ const demoApi = {
   search: async (q: string): Promise<NoteSummary[]> => JSON.parse((await wasmDemo()).search(q)),
 }
 
-// ---------- 可写本地应用（WASM_WRITABLE）----------
-// WASM 内核 + IndexedDB 持久；now 由 JS 注入 Date.now()（wasm 无时钟）。
+// ---------- 可写本地应用（WASM_WRITABLE）：可插拔持久后端 ----------
+// WASM 内核 + now 由 JS 注入 Date.now()（wasm 无时钟）。持久后端运行时二选一：
+// - idb：浏览器 IndexedDB（默认；首次播种演示库）。
+// - fsa：真实 Joplin 文件夹（Chromium，File System Access）；读写落磁盘、Joplin 可同步。
 
 const resourceUrls = new Map<string, string>() // 资源 id → blob objectURL（resourceUrl 同步查表）
 
@@ -706,30 +709,164 @@ function extOfFilename(name: string): string {
   const i = name.lastIndexOf('.')
   return i > 0 && i < name.length - 1 ? name.slice(i + 1).toLowerCase() : ''
 }
+// 从原始 .md 取条目 id（FSA 后端 per-file 增量写用）。
+function idOfRaw(raw: string): string | null {
+  const m = /^id: ([0-9a-zA-Z]{32})$/m.exec(raw)
+  return m ? m[1] : null
+}
+function snapshotMap(inst: WasmInstance): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const raw of inst.snapshot()) {
+    const id = idOfRaw(raw)
+    if (id) m.set(id, raw)
+  }
+  return m
+}
 
+// 持久后端抽象：读全部原始条目 + 持久快照 + 资源二进制读写。
+interface LocalBackend {
+  isFolder: boolean
+  label: string // 数据源名（文件夹名 / 'browser'）
+  loadRaws(): Promise<string[]>
+  persist(inst: WasmInstance): Promise<void>
+  putResource(id: string, mime: string, blob: Blob): Promise<void>
+  deleteResource(id: string): Promise<void>
+  resourceBlob(id: string): Promise<Blob | null>
+  allResourceIds(): Promise<string[]>
+}
+
+// IndexedDB 后端（默认）。
+const idbBackend: LocalBackend = {
+  isFolder: false,
+  label: 'browser',
+  loadRaws: async () => {
+    let raws = await localStore.loadRaws()
+    if (raws === null && !(await localStore.isSeeded())) {
+      const m = await loadWasm()
+      raws = m.Demo.seedItems() // 首次运行播种演示库（用户可自行清空）
+      await localStore.saveRaws(raws)
+      await localStore.markSeeded()
+    }
+    return raws ?? []
+  },
+  persist: async (inst) => {
+    await localStore.saveRaws(inst.snapshot()) // 全量快照
+  },
+  putResource: (id, mime, blob) => localStore.putResource(id, mime, blob),
+  deleteResource: (id) => localStore.deleteResource(id),
+  resourceBlob: async (id) => (await localStore.getResource(id))?.blob ?? null,
+  allResourceIds: async () => (await localStore.allResources()).map((r) => r.id),
+}
+
+// FSA 真实文件夹后端。per-file 增量写：diff 快照，只写改动、删已移除的 <id>.md。
+let prevSnapshot = new Map<string, string>()
+function fsaBackend(handle: FileSystemDirectoryHandle): LocalBackend {
+  return {
+    isFolder: true,
+    label: handle.name,
+    loadRaws: async () => {
+      const raws = await fsStore.readAllItems(handle)
+      prevSnapshot = snapshotOfRaws(raws)
+      return raws
+    },
+    persist: async (inst) => {
+      const cur = snapshotMap(inst)
+      for (const [id, raw] of cur) {
+        if (prevSnapshot.get(id) !== raw) await fsStore.writeItem(handle, id, raw)
+      }
+      for (const id of prevSnapshot.keys()) {
+        if (!cur.has(id)) await fsStore.deleteItemFile(handle, id)
+      }
+      prevSnapshot = cur
+    },
+    putResource: (id, _mime, blob) => fsStore.writeResource(handle, id, blob),
+    deleteResource: (id) => fsStore.deleteResourceFile(handle, id),
+    resourceBlob: (id) => fsStore.readResourceBlob(handle, id),
+    allResourceIds: () => fsStore.listResourceIds(handle),
+  }
+}
+function snapshotOfRaws(raws: string[]): Map<string, string> {
+  const m = new Map<string, string>()
+  for (const raw of raws) {
+    const id = idOfRaw(raw)
+    if (id) m.set(id, raw)
+  }
+  return m
+}
+
+let backend: LocalBackend = idbBackend
 let _local: Promise<WasmInstance> | null = null
+
+// 用当前后端构建 wasm 实例 + 重建资源 blob URL 映射。
+async function buildInstance(): Promise<WasmInstance> {
+  const m = await loadWasm()
+  const inst = m.Demo.fromRaws(await backend.loadRaws())
+  for (const url of resourceUrls.values()) URL.revokeObjectURL(url)
+  resourceUrls.clear()
+  for (const id of await backend.allResourceIds()) {
+    const blob = await backend.resourceBlob(id)
+    if (blob) resourceUrls.set(id, URL.createObjectURL(blob))
+  }
+  return inst
+}
+
 function localInst(): Promise<WasmInstance> {
   if (!_local) {
     _local = (async () => {
-      const m = await loadWasm()
-      let raws = await localStore.loadRaws()
-      if (raws === null && !(await localStore.isSeeded())) {
-        // 首次运行：用内置演示库播种，便于直接上手（用户可自行清空）。
-        raws = m.Demo.seedItems()
-        await localStore.saveRaws(raws)
-        await localStore.markSeeded()
+      // 启动优先恢复「已授权」的文件夹（权限还在才自动用；否则退回浏览器存储，UI 可提示重连）。
+      if (fsStore.fsaSupported()) {
+        try {
+          const h = await fsStore.loadHandle()
+          if (h && (await fsStore.ensurePermission(h, false))) backend = fsaBackend(h)
+        } catch {
+          /* 退回 idb */
+        }
       }
-      const inst = m.Demo.fromRaws(raws ?? [])
-      for (const r of await localStore.allResources()) {
-        resourceUrls.set(r.id, URL.createObjectURL(r.blob))
-      }
-      return inst
+      return buildInstance()
     })()
   }
   return _local
 }
 async function persistLocal(inst: WasmInstance): Promise<void> {
-  await localStore.saveRaws(inst.snapshot())
+  await backend.persist(inst)
+}
+
+// 切换后端后重建实例（下次 api 调用即用新库）。
+async function switchBackend(next: LocalBackend): Promise<void> {
+  backend = next
+  _local = buildInstance()
+  await _local
+}
+
+// ---- 真实文件夹控制（挂到 localFolder 导出；native 构建里整体 tree-shake）----
+async function openLocalFolder(): Promise<string> {
+  const h = await fsStore.pickDirectory() // 用户取消 → reject
+  if (!(await fsStore.ensurePermission(h, true))) throw new Error('folder permission denied')
+  await fsStore.saveHandle(h)
+  await switchBackend(fsaBackend(h))
+  return h.name
+}
+async function reconnectLocalFolder(): Promise<string | null> {
+  const h = await fsStore.loadHandle()
+  if (!h || !(await fsStore.ensurePermission(h, true))) return null
+  await fsStore.saveHandle(h)
+  await switchBackend(fsaBackend(h))
+  return h.name
+}
+async function closeLocalFolder(): Promise<void> {
+  await fsStore.clearHandle()
+  await switchBackend(idbBackend)
+}
+// 有已保存但需重新授权的文件夹句柄（回访权限过期）→ 名字；否则 null。
+async function pendingLocalFolder(): Promise<string | null> {
+  if (backend.isFolder) return null
+  try {
+    const h = await fsStore.loadHandle()
+    if (h && !(await fsStore.ensurePermission(h, false))) return h.name
+  } catch {
+    /* 无 */
+  }
+  return null
 }
 
 const localApi = {
@@ -825,7 +962,7 @@ const localApi = {
     const name = filename.trim()
     const ext = extOfFilename(name)
     const title = name || (ext ? `${id}.${ext}` : id)
-    await localStore.putResource(id, mime, file)
+    await backend.putResource(id, mime, file)
     resourceUrls.set(id, URL.createObjectURL(file))
     const up = JSON.parse(
       i.upsertResourceMeta(id, title, mime, ext, file.size, Date.now()),
@@ -847,10 +984,24 @@ const localApi = {
       URL.revokeObjectURL(url)
       resourceUrls.delete(id)
     }
-    await localStore.deleteResource(id)
+    await backend.deleteResource(id)
     await persistLocal(i)
   },
 }
+
+// 真实文件夹（FSA）控制。仅本地可写构建暴露；native 构建 WASM_WRITABLE 折叠为常量 false
+// → localFolder=undefined、控制函数/fsStore/backend 一并 tree-shake，不把 wasm 拖进原生包。
+const localFolderControls = {
+  supported: (): boolean => fsStore.fsaSupported(),
+  name: (): string | null => (backend.isFolder ? backend.label : null),
+  open: openLocalFolder,
+  reconnect: reconnectLocalFolder,
+  close: closeLocalFolder,
+  pending: pendingLocalFolder,
+}
+export const localFolder: typeof localFolderControls | undefined = WASM_WRITABLE
+  ? localFolderControls
+  : undefined
 
 export const api = WASM_WRITABLE
   ? { ...httpApi, ...localApi }

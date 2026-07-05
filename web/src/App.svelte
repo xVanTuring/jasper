@@ -3,6 +3,7 @@
   import { slide } from 'svelte/transition'
   import {
     api,
+    localFolder,
     IS_DEMO,
     IS_WASM,
     FOLDER_DND_TYPE,
@@ -67,6 +68,9 @@
   let showResources = $state(false)
   let showPlugins = $state(false)
   let showDemoBanner = $state(true)
+  // 本地可写应用的真实文件夹数据源（FSA，仅 Chromium）：当前打开的文件夹名 / 待重连的文件夹名
+  let folderName = $state<string | null>(null)
+  let pendingFolder = $state<string | null>(null)
 
   // 访问鉴权（access control）状态（来自 /api/status）
   let authEnabled = $state(false) // 是否设了访问密码
@@ -277,10 +281,46 @@
       if (configured) {
         connectEvents(onRemoteChange) // 幂等；DEMO/不支持时静默跳过
         await loadFolders()
+        await refreshLocalSource()
       }
     } catch (e) {
       error = `${e}`
     }
+  }
+
+  // 本地可写应用：把当前数据源（浏览器存储 / 真实文件夹）同步进 UI。
+  async function refreshLocalSource() {
+    if (!localFolder) return
+    folderName = localFolder.name()
+    pendingFolder = folderName ? null : await localFolder.pending()
+  }
+  // 数据源切换后重载库（清选中 → 重新拉笔记本/标签/笔记）。
+  async function reloadFromSource() {
+    selectedNoteId = null
+    detail = null
+    selectedTagId = null
+    await loadFolders()
+    await refreshLocalSource()
+  }
+  async function openFolder() {
+    try {
+      await localFolder!.open()
+      await reloadFromSource()
+    } catch (e) {
+      // 用户取消目录选择器（AbortError）→ 静默；其它错误提示。
+      if (!(e instanceof DOMException && e.name === 'AbortError')) error = `${e}`
+    }
+  }
+  async function reconnectFolder() {
+    try {
+      if (await localFolder!.reconnect()) await reloadFromSource()
+    } catch {
+      /* 授权失败 → 保持浏览器存储 */
+    }
+  }
+  async function closeFolder() {
+    await localFolder!.close()
+    await reloadFromSource()
   }
 
   async function loadTags() {
@@ -580,6 +620,23 @@
     <div class="topbar-actions">
       <LangPicker />
       <ThemePicker />
+      <!-- 本地可写应用：真实文件夹数据源（FSA，仅 Chromium）。localFolder 仅 WASM_WRITABLE 构建存在。 -->
+      {#if localFolder}
+        {#if folderName}
+          <span class="source-chip" title={t('local.folderTip', { name: folderName })}>
+            <Icon name="folder" size={14} /> {folderName}
+          </span>
+          <Button variant="ghost" iconOnly icon="close" label={t('local.closeFolder')} onclick={closeFolder} />
+        {:else if localFolder.supported()}
+          {#if pendingFolder}
+            <Button variant="ghost" icon="folder" label={t('local.reconnect', { name: pendingFolder })} onclick={reconnectFolder} />
+          {:else}
+            <Button variant="ghost" iconOnly icon="folder" label={t('local.openFolder')} title={t('local.openFolderTip')} onclick={openFolder} />
+          {/if}
+        {:else}
+          <span class="source-hint" title={t('local.notSupported')}><Icon name="folder" size={14} /></span>
+        {/if}
+      {/if}
       {#if !IS_DEMO}
         {#if locked}
           <!-- 受保护未登录：只给「解锁登录」入口，管理功能待登录后出现 -->
@@ -781,6 +838,32 @@
     letter-spacing: 0.02em;
     flex: 0 0 auto;
     cursor: default;
+  }
+  /* 本地应用：真实文件夹数据源指示（chip）/ 不支持提示 */
+  .source-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 200px;
+    padding: 2px 9px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: var(--bg-side);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    flex: 0 0 auto;
+    cursor: default;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .source-hint {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-dim);
+    opacity: 0.5;
+    cursor: help;
   }
   .search {
     flex: 1;
