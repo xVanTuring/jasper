@@ -14,6 +14,8 @@
     "e2e:install": "playwright install --with-deps chromium",
     "build:wasm": "wasm-pack build ../wasm --target web --out-dir ../web/src/wasm-pkg",
     "build:demo": "pnpm build:wasm && VITE_DEMO=1 vite build",
+    "build:local": "pnpm build:wasm && VITE_LOCAL=1 vite build",
+    "dev:local": "VITE_LOCAL=1 vite",
     "shoot": "node scripts/shoot.mjs",
     "shoot:auth": "node scripts/shoot-auth.mjs"
   },
@@ -25,6 +27,7 @@
     "@tsconfig/svelte": "^5.0.8",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^24.13.2",
+    "fake-indexeddb": "^6.0.0",
     "jsdom": "^29.1.1",
     "svelte": "^5.56.3",
     "svelte-check": "^4.6.0",

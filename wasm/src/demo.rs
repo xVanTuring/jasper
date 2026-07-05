@@ -16,6 +16,19 @@ fn note(id: &str, parent: &str, title: &str, body: &str, t: &str) -> String {
     )
 }
 
+// 演示库固定时间（毫秒）——demo 内容为编译期常量，不取时钟。
+const DEMO_MS: i64 = 1_749_546_000_000;
+
+/// 标签条目（type_=5），复用 serialize 保证与真实后端同格式、可被 parser 解析。
+fn tag(id: &str, title: &str) -> String {
+    jasper_core::serialize::new_tag_md(id, title, DEMO_MS)
+}
+
+/// note_tag 关联条目（type_=6）。
+fn note_tag(id: &str, note_id: &str, tag_id: &str) -> String {
+    jasper_core::serialize::new_note_tag_md(id, note_id, tag_id, DEMO_MS)
+}
+
 const SHOWCASE: &str = r#"这是一篇在**浏览器里**由 Rust → WASM 解析渲染的笔记——后端逻辑没有 server，全跑在你这个标签页里。
 
 ## 它能做什么
@@ -88,24 +101,23 @@ pub fn items() -> Vec<String> {
     let tech = "a1110000000000000000000000000001";
     let work = "a1110000000000000000000000000002";
     let pers = "a1110000000000000000000000000003";
+    let n_showcase = "c1110000000000000000000000000001";
+    let n_rust = "c1110000000000000000000000000002";
+    let n_reading = "c1110000000000000000000000000004";
+    let t_rust = "d1110000000000000000000000000001";
+    let t_reading = "d1110000000000000000000000000002";
     vec![
         folder(tech, "技术笔记 · Tech", ""),
         folder(work, "工作 · Work", ""),
         folder(pers, "个人 · Personal", ""),
         note(
-            "c1110000000000000000000000000001",
+            n_showcase,
             tech,
             "✨ 功能展示 Feature Showcase",
             SHOWCASE,
             "2026-06-28T15:20:00.000Z",
         ),
-        note(
-            "c1110000000000000000000000000002",
-            tech,
-            "Rust 所有权与借用",
-            RUST_NOTE,
-            "2026-06-26T11:00:00.000Z",
-        ),
+        note(n_rust, tech, "Rust 所有权与借用", RUST_NOTE, "2026-06-26T11:00:00.000Z"),
         note(
             "c1110000000000000000000000000003",
             work,
@@ -113,12 +125,12 @@ pub fn items() -> Vec<String> {
             PLAN_NOTE,
             "2026-06-29T09:30:00.000Z",
         ),
-        note(
-            "c1110000000000000000000000000004",
-            pers,
-            "📚 读书清单",
-            READING_NOTE,
-            "2026-06-22T20:00:00.000Z",
-        ),
+        note(n_reading, pers, "📚 读书清单", READING_NOTE, "2026-06-22T20:00:00.000Z"),
+        // 标签 + 关联：演示标签视图（rust 标在展示/所有权两篇，阅读标在读书清单）
+        tag(t_rust, "rust"),
+        tag(t_reading, "阅读 · reading"),
+        note_tag("e1110000000000000000000000000001", n_showcase, t_rust),
+        note_tag("e1110000000000000000000000000002", n_rust, t_rust),
+        note_tag("e1110000000000000000000000000003", n_reading, t_reading),
     ]
 }

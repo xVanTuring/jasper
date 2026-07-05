@@ -4,6 +4,7 @@
   import {
     api,
     IS_DEMO,
+    IS_WASM,
     FOLDER_DND_TYPE,
     setAuthErrorHandler,
     type FolderNode,
@@ -38,7 +39,7 @@
   $effect(() => {
     const l = getLocale()
     document.documentElement.lang = l
-    if (!IS_DEMO) api.putLocale(l)
+    if (!IS_WASM) api.putLocale(l)
   })
 
 
@@ -591,7 +592,10 @@
           {#if pluginsAvailable()}
             <Button variant="ghost" iconOnly icon="plug" label={t('plugins.topbar')} onclick={() => (showPlugins = true)} />
           {/if}
-          <Button variant="ghost" iconOnly icon="settings" label={t('topbar.settings')} onclick={() => (showSettings = true)} />
+          <!-- 本地 WASM 应用无 server：设置里的数据源/鉴权/AI 段无从谈起，隐藏入口（语言/主题在顶栏独立切换）。 -->
+          {#if !IS_WASM}
+            <Button variant="ghost" iconOnly icon="settings" label={t('topbar.settings')} onclick={() => (showSettings = true)} />
+          {/if}
         {/if}
       {/if}
     </div>

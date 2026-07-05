@@ -3,7 +3,7 @@
 
 import {
 	api,
-	IS_DEMO,
+	IS_WASM,
 	type LocaleContribution,
 	type PluginInfo,
 	type PluginInstallResult,
@@ -101,9 +101,9 @@ export function editorInputPlugins(): string[] {
 		.map((p) => p.id)
 }
 
-/** 探测 + 拉取插件列表；同步主题 <link> 注入。demo 构建直接视为不可用。 */
+/** 探测 + 拉取插件列表；同步主题 <link> 注入。无后端 WASM 构建直接视为不可用。 */
 export async function loadPlugins(): Promise<void> {
-	if (IS_DEMO) {
+	if (IS_WASM) {
 		loaded = true
 		return
 	}

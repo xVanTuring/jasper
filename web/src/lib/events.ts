@@ -2,7 +2,7 @@
 // 内容由调用方按需再拉——见 App.svelte 的去抖合并刷新。
 // 断线由 EventSource 自动重连；重连间隙可能漏事件，故重连成功时合成一条
 // library reload 交给调用方全量刷新兜底（服务端重启/网络抖动都被覆盖）。
-import { IS_DEMO } from './api'
+import { IS_WASM } from './api'
 
 export type ChangeEvent = {
 	kind: 'note' | 'folder' | 'tag' | 'library'
@@ -12,9 +12,9 @@ export type ChangeEvent = {
 
 let source: EventSource | null = null
 
-/** 建立事件订阅（幂等：已连接/DEMO/环境不支持 → false）。 */
+/** 建立事件订阅（幂等：已连接/无后端 WASM 构建/环境不支持 → false）。 */
 export function connectEvents(onChange: (ev: ChangeEvent) => void): boolean {
-	if (IS_DEMO || source || typeof EventSource === 'undefined') return false
+	if (IS_WASM || source || typeof EventSource === 'undefined') return false
 	const es = new EventSource('/api/events')
 	source = es
 	let openedOnce = false

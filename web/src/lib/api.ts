@@ -1,5 +1,6 @@
 // 后端 API 客户端。开发期经 Vite 代理到 27583，生产期同源访问。
 import { t } from './i18n.svelte'
+import * as localStore from './localStore'
 import type { Schema } from './schema'
 import type { SettingsSchema } from './settingsSchema'
 
@@ -266,21 +267,68 @@ export interface ResourceInfo {
   used_by: number // 引用该资源的笔记数（0 = 孤儿）
 }
 
-// 「demo 模式」：构建时 VITE_DEMO=1，则只读查询走浏览器内的 WASM（jasper-core 编译产物），
-// 不需要任何后端 server——用于纯静态演示站点。
+// 无后端（backendless）构建：读写全走浏览器内的 WASM（jasper-core 编译产物），不需任何 server。
+// 两种：
+// - VITE_DEMO=1 → 只读展示站（内置演示库，GitHub Pages 用）。
+// - VITE_LOCAL=1 → 可写本地应用（从 IndexedDB 恢复/播种，读写持久）。
 const DEMO = import.meta.env.VITE_DEMO === '1'
-/// 是否为浏览器内 WASM 演示构建（只读）。供 UI 提示/禁用写入用。
-export const IS_DEMO = DEMO
+const LOCAL = import.meta.env.VITE_LOCAL === '1'
+/// 无后端、走 WASM 的构建（展示站与本地应用都属此）。events/plugins 据此关闭。
+export const IS_WASM = DEMO || LOCAL
+/// 可写且持久的本地应用构建。
+export const WASM_WRITABLE = LOCAL
+/// 只读展示构建（供「演示预览」横幅 + 只读闸门用）。IS_DEMO ≡ IS_WASM && !WASM_WRITABLE。
+export const IS_DEMO = IS_WASM && !WASM_WRITABLE
 
-let _demo: Promise<{ folders(): string; notes(f: string): string; note(id: string): string; search(q: string): string }> | null = null
-function wasmDemo() {
-  if (!_demo) {
-    _demo = (async () => {
-      const mod = await import('../wasm-pkg/jasper_wasm.js')
+// WASM 实例（读 + 写）方法面——与 wasm/src/lib.rs 的 Demo 一一对应（避免依赖 gitignore 的生成类型）。
+type WasmInstance = {
+  folders(): string
+  notes(f: string): string
+  note(id: string): string
+  search(q: string): string
+  tags(): string
+  notesByTag(tagId: string): string
+  noteTags(noteId: string): string
+  resources(): string
+  snapshot(): string[]
+  createNote(parentId: string, title: string, body: string, isTodo: boolean, now: number): string
+  updateNote(id: string, title: string, body: string, now: number): string
+  moveNote(id: string, newParent: string, now: number): string
+  deleteNote(id: string): void
+  createFolder(parentId: string, title: string, now: number): string
+  renameFolder(id: string, title: string, now: number): string
+  moveFolder(id: string, newParent: string, now: number): string
+  addNoteTag(noteId: string, title: string, now: number): string
+  removeNoteTag(noteId: string, tagId: string): string
+  upsertResourceMeta(id: string, title: string, mime: string, ext: string, size: number, now: number): string
+  renameResource(id: string, title: string, now: number): string
+  deleteResource(id: string): void
+}
+type WasmModule = {
+  default(): Promise<unknown>
+  Demo: {
+    new (): WasmInstance
+    fromRaws(raws: string[]): WasmInstance
+    seedItems(): string[]
+  }
+}
+
+let _wasm: Promise<WasmModule> | null = null
+function loadWasm(): Promise<WasmModule> {
+  if (!_wasm) {
+    _wasm = (async () => {
+      const mod = (await import('../wasm-pkg/jasper_wasm.js')) as unknown as WasmModule
       await mod.default() // 加载并初始化 .wasm
-      return new mod.Demo()
+      return mod
     })()
   }
+  return _wasm
+}
+
+// 只读展示：内置演示库。
+let _demo: Promise<WasmInstance> | null = null
+function wasmDemo(): Promise<WasmInstance> {
+  if (!_demo) _demo = loadWasm().then((m) => new m.Demo())
   return _demo
 }
 
@@ -635,12 +683,177 @@ const demoApi = {
     version: '0.0.0-demo',
   }),
   folders: async (): Promise<FolderNode[]> => JSON.parse((await wasmDemo()).folders()),
-  // 演示库不含标签视图 → 空列表（前端据此隐藏标签区）
-  tags: async (): Promise<TagInfo[]> => [],
+  tags: async (): Promise<TagInfo[]> => JSON.parse((await wasmDemo()).tags()),
+  notesByTag: async (tagId: string): Promise<NoteSummary[]> =>
+    JSON.parse((await wasmDemo()).notesByTag(tagId)),
   notes: async (folderId: string): Promise<NoteSummary[]> =>
     JSON.parse((await wasmDemo()).notes(folderId)),
   note: async (id: string): Promise<NoteDetail> => JSON.parse((await wasmDemo()).note(id)),
   search: async (q: string): Promise<NoteSummary[]> => JSON.parse((await wasmDemo()).search(q)),
 }
 
-export const api = DEMO ? { ...httpApi, ...demoApi } : httpApi
+// ---------- 可写本地应用（WASM_WRITABLE）----------
+// WASM 内核 + IndexedDB 持久；now 由 JS 注入 Date.now()（wasm 无时钟）。
+
+const resourceUrls = new Map<string, string>() // 资源 id → blob objectURL（resourceUrl 同步查表）
+
+function genLocalId(): string {
+  const b = new Uint8Array(16)
+  crypto.getRandomValues(b)
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('')
+}
+function extOfFilename(name: string): string {
+  const i = name.lastIndexOf('.')
+  return i > 0 && i < name.length - 1 ? name.slice(i + 1).toLowerCase() : ''
+}
+
+let _local: Promise<WasmInstance> | null = null
+function localInst(): Promise<WasmInstance> {
+  if (!_local) {
+    _local = (async () => {
+      const m = await loadWasm()
+      let raws = await localStore.loadRaws()
+      if (raws === null && !(await localStore.isSeeded())) {
+        // 首次运行：用内置演示库播种，便于直接上手（用户可自行清空）。
+        raws = m.Demo.seedItems()
+        await localStore.saveRaws(raws)
+        await localStore.markSeeded()
+      }
+      const inst = m.Demo.fromRaws(raws ?? [])
+      for (const r of await localStore.allResources()) {
+        resourceUrls.set(r.id, URL.createObjectURL(r.blob))
+      }
+      return inst
+    })()
+  }
+  return _local
+}
+async function persistLocal(inst: WasmInstance): Promise<void> {
+  await localStore.saveRaws(inst.snapshot())
+}
+
+const localApi = {
+  status: async (): Promise<StatusResp> => ({
+    configured: true,
+    source_type: 'local-wasm',
+    notes: 0,
+    folders: 0,
+    read_only: false, // 本地应用可写
+    auth_enabled: false,
+    authenticated: false,
+    passwordless_read: false,
+    version: '0.0.0-local',
+  }),
+  folders: async (): Promise<FolderNode[]> => JSON.parse((await localInst()).folders()),
+  notes: async (folderId: string): Promise<NoteSummary[]> =>
+    JSON.parse((await localInst()).notes(folderId)),
+  note: async (id: string): Promise<NoteDetail> => JSON.parse((await localInst()).note(id)),
+  search: async (q: string): Promise<NoteSummary[]> => JSON.parse((await localInst()).search(q)),
+  tags: async (): Promise<TagInfo[]> => JSON.parse((await localInst()).tags()),
+  notesByTag: async (tagId: string): Promise<NoteSummary[]> =>
+    JSON.parse((await localInst()).notesByTag(tagId)),
+  noteTags: async (noteId: string): Promise<TagRef[]> =>
+    JSON.parse((await localInst()).noteTags(noteId)),
+  resourceUrl: (id: string): string => resourceUrls.get(id) ?? '',
+
+  updateNote: async (id: string, data: { title: string; body: string }): Promise<NoteDetail> => {
+    const i = await localInst()
+    const d = JSON.parse(i.updateNote(id, data.title, data.body, Date.now())) as NoteDetail
+    await persistLocal(i)
+    return d
+  },
+  createNote: async (data: {
+    parent_id: string
+    title?: string
+    body?: string
+    is_todo?: boolean
+  }): Promise<NoteDetail> => {
+    const i = await localInst()
+    const d = JSON.parse(
+      i.createNote(data.parent_id, data.title ?? '', data.body ?? '', !!data.is_todo, Date.now()),
+    ) as NoteDetail
+    await persistLocal(i)
+    return d
+  },
+  moveNote: async (id: string, parentId: string): Promise<NoteDetail> => {
+    const i = await localInst()
+    const d = JSON.parse(i.moveNote(id, parentId, Date.now())) as NoteDetail
+    await persistLocal(i)
+    return d
+  },
+  deleteNote: async (id: string): Promise<void> => {
+    const i = await localInst()
+    i.deleteNote(id)
+    await persistLocal(i)
+  },
+  createFolder: async (data: { parent_id: string; title: string }): Promise<FolderRef> => {
+    const i = await localInst()
+    const f = JSON.parse(i.createFolder(data.parent_id, data.title, Date.now())) as FolderRef
+    await persistLocal(i)
+    return f
+  },
+  renameFolder: async (id: string, title: string): Promise<FolderRef> => {
+    const i = await localInst()
+    const f = JSON.parse(i.renameFolder(id, title, Date.now())) as FolderRef
+    await persistLocal(i)
+    return f
+  },
+  moveFolder: async (id: string, parentId: string): Promise<FolderRef> => {
+    const i = await localInst()
+    const f = JSON.parse(i.moveFolder(id, parentId, Date.now())) as FolderRef
+    await persistLocal(i)
+    return f
+  },
+  addNoteTag: async (noteId: string, title: string): Promise<TagRef[]> => {
+    const i = await localInst()
+    const tags = JSON.parse(i.addNoteTag(noteId, title, Date.now())) as TagRef[]
+    await persistLocal(i)
+    return tags
+  },
+  removeNoteTag: async (noteId: string, tagId: string): Promise<TagRef[]> => {
+    const i = await localInst()
+    const tags = JSON.parse(i.removeNoteTag(noteId, tagId)) as TagRef[]
+    await persistLocal(i)
+    return tags
+  },
+
+  resources: async (): Promise<ResourceInfo[]> => JSON.parse((await localInst()).resources()),
+  uploadResource: async (file: Blob, filename: string): Promise<ResourceUpload> => {
+    const i = await localInst()
+    const id = genLocalId()
+    const mime = file.type || 'application/octet-stream'
+    const name = filename.trim()
+    const ext = extOfFilename(name)
+    const title = name || (ext ? `${id}.${ext}` : id)
+    await localStore.putResource(id, mime, file)
+    resourceUrls.set(id, URL.createObjectURL(file))
+    const up = JSON.parse(
+      i.upsertResourceMeta(id, title, mime, ext, file.size, Date.now()),
+    ) as ResourceUpload
+    await persistLocal(i)
+    return up
+  },
+  renameResource: async (id: string, title: string): Promise<ResourceInfo> => {
+    const i = await localInst()
+    const r = JSON.parse(i.renameResource(id, title, Date.now())) as ResourceInfo
+    await persistLocal(i)
+    return r
+  },
+  deleteResource: async (id: string): Promise<void> => {
+    const i = await localInst()
+    i.deleteResource(id)
+    const url = resourceUrls.get(id)
+    if (url) {
+      URL.revokeObjectURL(url)
+      resourceUrls.delete(id)
+    }
+    await localStore.deleteResource(id)
+    await persistLocal(i)
+  },
+}
+
+export const api = WASM_WRITABLE
+  ? { ...httpApi, ...localApi }
+  : DEMO
+    ? { ...httpApi, ...demoApi }
+    : httpApi
