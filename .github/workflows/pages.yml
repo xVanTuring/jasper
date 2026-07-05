@@ -1,6 +1,9 @@
-# 把浏览器 WASM demo（无 server）部署到 GitHub Pages。
-# 构建：jasper-core → wasm（wasm-pack）+ VITE_DEMO=1 的静态站点；base 自动取仓库名（项目页子路径）。
-name: Deploy WASM demo to Pages
+# 把浏览器 WASM「可写本地应用」（无 server）部署到 GitHub Pages。
+# 构建：jasper-core → wasm（wasm-pack）+ VITE_LOCAL=1 的静态站点；base 自动取仓库名（项目页子路径）。
+# 站点全程在浏览器内运行（IndexedDB 持久 + Chromium 下可打开真实本地文件夹，均无后端）。
+# 注意：本文件在 paths-ignore(.github/**) 内 —— 只改本 workflow 的提交不会自动部署，
+# 需在 Actions 页手动「Run workflow」触发一次；之后前端/core/wasm 改动照常自动部署。
+name: Deploy WASM app to Pages
 
 on:
   push:
@@ -66,9 +69,10 @@ jobs:
         working-directory: web
         run: pnpm build:wasm
 
-      - name: Build static demo (Pages base path = /<repo>/)
+      - name: Build writable local app (Pages base path = /<repo>/)
         working-directory: web
-        run: VITE_DEMO=1 pnpm exec vite build --base="/${{ github.event.repository.name }}/"
+        # 用 GITHUB_REPOSITORY（owner/repo，所有事件都在）取仓库名，push 与手动 workflow_dispatch 都稳。
+        run: VITE_LOCAL=1 pnpm exec vite build --base="/${GITHUB_REPOSITORY##*/}/"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
