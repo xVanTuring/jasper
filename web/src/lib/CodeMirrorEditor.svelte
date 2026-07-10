@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from 'svelte'
   import { api } from './api'
   import { t } from './i18n.svelte'
-  import Button from './Button.svelte'
   import type { EditorHandle, EditorMode } from './editor/types'
   import type { EditorController } from './editor/build'
   import { editorInputPlugins } from './plugins.svelte'
@@ -11,6 +10,7 @@
     value,
     onChange,
     onReady,
+    onFiles,
     mode = 'live',
     readOnly = false,
   }: {
@@ -18,16 +18,14 @@
     onChange: (v: string) => void
     // 就绪后回传编辑器句柄，供工具栏/插件命令操作源码（父级持有）
     onReady?: (h: EditorHandle) => void
+    // 粘贴/拖拽进来的文件（附件上传由父级 NoteView 统一处理，插入 :/id 引用）
+    onFiles?: (files: File[]) => void
     mode?: EditorMode
     readOnly?: boolean
   } = $props()
 
   let host: HTMLDivElement
-  let fileInput: HTMLInputElement
   let ctrl: EditorController | undefined
-
-  let uploading = $state(0)
-  let uploadErr = $state('')
 
   // ---------- 编辑期插件钩子（spec §3.7 contributes.editor，phase="input"） ----------
   // 用户输入停顿后把整段源码依次交给声明了 input 相位的插件的 editor.transform 改写。
@@ -65,37 +63,6 @@
     })
   }
 
-  // ---------- 文件上传（附件按钮 / 粘贴 / 拖拽） ----------
-  function nameOf(file: File): string {
-    if (file.name) return file.name
-    const ext = (file.type.split('/')[1] || 'bin').replace('+xml', '')
-    return `pasted-${Date.now()}.${ext}`
-  }
-
-  async function uploadFiles(files: File[]) {
-    if (!files.length || !ctrl) return
-    uploadErr = ''
-    for (const file of files) {
-      uploading++
-      try {
-        const r = await api.uploadResource(file, nameOf(file))
-        ctrl.handle.insert(r.markdown + '\n')
-      } catch (e) {
-        uploadErr = (e as Error).message || t('editor.uploadFailed')
-      } finally {
-        uploading--
-      }
-    }
-  }
-
-  function pickFile() {
-    fileInput?.click()
-  }
-  function onPick() {
-    if (fileInput.files) uploadFiles(Array.from(fileInput.files))
-    fileInput.value = ''
-  }
-
   onMount(async () => {
     // 惰性加载 CodeMirror 全套（含 Live Preview/widgets）——单独成 chunk，不进首屏
     const { createEditor } = await import('./editor/build')
@@ -109,7 +76,7 @@
         onChange(v)
         if (userEvent) scheduleTransform()
       },
-      onFiles: uploadFiles,
+      onFiles: (files) => onFiles?.(files),
     })
     ctrl.view.focus()
     onReady?.(ctrl.handle)
@@ -132,41 +99,11 @@
   })
 </script>
 
-<div class="editor-col">
-  <div class="ed-toolbar">
-    <Button variant="default" icon="attach" label={t('editor.attach')} onclick={pickFile} disabled={uploading > 0 || readOnly} />
-    <span class="hint">{t('editor.hint')}</span>
-    {#if uploading > 0}<span class="up">{t('editor.uploading', { n: uploading })}</span>{/if}
-    {#if uploadErr}<span class="err">{uploadErr}</span>{/if}
-    <input type="file" multiple bind:this={fileInput} onchange={onPick} hidden />
-  </div>
-  <div class="cm-host" bind:this={host}></div>
-</div>
+<div class="cm-host" bind:this={host}></div>
 
 <style>
-  .editor-col {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
-  .ed-toolbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 4px 2px 8px;
-    flex: 0 0 auto;
-  }
-  .hint,
-  .up {
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .err {
-    font-size: 12px;
-    color: var(--danger);
-  }
   .cm-host {
-    flex: 1;
+    height: 100%;
     min-height: 0;
   }
   :global(.cm-host .cm-editor) {

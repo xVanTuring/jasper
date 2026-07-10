@@ -13,7 +13,8 @@
   import type { EditorHandle } from './editor/types'
   import { editorCommands } from './plugins.svelte'
   import { enqueuePendingWrites } from './pendingWrites.svelte'
-  import { getEngine, setEngine } from './editorPrefs'
+  import { getEngine, setEngine, getContentWidth, setContentWidth, type ContentWidth } from './editorPrefs'
+  import { renderPdfInto, type PdfHandle } from './pdfRender'
 
   let {
     detail,
@@ -58,6 +59,13 @@
     setEngine(editorEngine)
   }
 
+  // 内容宽度：铺满 / 居中限宽（编辑与阅读共用），记忆在 localStorage
+  let contentWidth = $state<ContentWidth>(getContentWidth())
+  function toggleWidth() {
+    contentWidth = contentWidth === 'full' ? 'centered' : 'full'
+    setContentWidth(contentWidth)
+  }
+
   let dirty = false
   let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -94,6 +102,42 @@
   function onBodyChange(v: string) {
     body = v
     scheduleSave()
+  }
+
+  // ---------- 附件上传（工具栏「附件」按钮 / 粘贴 / 拖拽） ----------
+  // 上传后把 :/id 引用插入编辑缓冲；按钮在工具栏，粘贴/拖拽经 CodeMirrorEditor 的 onFiles 回传。
+  let fileInput = $state<HTMLInputElement | null>(null)
+  let uploading = $state(0)
+  let uploadErr = $state('')
+
+  function attachName(file: File): string {
+    if (file.name) return file.name
+    const ext = (file.type.split('/')[1] || 'bin').replace('+xml', '')
+    return `pasted-${Date.now()}.${ext}`
+  }
+
+  async function uploadFiles(files: File[]) {
+    if (!files.length || !editorHandle || readOnly) return
+    uploadErr = ''
+    for (const file of files) {
+      uploading++
+      try {
+        const r = await api.uploadResource(file, attachName(file))
+        editorHandle.insert(r.markdown + '\n')
+      } catch (e) {
+        uploadErr = (e as Error).message || t('editor.uploadFailed')
+      } finally {
+        uploading--
+      }
+    }
+  }
+
+  function pickFile() {
+    fileInput?.click()
+  }
+  function onPick() {
+    if (fileInput?.files) uploadFiles(Array.from(fileInput.files))
+    if (fileInput) fileInput.value = ''
   }
 
   // SSE 外部变更（免确认直写/别的客户端/curl）的保守回显（design doc §5.3）：
@@ -164,23 +208,14 @@
   }
 
   function onContentClick(e: MouseEvent) {
-    const target = e.target as HTMLElement
-    // PDF 卡片 → 打开自绘阅读器
-    const pdf = target.closest('.pdf-card') as HTMLElement | null
-    if (pdf) {
-      e.preventDefault()
-      const id = pdf.getAttribute('data-resource-id')
-      if (id) onOpenPdf?.(id, pdf.getAttribute('data-filename') || 'PDF')
-      return
-    }
-    const el = target.closest('[data-internal-id]') as HTMLElement | null
+    const el = (e.target as HTMLElement).closest('[data-internal-id]') as HTMLElement | null
     if (!el) return
     e.preventDefault()
     const id = el.getAttribute('data-internal-id')
     if (id) onNavigate(id)
   }
 
-  // 编辑器里的 PDF 卡片（CM widget）点击 → 冒泡到 window 的 jasper-open-pdf 事件 → 打开阅读器
+  // 内联 PDF「全屏」按钮（编辑器 widget）→ 冒泡到 window 的 jasper-open-pdf → 打开全屏模态
   $effect(() => {
     const h = (e: Event) => {
       const d = (e as CustomEvent).detail
@@ -189,14 +224,51 @@
     window.addEventListener('jasper-open-pdf', h)
     return () => window.removeEventListener('jasper-open-pdf', h)
   })
+
+  // 阅读视图里的 PDF：往 render.ts 产出的 .pdf-embed 占位盒内挂 pdfRender（内联嵌入）。
+  // html 或阅读/编辑态变化时重挂；cleanup 销毁旧实例（含 pdf.js 资源）。
+  let contentEl = $state<HTMLDivElement>()
+  $effect(() => {
+    void html
+    void editMode
+    if (editMode || !contentEl) return
+    const handles: PdfHandle[] = []
+    contentEl.querySelectorAll<HTMLElement>('.pdf-embed').forEach((box) => {
+      const id = box.getAttribute('data-resource-id')
+      if (!id) return
+      const nm = box.getAttribute('data-filename') || 'PDF'
+      handles.push(renderPdfInto(box, { url: api.resourceUrl(id), name: nm, id, onExpand: () => onOpenPdf?.(id, nm) }))
+    })
+    return () => handles.forEach((h) => h.destroy())
+  })
 </script>
 
 {#if detail}
-  <article class="note-view" in:fade={{ duration: 160 }}>
+  <article
+    class="note-view"
+    class:width-full={contentWidth === 'full'}
+    class:width-centered={contentWidth === 'centered'}
+    in:fade={{ duration: 160 }}
+  >
     <div class="toolbar">
       <div class="left">
         {#if editMode && !readOnly}
           <EditorToolbar mode={engine} handle={editorHandle} />
+          <span class="sep"></span>
+          <!-- 附件：上传后插入 :/id 引用（也支持直接粘贴/拖拽图片） -->
+          <Button
+            variant="ghost"
+            iconOnly
+            icon={uploading > 0 ? 'clean' : 'attach'}
+            label={t('editor.attach')}
+            title={t('editor.attach') + ' · ' + t('editor.hint')}
+            onclick={pickFile}
+            disabled={!editorHandle || uploading > 0}
+          />
+          <input type="file" multiple bind:this={fileInput} onchange={onPick} hidden />
+          {#if uploadErr}
+            <span class="cmd-error" title={uploadErr}><Icon name="alert" size={12} /> {t('editor.uploadFailed')}</span>
+          {/if}
           <!-- 插件贡献的编辑器命令（源码/实时预览均可）：一键优化等 -->
           {#if editorCommands().length}
             <span class="sep"></span>
@@ -223,6 +295,13 @@
         {/if}
       </div>
       <div class="right">
+        <Button
+          variant="default"
+          iconOnly
+          icon={contentWidth === 'full' ? 'align-justify' : 'align-center'}
+          label={t('note.contentWidth')}
+          onclick={toggleWidth}
+        />
         {#if !readOnly}
           {#if editMode && isMarkdown}
             <Button
@@ -263,6 +342,7 @@
           value={body}
           onChange={onBodyChange}
           onReady={(h) => (editorHandle = h)}
+          onFiles={uploadFiles}
           mode={engine}
           {readOnly}
         />
@@ -285,7 +365,7 @@
       <!-- 滚动容器占满整栏宽 → 滚动条贴窗口右缘；内层 .content 才是阅读宽度 -->
       <div class="content-scroll">
         <!-- 内容已由 DOMPurify 净化 -->
-        <div class="content" data-ai-selectable onclick={onContentClick}>{@html html}</div>
+        <div class="content" data-ai-selectable bind:this={contentEl} onclick={onContentClick}>{@html html}</div>
       </div>
     {/if}
   </article>
@@ -363,7 +443,9 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-    padding: 0 20px 20px;
+    /* 不设左右 padding：让 CodeMirror 铺满、滚动条贴右缘（水平留白移到 .cm-content 自身，
+       见 theme.ts）。否则滚动条会离右边缘缩进一段。 */
+    padding: 0;
   }
   .note-title {
     font-size: 24px;
@@ -415,10 +497,29 @@
     min-height: 0;
     overflow-y: auto;
   }
-  /* 阅读宽度盒：内容左对齐限宽，滚动条不受其 max-width 约束 */
+  /* 阅读内容盒（滚动条不受其 max-width 约束，落在整栏右缘） */
   .content {
     padding: 20px 36px 80px;
-    max-width: 820px;
+  }
+
+  /* 内容宽度：'full' 铺满整栏 / 'centered' 限宽居中（编辑 + 阅读共用，工具栏切换、记忆见 editorPrefs）。
+     标题/元信息/正文/CodeMirror 内容统一按 --content-max 限宽并水平居中。 */
+  .note-view.width-centered {
+    --content-max: 820px;
+  }
+  .note-view.width-full {
+    --content-max: none;
+  }
+  .title-input,
+  .note-title,
+  .meta,
+  .content,
+  .note-view :global(.cm-content) {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: var(--content-max);
+    margin-left: auto;
+    margin-right: auto;
   }
   .placeholder {
     display: flex;
