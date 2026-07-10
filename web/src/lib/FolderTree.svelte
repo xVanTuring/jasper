@@ -3,6 +3,7 @@
   import { cubicOut } from 'svelte/easing'
   import { NOTE_DND_TYPE, FOLDER_DND_TYPE, type FolderNode } from './api'
   import { startFolderDrag, endFolderDrag, draggingFolder } from './dnd.svelte'
+  import { isExpanded, toggleExpanded } from './treeExpand.svelte'
   import { t } from './i18n.svelte'
   import Icon from './Icon.svelte'
   import Self from './FolderTree.svelte'
@@ -25,8 +26,8 @@
     depth?: number
   } = $props()
 
-  // 默认折叠：只有展开过的笔记本 expanded[id] 为 true
-  let expanded = $state<Record<string, boolean>>({})
+  // 展开/折叠态记忆到 localStorage（treeExpand.svelte，整棵递归树共享单一 rune 集合，
+  // 与 jasper.lastNote / jasper.editor 同姿势）；未记录的默认折叠。
 
   // 拖拽放置高亮的笔记本 id（本实例内；每个递归实例各自维护）
   let dropId = $state<string | null>(null)
@@ -105,10 +106,10 @@
         {#if f.children.length}
           <button
             class="caret"
-            class:open={expanded[f.id]}
+            class:open={isExpanded(f.id)}
             onclick={(e) => {
               e.stopPropagation()
-              expanded[f.id] = !expanded[f.id]
+              toggleExpanded(f.id)
             }}
             aria-label={t('tree.toggle')}
           >
@@ -147,7 +148,7 @@
         {/if}
       </div>
 
-      {#if f.children.length && expanded[f.id]}
+      {#if f.children.length && isExpanded(f.id)}
         <div class="subtree" transition:slide={{ duration: 180, easing: cubicOut }}>
           <Self folders={f.children} {selectedId} {onSelect} {onMoveNote} {onMoveFolder} {onRenameFolder} depth={depth + 1} />
         </div>

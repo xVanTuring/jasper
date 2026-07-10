@@ -26,25 +26,25 @@ function tableSnippet(): string {
 	return `\n| ${a} | ${b} |\n| --- | --- |\n|  |  |\n`
 }
 
-// 内置命令：当前均绑定源码模式；富文本沿用 Crepe 原生浮动栏/斜杠菜单（见 WysiwygEditor）。
-// modes 已预留 —— 将来要给富文本加语义命令，只需再注册 modes:['wysiwyg'] 的项。
-const SOURCE: EditorMode[] = ['source']
+// 内置命令：统一到一个 CodeMirror 实例后，源码与 Live Preview 是同一实例的两种视图，
+// 故命令对两模式通用（BOTH）。modes 仍保留为过滤维度，将来插件可注册只在某一模式出现的命令。
+const BOTH: EditorMode[] = ['source', 'live']
 
 const builtins: EditorCommand[] = [
-	{ id: 'md.h1', icon: 'heading-1', title: 'editor.tool.h1', group: 'block', modes: SOURCE, run: (h) => h.applyBlock('h1') },
-	{ id: 'md.h2', icon: 'heading-2', title: 'editor.tool.h2', group: 'block', modes: SOURCE, run: (h) => h.applyBlock('h2') },
-	{ id: 'md.quote', icon: 'quote', title: 'editor.tool.quote', group: 'block', modes: SOURCE, run: (h) => h.applyBlock('quote') },
-	{ id: 'md.bullet', icon: 'list', title: 'editor.tool.bullet', group: 'block', modes: SOURCE, run: (h) => h.applyBlock('bullet') },
-	{ id: 'md.ordered', icon: 'list-ordered', title: 'editor.tool.ordered', group: 'block', modes: SOURCE, run: (h) => h.applyBlock('ordered') },
-	{ id: 'md.task', icon: 'list-todo', title: 'editor.tool.task', group: 'block', modes: SOURCE, run: (h) => h.applyBlock('task') },
-	{ id: 'md.bold', icon: 'bold', title: 'editor.tool.bold', group: 'inline', modes: SOURCE, run: (h) => h.wrapInline('**', t('editor.tool.boldText')) },
-	{ id: 'md.italic', icon: 'italic', title: 'editor.tool.italic', group: 'inline', modes: SOURCE, run: (h) => h.wrapInline('*', t('editor.tool.italicText')) },
-	{ id: 'md.strike', icon: 'strikethrough', title: 'editor.tool.strike', group: 'inline', modes: SOURCE, run: (h) => h.wrapInline('~~', t('editor.tool.strikeText')) },
-	{ id: 'md.code', icon: 'braces', title: 'editor.tool.code', group: 'inline', modes: SOURCE, run: (h) => h.wrapInline('`', t('editor.tool.codeText')) },
-	{ id: 'md.link', icon: 'link', title: 'editor.tool.link', group: 'inline', modes: SOURCE, run: (h) => h.wrapAround('[', '](url)', t('editor.tool.linkText')) },
-	{ id: 'md.table', icon: 'table', title: 'editor.tool.table', group: 'insert', modes: SOURCE, run: (h) => h.insert(tableSnippet()) },
-	{ id: 'md.hr', icon: 'minus', title: 'editor.tool.hr', group: 'insert', modes: SOURCE, run: (h) => h.insert('\n---\n') },
-	{ id: 'md.format', icon: 'sparkles', title: 'editor.tool.format', group: 'action', modes: SOURCE, run: (h) => h.setValue(formatMarkdown(h.getValue())) },
+	{ id: 'md.h1', icon: 'heading-1', title: 'editor.tool.h1', group: 'block', modes: BOTH, run: (h) => h.applyBlock('h1') },
+	{ id: 'md.h2', icon: 'heading-2', title: 'editor.tool.h2', group: 'block', modes: BOTH, run: (h) => h.applyBlock('h2') },
+	{ id: 'md.quote', icon: 'quote', title: 'editor.tool.quote', group: 'block', modes: BOTH, run: (h) => h.applyBlock('quote') },
+	{ id: 'md.bullet', icon: 'list', title: 'editor.tool.bullet', group: 'block', modes: BOTH, run: (h) => h.applyBlock('bullet') },
+	{ id: 'md.ordered', icon: 'list-ordered', title: 'editor.tool.ordered', group: 'block', modes: BOTH, run: (h) => h.applyBlock('ordered') },
+	{ id: 'md.task', icon: 'list-todo', title: 'editor.tool.task', group: 'block', modes: BOTH, run: (h) => h.applyBlock('task') },
+	{ id: 'md.bold', icon: 'bold', title: 'editor.tool.bold', group: 'inline', modes: BOTH, run: (h) => h.wrapInline('**', t('editor.tool.boldText')) },
+	{ id: 'md.italic', icon: 'italic', title: 'editor.tool.italic', group: 'inline', modes: BOTH, run: (h) => h.wrapInline('*', t('editor.tool.italicText')) },
+	{ id: 'md.strike', icon: 'strikethrough', title: 'editor.tool.strike', group: 'inline', modes: BOTH, run: (h) => h.wrapInline('~~', t('editor.tool.strikeText')) },
+	{ id: 'md.code', icon: 'braces', title: 'editor.tool.code', group: 'inline', modes: BOTH, run: (h) => h.wrapInline('`', t('editor.tool.codeText')) },
+	{ id: 'md.link', icon: 'link', title: 'editor.tool.link', group: 'inline', modes: BOTH, run: (h) => h.wrapAround('[', '](url)', t('editor.tool.linkText')) },
+	{ id: 'md.table', icon: 'table', title: 'editor.tool.table', group: 'insert', modes: BOTH, run: (h) => h.insert(tableSnippet()) },
+	{ id: 'md.hr', icon: 'minus', title: 'editor.tool.hr', group: 'insert', modes: BOTH, run: (h) => h.insert('\n---\n') },
+	{ id: 'md.format', icon: 'sparkles', title: 'editor.tool.format', group: 'action', modes: BOTH, run: (h) => h.setValue(formatMarkdown(h.getValue())) },
 ]
 
 builtins.forEach(registerEditorCommand)

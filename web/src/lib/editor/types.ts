@@ -5,9 +5,11 @@
 
 import type { BlockKind } from './markdown'
 
-export type EditorMode = 'source' | 'wysiwyg'
+// 统一到 CodeMirror 6 后只有一个编辑器实例，'source'（源码）与 'live'（Live Preview
+// 实时预览）是同一实例的两种视图；命令对两者通用（见 commands.ts 的 modes）。
+export type EditorMode = 'source' | 'live'
 
-// 由具体引擎（源码 CodeMirror / 富文本 Crepe）实现；命令通过它操作当前编辑器。
+// 由统一的 CodeMirror 编辑器实现（源码与 Live Preview 共用同一实例）；命令通过它操作当前编辑器。
 export interface EditorHandle {
 	readonly mode: EditorMode
 	focus(): void

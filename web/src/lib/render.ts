@@ -20,6 +20,7 @@ import { full as emoji } from 'markdown-it-emoji'
 import multimdTable from 'markdown-it-multimd-table'
 
 import { api, type NoteDetail } from './api'
+import { mediaKind, resourceTitle } from './resourceMeta.svelte'
 
 import 'highlight.js/styles/github-dark.css'
 import 'katex/dist/katex.min.css'
@@ -62,21 +63,77 @@ function parseResourceUrl(url: string): { id: string } | null {
   return m ? { id: m[1] } : null
 }
 
+// 视频/音频/PDF 资源 → 对应可视元素（供 img 与 link 两种引用共用）；非此三类返回 null。
+function mediaElement(doc: Document, url: string, name: string, kind: string, resId: string): HTMLElement | null {
+  if (kind === 'video' || kind === 'audio') {
+    const m = doc.createElement(kind)
+    m.setAttribute('src', url)
+    m.setAttribute('controls', '')
+    m.setAttribute('preload', 'metadata')
+    m.className = kind === 'video' ? 'rv-media' : 'rv-audio'
+    return m
+  }
+  if (kind === 'pdf') {
+    const b = doc.createElement('button')
+    b.className = 'pdf-card'
+    b.setAttribute('type', 'button')
+    b.setAttribute('data-resource-id', resId)
+    b.setAttribute('data-filename', name)
+    b.textContent = name
+    return b
+  }
+  return null
+}
+
 // 对最终 HTML 统一改写 :/id 引用。同时覆盖 markdown 笔记和 HTML 剪藏笔记，
 // 避免 HTML 笔记里的 <img src=":/id"> 被浏览器当相对路径请求成 /:/id（404）。
 function rewriteResourceRefs(html: string): string {
   const doc = new DOMParser().parseFromString(html, 'text/html')
-  doc.querySelectorAll('img, source, audio, video').forEach((el) => {
+  // <img src=":/id">（`![](:/id)` 语法）：图片保持 <img>，视频/音频/PDF 成型为媒体/卡片，
+  // 其它类型换下载卡片。mime 未加载时回落 <img>，加载后 NoteView 的 html derived 重算
+  //（rewriteResourceRefs 读了 mediaKind 的 rune）。
+  doc.querySelectorAll('img').forEach((el) => {
+    const p = parseResourceUrl(el.getAttribute('src') || '')
+    if (!p) return
+    const url = api.resourceUrl(p.id)
+    const name = el.getAttribute('alt') || resourceTitle(p.id) || 'file'
+    const kind = mediaKind(p.id)
+    const media = mediaElement(doc, url, name, kind, p.id)
+    if (media) {
+      el.replaceWith(media)
+    } else if (kind === 'file') {
+      const a = doc.createElement('a')
+      a.className = 'file-card'
+      a.setAttribute('href', url)
+      a.setAttribute('download', name)
+      a.setAttribute('data-resource-id', p.id)
+      a.textContent = name
+      el.replaceWith(a)
+    } else {
+      el.setAttribute('src', url) // image / unknown → 保持 <img>
+    }
+  })
+  // HTML 笔记里已有的 <source/audio/video>：仅改写 src（不改元素类型）
+  doc.querySelectorAll('source, audio, video').forEach((el) => {
     const p = parseResourceUrl(el.getAttribute('src') || '')
     if (p) el.setAttribute('src', api.resourceUrl(p.id))
   })
+  // <a href=":/id">（`[名字](:/id)` 语法，Joplin 对非图片资源默认插链接）：
+  // 视频/音频/PDF 也成型为播放器/卡片；图片/其它/未知 → 保持可点击的内部链接。
   doc.querySelectorAll('a[href]').forEach((el) => {
     const href = el.getAttribute('href') || ''
     const p = parseResourceUrl(href)
     if (p) {
-      // 内部链接（笔记或资源）：交给应用处理点击
-      el.setAttribute('href', '#')
-      el.setAttribute('data-internal-id', p.id)
+      const kind = mediaKind(p.id)
+      const name = el.textContent || resourceTitle(p.id) || 'file'
+      const media = mediaElement(doc, api.resourceUrl(p.id), name, kind, p.id)
+      if (media) {
+        el.replaceWith(media)
+      } else {
+        // 内部链接（笔记 / 图片 / 其它资源）：交给应用处理点击
+        el.setAttribute('href', '#')
+        el.setAttribute('data-internal-id', p.id)
+      }
     } else if (/^https?:\/\//i.test(href)) {
       el.setAttribute('target', '_blank')
       el.setAttribute('rel', 'noopener noreferrer')
@@ -87,7 +144,10 @@ function rewriteResourceRefs(html: string): string {
 
 // ---------- 对外渲染 ----------
 const SANITIZE_OPTS = {
-  ADD_ATTR: ['target', 'data-internal-id', 'checked', 'disabled', 'rel'],
+  ADD_ATTR: [
+    'target', 'data-internal-id', 'checked', 'disabled', 'rel',
+    'controls', 'preload', 'download', 'data-resource-id', 'data-filename', 'type',
+  ],
   ADD_TAGS: ['input'],
 }
 

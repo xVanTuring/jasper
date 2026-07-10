@@ -26,6 +26,8 @@
   import TagList from './lib/TagList.svelte'
   import NoteList from './lib/NoteList.svelte'
   import NoteView from './lib/NoteView.svelte'
+  import PdfViewer from './lib/PdfViewer.svelte'
+  import { loadResourceMeta } from './lib/resourceMeta.svelte'
   import Settings from './lib/Settings.svelte'
   import ResourcePanel from './lib/ResourcePanel.svelte'
   import PluginPanel from './lib/PluginPanel.svelte'
@@ -54,7 +56,6 @@
   let notes = $state<NoteSummary[]>([])
   let selectedNoteId = $state<string | null>(null)
   let detail = $state<NoteDetail | null>(null)
-  let editOnOpenId = $state<string | null>(null)
   // NoteView 组件实例（bind:this）：SSE 外部变更经 applyExternal 保守回显
   let noteView = $state<ReturnType<typeof NoteView> | null>(null)
 
@@ -272,6 +273,34 @@
     }
   }
 
+  // 记忆上次选中的笔记本（列表视图）：与上次打开的笔记(lastNote)正交——笔记本决定左侧列表、
+  // 笔记决定详情面板，二者可不同源（搜索/内链打开的笔记未必在当前笔记本）。
+  // 空串 "" = 未分类笔记（合法 id）：localStorage 无键(null)=无记忆，需与 "" 区分。
+  const LAST_FOLDER_KEY = 'jasper.lastFolder'
+  function loadLastFolderId(): string | null {
+    try {
+      return localStorage.getItem(LAST_FOLDER_KEY) // null=无记忆；""=未分类；其它=笔记本 id
+    } catch {
+      return null
+    }
+  }
+  function saveLastFolderId(id: string | null) {
+    try {
+      if (id === null) localStorage.removeItem(LAST_FOLDER_KEY)
+      else localStorage.setItem(LAST_FOLDER_KEY, id) // 允许存 ""（未分类）
+    } catch {
+      /* 忽略（隐私模式/storage 被禁用） */
+    }
+  }
+  // 递归判断某笔记本仍存在（记忆值可能指向已被删除/移动源的笔记本）。
+  function folderExists(list: FolderNode[], id: string): boolean {
+    for (const f of list) {
+      if (f.id === id) return true
+      if (folderExists(f.children, id)) return true
+    }
+    return false
+  }
+
   onMount(() => {
     // token 失效（服务端重启/改密码使会话作废）→ 回退只读并重新拉状态
     setAuthErrorHandler(() => {
@@ -292,6 +321,8 @@
   async function checkStatus() {
     // 插件列表并行加载（探测服务端是否编译 plugins feature；注入插件主题 CSS）
     void loadPlugins()
+    // 资源元数据（id→mime）：决定 :/id 渲染成 图片/视频/音频/PDF卡片/文件卡片
+    void loadResourceMeta()
     try {
       const s = await api.status()
       configured = s.configured
@@ -359,8 +390,11 @@
       selectedTagId = null // 整体重载回到笔记本视图
       detail = null
       selectedNoteId = null
-      // 优先恢复上次打开的笔记（含其所在笔记本）；无记录/已失效则回退到首个有笔记的笔记本
-      if (await restoreLastNote()) return
+      // 恢复上次会话：① 选中的笔记本（列表视图）② 打开的笔记（详情面板）——二者正交、各自持久。
+      // 先恢复笔记本视图；再恢复笔记（若已恢复笔记本视图，则不让恢复笔记反过来改选笔记本）。
+      const viewRestored = await restoreLastFolder()
+      const noteRestored = await restoreLastNote({ selectFolder: !viewRestored })
+      if (viewRestored || noteRestored) return
       const first = findFirstWithNotes(folders)
       if (first) {
         // 不传显式 title：合成的「未分类笔记」节点(id=="")后端留空标题，交给 findTitle 按语言取词
@@ -375,13 +409,26 @@
     }
   }
 
-  // 恢复上次打开的笔记：拉取详情成功 → 选中其所在笔记本并打开；笔记已不存在 → 清除记忆并回退。
-  async function restoreLastNote(): Promise<boolean> {
+  // 恢复上次选中的笔记本（列表视图）；已删除/失效 → 清除记忆并放弃。
+  async function restoreLastFolder(): Promise<boolean> {
+    const id = loadLastFolderId()
+    if (id == null) return false // 无记忆
+    if (id !== '' && !folderExists(folders, id)) {
+      saveLastFolderId(null)
+      return false
+    }
+    await selectFolder(id)
+    return true
+  }
+
+  // 恢复上次打开的笔记：拉取详情成功 → 打开；笔记已不存在 → 清除记忆并回退。
+  // opts.selectFolder：是否顺带选中笔记所在笔记本（无「笔记本视图」记忆时为 true，保持旧行为）。
+  async function restoreLastNote(opts: { selectFolder: boolean } = { selectFolder: true }): Promise<boolean> {
     const id = loadLastNoteId()
     if (!id) return false
     try {
       const d = await api.note(id)
-      await selectFolder(d.parent_id)
+      if (opts.selectFolder) await selectFolder(d.parent_id)
       detail = d
       selectedNoteId = id
       return true
@@ -430,6 +477,7 @@
     searchMode = false
     selectedTagId = null // 笔记本与标签选择互斥
     selectedFolderId = id
+    saveLastFolderId(id) // 记忆当前笔记本，重载时恢复
     listTitle = title ?? findTitle(folders, id) ?? ''
     try {
       notes = await api.notes(id)
@@ -442,6 +490,7 @@
   async function selectTag(id: string, title: string) {
     searchMode = false
     selectedFolderId = null
+    saveLastFolderId(null) // 切到标签视图 → 清除笔记本记忆，避免重载错误恢复旧笔记本
     selectedTagId = id
     listTitle = title
     try {
@@ -453,7 +502,6 @@
 
   // 先取详情再切换 id（NoteView 按 id 重挂载，挂载时 detail 须已就绪）
   async function selectNote(id: string) {
-    editOnOpenId = null
     try {
       const d = await api.note(id)
       detail = d
@@ -466,7 +514,6 @@
 
   // 笔记内部链接点击：是笔记则跳转，否则当资源在新标签打开
   async function navigate(id: string) {
-    editOnOpenId = null
     try {
       const d = await api.note(id)
       detail = d
@@ -475,6 +522,12 @@
     } catch {
       window.open(api.resourceUrl(id), '_blank')
     }
+  }
+
+  // PDF 阅读器模态（阅读视图/编辑器里的 PDF 卡片点击打开；自绘 pdf.js 阅读器）
+  let pdfModal = $state<{ url: string; name: string } | null>(null)
+  function openPdf(id: string, name: string) {
+    pdfModal = { url: api.resourceUrl(id), name: name || 'PDF' }
   }
 
   // 重新拉取当前列表（保存后标题/时间/排序更新）
@@ -541,7 +594,6 @@
     const parent = searchMode ? '' : selectedFolderId ?? ''
     try {
       const n = await api.createNote({ parent_id: parent, title: t('note.newTodoTitle'), body: '', is_todo: true })
-      editOnOpenId = n.id
       detail = n
       selectedNoteId = n.id
       saveLastNoteId(n.id)
@@ -550,6 +602,7 @@
       if (!searchMode && selectedFolderId == null) {
         selectedTagId = null // 标签视图下新建的是未打标签的笔记 → 落到未分类视图
         selectedFolderId = parent // parent 在此分支恒为 ''（未分类笔记）
+        saveLastFolderId(parent) // 记忆随之落到未分类，保持与 selectedFolderId 一致
         listTitle = t('tree.unfiled')
       }
       folders = await api.folders() // 未分类笔记数/笔记本篇数变化
@@ -577,7 +630,6 @@
     const parent = searchMode ? '' : selectedFolderId ?? ''
     try {
       const n = await api.createNote({ parent_id: parent, title: t('note.newNote'), body: '' })
-      editOnOpenId = n.id
       detail = n
       selectedNoteId = n.id
       saveLastNoteId(n.id)
@@ -586,6 +638,7 @@
       if (!searchMode && selectedFolderId == null) {
         selectedTagId = null // 标签视图下新建的是未打标签的笔记 → 落到未分类视图
         selectedFolderId = parent // parent 在此分支恒为 ''（未分类笔记）
+        saveLastFolderId(parent) // 记忆随之落到未分类，保持与 selectedFolderId 一致
         listTitle = t('tree.unfiled')
       }
       folders = await api.folders() // 未分类笔记数/笔记本篇数变化
@@ -598,7 +651,6 @@
   async function onNoteDeleted() {
     detail = null
     selectedNoteId = null
-    editOnOpenId = null
     saveLastNoteId(null)
     await refreshList()
   }
@@ -785,8 +837,9 @@
           onTagsChanged={onNoteTagsChanged}
           tagSuggestions={tags.map((t) => t.title)}
           {tagRefreshToken}
-          initialEdit={detail != null && detail.id === editOnOpenId}
+          initialEdit={detail != null && !readOnly}
           {readOnly}
+          onOpenPdf={openPdf}
         />
       {/key}
     </main>
@@ -826,6 +879,10 @@
 
 {#if showPlugins}
   <PluginPanel {readOnly} onClose={() => (showPlugins = false)} />
+{/if}
+
+{#if pdfModal}
+  <PdfViewer url={pdfModal.url} name={pdfModal.name} onClose={() => (pdfModal = null)} />
 {/if}
 
 {#if showResources}
@@ -1089,6 +1146,43 @@
     border-right: 1px solid var(--border);
     overflow-y: auto;
     background: var(--bg-side);
+  }
+  /* 左两栏（笔记本树 / 笔记列表）：细「悬浮」滚动条——透明轨道 + 悬停才显现的细拇指，
+     用透明 border + background-clip 撑出内边距，让拇指看起来更细、像浮在内容上，不抢视觉。
+     （webkit 自定义滚动条是否占位取决于系统「显示滚动条」设置；overlay 模式下零占位。） */
+  .sidebar,
+  .notelist {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .sidebar:hover,
+  .notelist:hover {
+    scrollbar-color: color-mix(in srgb, var(--text) 24%, transparent) transparent;
+  }
+  .sidebar::-webkit-scrollbar,
+  .notelist::-webkit-scrollbar {
+    width: 10px;
+  }
+  .sidebar::-webkit-scrollbar-track,
+  .notelist::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar::-webkit-scrollbar-thumb,
+  .notelist::-webkit-scrollbar-thumb {
+    background: transparent;
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
+  .sidebar:hover::-webkit-scrollbar-thumb,
+  .notelist:hover::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text) 24%, transparent);
+    background-clip: padding-box;
+  }
+  .sidebar::-webkit-scrollbar-thumb:hover,
+  .notelist::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text) 42%, transparent);
+    background-clip: padding-box;
   }
   .pane-title {
     position: sticky;

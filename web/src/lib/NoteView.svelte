@@ -6,8 +6,7 @@
   import { t } from './i18n.svelte'
   import { renderNote } from './render'
   import Button from './Button.svelte'
-  import Editor from './Editor.svelte'
-  import WysiwygEditor from './WysiwygEditor.svelte'
+  import CodeMirrorEditor from './CodeMirrorEditor.svelte'
   import EditorToolbar from './EditorToolbar.svelte'
   import NoteTags from './NoteTags.svelte'
   import Icon from './Icon.svelte'
@@ -26,6 +25,7 @@
     tagRefreshToken = 0,
     initialEdit = false,
     readOnly = false,
+    onOpenPdf,
   }: {
     detail: NoteDetail | null
     onNavigate: (id: string) => void
@@ -36,23 +36,25 @@
     tagRefreshToken?: number
     initialEdit?: boolean
     readOnly?: boolean
+    onOpenPdf?: (id: string, name: string) => void
   } = $props()
 
   // 本组件按笔记 id 在父级以 {#key} 重挂载，故这里用初始值即可，无需响应 detail 变化。
   let editMode = $state(initialEdit)
   let title = $state(detail?.title ?? '')
   let body = $state(detail?.body ?? '')
-  // 源码编辑器句柄（就绪后由 Editor 回传），供工具栏命令操作当前源码
-  let sourceHandle = $state<EditorHandle | null>(null)
+  // 编辑器句柄（就绪后由 CodeMirrorEditor 回传），供工具栏/插件命令操作当前源码。
+  // 统一到一个 CM6 实例后，源码与 Live Preview 共用同一句柄。
+  let editorHandle = $state<EditorHandle | null>(null)
 
-  // 编辑引擎：富文本(Crepe) / 源码(CodeMirror)，记忆在 localStorage。
-  // HTML 笔记（markup_language=2）不走 markdown 富文本，强制源码。
+  // 编辑视图：Live Preview 实时预览 / 源码，均为同一个 CodeMirror 实例，记忆在 localStorage。
+  // HTML 笔记（markup_language=2）不解析 markdown，强制源码。
   let isMarkdown = $derived(detail?.markup_language !== 2)
-  // 默认引擎偏好由设置面板「编辑器」分区与本组件共享（editorPrefs，jasper.editor 键）。
-  let editorEngine = $state<'wysiwyg' | 'source'>(getEngine())
-  let engine = $derived(isMarkdown ? editorEngine : 'source')
+  // 默认视图偏好由设置面板「编辑器」分区与本组件共享（editorPrefs，jasper.editor 键）。
+  let editorEngine = $state<'live' | 'source'>(getEngine())
+  let engine = $derived<'live' | 'source'>(isMarkdown ? editorEngine : 'source')
   function toggleEngine() {
-    editorEngine = editorEngine === 'wysiwyg' ? 'source' : 'wysiwyg'
+    editorEngine = editorEngine === 'live' ? 'source' : 'live'
     setEngine(editorEngine)
   }
 
@@ -96,21 +98,20 @@
 
   // SSE 外部变更（免确认直写/别的客户端/curl）的保守回显（design doc §5.3）：
   // 仅当 (a) 本地无未保存输入、(b) 服务端内容确与缓冲不同 时才替换——绝不打断正在输入的用户。
-  // 富文本编辑中无法无损同步 Crepe 缓冲 → 跳过（下一次保存按最后写入者胜，与既有行为一致）。
+  // 统一到 CM6 后源码/Live Preview 同一实例，可无损 setValue（不再有富文本跳过分支）。
   // 返回是否已应用，父级据此同步自己的 detail 快照。
   export function applyExternal(fresh: NoteDetail): boolean {
     if (!detail || fresh.id !== detail.id) return false
     if (dirty || saveState === 'saving') return false
     if (fresh.title === title && fresh.body === body) return false
-    if (editMode && engine === 'wysiwyg') return false
     title = fresh.title
     body = fresh.body
-    sourceHandle?.setValue(body) // 源码编辑器视图同步（阅读视图经 html derived 自动更新）
+    editorHandle?.setValue(body) // 编辑器视图同步（阅读视图经 html derived 自动更新）
     return true
   }
 
   // 插件 backend 命令（note-toolbar）：把当前正文交给命令，返回的 body 替换编辑缓冲。
-  // 仅源码模式暴露（富文本会整篇重排 markdown，替换正文语义不清）。
+  // 统一到 CM6 后源码/Live Preview 均可安全替换正文，两模式都暴露。
   let runningCmd = $state<string | null>(null)
   let cmdError = $state('')
   async function runPluginCommand(pluginId: string, commandId: string) {
@@ -127,7 +128,7 @@
       const result = r.result
       if (typeof result.body === 'string' && result.body !== body) {
         body = result.body
-        sourceHandle?.setValue(body) // 同步编辑器视图
+        editorHandle?.setValue(body) // 同步编辑器视图
         scheduleSave() // 走正常自动保存链路
       }
     } catch (e) {
@@ -163,12 +164,31 @@
   }
 
   function onContentClick(e: MouseEvent) {
-    const el = (e.target as HTMLElement).closest('[data-internal-id]') as HTMLElement | null
+    const target = e.target as HTMLElement
+    // PDF 卡片 → 打开自绘阅读器
+    const pdf = target.closest('.pdf-card') as HTMLElement | null
+    if (pdf) {
+      e.preventDefault()
+      const id = pdf.getAttribute('data-resource-id')
+      if (id) onOpenPdf?.(id, pdf.getAttribute('data-filename') || 'PDF')
+      return
+    }
+    const el = target.closest('[data-internal-id]') as HTMLElement | null
     if (!el) return
     e.preventDefault()
     const id = el.getAttribute('data-internal-id')
     if (id) onNavigate(id)
   }
+
+  // 编辑器里的 PDF 卡片（CM widget）点击 → 冒泡到 window 的 jasper-open-pdf 事件 → 打开阅读器
+  $effect(() => {
+    const h = (e: Event) => {
+      const d = (e as CustomEvent).detail
+      if (d?.id) onOpenPdf?.(d.id, d.name || 'PDF')
+    }
+    window.addEventListener('jasper-open-pdf', h)
+    return () => window.removeEventListener('jasper-open-pdf', h)
+  })
 </script>
 
 {#if detail}
@@ -176,9 +196,9 @@
     <div class="toolbar">
       <div class="left">
         {#if editMode && !readOnly}
-          <EditorToolbar mode={engine} handle={sourceHandle} />
-          <!-- 插件贡献的编辑器命令（仅源码模式）：一键优化等 -->
-          {#if engine === 'source' && editorCommands().length}
+          <EditorToolbar mode={engine} handle={editorHandle} />
+          <!-- 插件贡献的编辑器命令（源码/实时预览均可）：一键优化等 -->
+          {#if editorCommands().length}
             <span class="sep"></span>
             {#each editorCommands() as cmd (cmd.pluginId + ':' + cmd.commandId)}
               <Button
@@ -187,7 +207,7 @@
                 icon={runningCmd === cmd.commandId ? 'clean' : cmd.icon}
                 label={cmd.title}
                 onclick={() => runPluginCommand(cmd.pluginId, cmd.commandId)}
-                disabled={!sourceHandle || runningCmd !== null}
+                disabled={!editorHandle || runningCmd !== null}
               />
             {/each}
           {/if}
@@ -207,8 +227,8 @@
           {#if editMode && isMarkdown}
             <Button
               variant="default"
-              icon={engine === 'wysiwyg' ? 'code' : 'rich'}
-              label={engine === 'wysiwyg' ? t('note.toSource') : t('note.toRich')}
+              icon={engine === 'live' ? 'code' : 'rich'}
+              label={engine === 'live' ? t('note.toSource') : t('note.toRich')}
               onclick={toggleEngine}
             />
           {/if}
@@ -239,11 +259,13 @@
         placeholder={t('note.titlePlaceholder')}
       />
       <div class="editor-wrap" data-ai-selectable>
-        {#if engine === 'wysiwyg'}
-          <WysiwygEditor value={body} onChange={onBodyChange} />
-        {:else}
-          <Editor value={body} onChange={onBodyChange} onReady={(h) => (sourceHandle = h)} />
-        {/if}
+        <CodeMirrorEditor
+          value={body}
+          onChange={onBodyChange}
+          onReady={(h) => (editorHandle = h)}
+          mode={engine}
+          {readOnly}
+        />
       </div>
     {:else}
       <h1 class="note-title">{title || t('common.untitled')}</h1>

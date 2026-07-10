@@ -96,7 +96,7 @@ const zh = {
 	'settings.appearance.language': '语言',
 	'settings.editor.default': '默认编辑器',
 	'settings.editor.source': '源码',
-	'settings.editor.wysiwyg': '所见即所得',
+	'settings.editor.wysiwyg': '实时预览',
 
 	// 笔记视图
 	'note.saving': '保存中…',
@@ -106,7 +106,7 @@ const zh = {
 	'note.edit': '编辑',
 	'note.delete': '删除',
 	'note.toSource': '源码',
-	'note.toRich': '富文本',
+	'note.toRich': '实时预览',
 	'note.titlePlaceholder': '标题',
 	'note.updatedAt': '更新于 {time}',
 	'note.source': '来源',
@@ -116,9 +116,18 @@ const zh = {
 	// 编辑器
 	'editor.attach': '附件',
 	'editor.hint': '可直接粘贴或拖拽图片',
+	'editor.placeholder': '开始写点什么…',
+
+	// PDF 阅读器
+	'pdf.zoomIn': '放大',
+	'pdf.zoomOut': '缩小',
+	'pdf.prev': '上一页',
+	'pdf.next': '下一页',
+	'pdf.download': '下载',
+	'pdf.loading': '加载中…',
+	'pdf.error': 'PDF 加载失败',
 	'editor.uploading': '上传中…（{n}）',
 	'editor.uploadFailed': '上传失败',
-	'editor.wysiwygFailed': '富文本编辑器加载失败',
 
 	// 编辑器格式化工具（源码模式工具栏）
 	'editor.tool.h1': '一级标题',
@@ -390,7 +399,7 @@ const en: typeof zh = {
 	'settings.appearance.language': 'Language',
 	'settings.editor.default': 'Default editor',
 	'settings.editor.source': 'Source',
-	'settings.editor.wysiwyg': 'WYSIWYG',
+	'settings.editor.wysiwyg': 'Live preview',
 
 	'note.saving': 'Saving…',
 	'note.saved': 'Saved',
@@ -399,7 +408,7 @@ const en: typeof zh = {
 	'note.edit': 'Edit',
 	'note.delete': 'Delete',
 	'note.toSource': 'Source',
-	'note.toRich': 'Rich text',
+	'note.toRich': 'Live preview',
 	'note.titlePlaceholder': 'Title',
 	'note.updatedAt': 'Updated {time}',
 	'note.source': 'Source',
@@ -408,9 +417,17 @@ const en: typeof zh = {
 
 	'editor.attach': 'Attach',
 	'editor.hint': 'Paste or drag images directly',
+	'editor.placeholder': 'Start writing…',
+
+	'pdf.zoomIn': 'Zoom in',
+	'pdf.zoomOut': 'Zoom out',
+	'pdf.prev': 'Previous page',
+	'pdf.next': 'Next page',
+	'pdf.download': 'Download',
+	'pdf.loading': 'Loading…',
+	'pdf.error': 'Failed to load PDF',
 	'editor.uploading': 'Uploading… ({n})',
 	'editor.uploadFailed': 'Upload failed',
-	'editor.wysiwygFailed': 'Failed to load the rich-text editor',
 
 	'editor.tool.h1': 'Heading 1',
 	'editor.tool.h2': 'Heading 2',

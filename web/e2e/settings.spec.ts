@@ -32,7 +32,7 @@ test('设置面板：分区侧边栏 + 搜索 + 客户端分区切换', async ({
 
 	// 编辑器分区：切换默认引擎（写 localStorage，客户端本地无副作用），验证选中态
 	await page.getByRole('button', { name: /^(编辑器|Editor)$/ }).click()
-	const wysiwyg = page.getByRole('button', { name: /^(所见即所得|WYSIWYG)$/ })
+	const wysiwyg = page.getByRole('button', { name: /^(实时预览|Live preview)$/ })
 	await wysiwyg.click()
 	await expect(wysiwyg).toHaveClass(/on/)
 })
