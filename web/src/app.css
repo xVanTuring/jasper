@@ -198,6 +198,12 @@ body {
   max-width: 460px;
   margin: 8px 0;
 }
+/* 编辑器里的内联 PDF widget 容器 */
+.cm-lp-pdf {
+  display: block;
+  max-width: 100%;
+  margin: 8px 0;
+}
 /* PDF 卡片（点击开自绘阅读器）/ 文件下载卡片 */
 .pdf-card,
 .file-card {
@@ -232,4 +238,130 @@ body {
 .file-card::before {
   content: '📎';
   font-size: 15px;
+}
+
+/* ---------- PDF 阅读器（内联嵌入 + 全屏模态，共用 pdfRender.ts） ---------- */
+.pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-side);
+}
+.pdf-viewer.inline {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  height: min(78vh, 880px);
+}
+.pdf-viewer.fullscreen {
+  flex: 1;
+  min-width: 0;
+}
+.pdf-toolbar {
+  flex: 0 0 auto;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 8px 0 12px;
+  background: var(--bg-side);
+  border-bottom: 1px solid var(--border);
+}
+.pdf-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.pdf-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.pdf-viewer .pt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.pdf-viewer .pt:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.pdf-viewer .pt:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.pdf-scale,
+.pdf-page {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 0 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.pdf-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 5px;
+}
+.pdf-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 10px 28px;
+  background: color-mix(in srgb, var(--text) 6%, var(--bg));
+}
+.pdf-page-box {
+  background: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+  border-radius: 2px;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+.pdf-page-box canvas {
+  display: block;
+  max-width: 100%;
+}
+.pdf-msg {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 40px 0;
+}
+.pdf-msg.err {
+  color: var(--danger);
+}
+
+/* PDF 折叠：折叠时高度自适应（只留工具栏）、隐藏页面区 */
+.pdf-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.pdf-viewer.inline.collapsed {
+  height: auto;
+}
+.pdf-viewer.collapsed .pdf-body {
+  display: none;
+}
+.pdf-viewer.collapsed .pdf-toolbar {
+  border-bottom: none;
 }

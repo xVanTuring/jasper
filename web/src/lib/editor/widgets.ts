@@ -6,6 +6,7 @@ import { WidgetType, type EditorView } from '@codemirror/view'
 import katex from 'katex'
 import { renderMarkdown } from '../render'
 import { parseResourceId, api } from '../api'
+import { renderPdfInto, type PdfHandle } from '../pdfRender'
 import 'katex/dist/katex.min.css'
 
 // —— 图片：![alt](url)，:/id 经 api.resourceUrl 解析为真实地址 ——
@@ -69,30 +70,36 @@ export class MediaWidget extends WidgetType {
 	}
 }
 
-// —— PDF 卡片：点击派发 jasper-open-pdf 事件（冒泡到 NoteView 打开自绘阅读器）——
-export class PdfCardWidget extends WidgetType {
+// —— PDF 内联嵌入：正文里直接渲染 PDF（Obsidian 式），工具栏「全屏」派发 jasper-open-pdf 打开模态 ——
+export class PdfEmbedWidget extends WidgetType {
+	private handle?: PdfHandle
 	constructor(
 		readonly id: string,
 		readonly name: string,
 	) {
 		super()
 	}
-	eq(other: PdfCardWidget) {
+	eq(other: PdfEmbedWidget) {
+		// id+name 稳定 → CM 复用同一 DOM，不因每次装饰重建而重载 pdf.js
 		return other.id === this.id && other.name === this.name
 	}
 	toDOM() {
-		const b = document.createElement('button')
-		b.type = 'button'
-		b.className = 'pdf-card'
-		b.textContent = this.name
-		b.addEventListener('mousedown', (e) => e.preventDefault())
-		b.addEventListener('click', () =>
-			b.dispatchEvent(new CustomEvent('jasper-open-pdf', { bubbles: true, detail: { id: this.id, name: this.name } })),
-		)
-		return b
+		const wrap = document.createElement('div')
+		wrap.className = 'cm-lp-pdf'
+		this.handle = renderPdfInto(wrap, {
+			url: api.resourceUrl(this.id),
+			name: this.name,
+			id: this.id,
+			onExpand: () =>
+				wrap.dispatchEvent(new CustomEvent('jasper-open-pdf', { bubbles: true, detail: { id: this.id, name: this.name } })),
+		})
+		return wrap
+	}
+	destroy() {
+		this.handle?.destroy()
 	}
 	ignoreEvent() {
-		return true
+		return true // 事件留给内联阅读器工具栏（翻页/缩放/全屏），不移动编辑器光标
 	}
 }
 

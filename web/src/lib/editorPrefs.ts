@@ -20,3 +20,23 @@ export function setEngine(e: EditorEngine): void {
 		/* localStorage 不可用 → 忽略 */
 	}
 }
+
+// 内容宽度：'full'=铺满整栏；'centered'=限宽居中（默认，阅读更舒适）。编辑与阅读视图共用。
+export const WIDTH_KEY = 'jasper.contentWidth'
+export type ContentWidth = 'full' | 'centered'
+
+export function getContentWidth(): ContentWidth {
+	try {
+		return localStorage.getItem(WIDTH_KEY) === 'full' ? 'full' : 'centered'
+	} catch {
+		return 'centered'
+	}
+}
+
+export function setContentWidth(w: ContentWidth): void {
+	try {
+		localStorage.setItem(WIDTH_KEY, w)
+	} catch {
+		/* 忽略 */
+	}
+}

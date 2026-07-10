@@ -74,13 +74,12 @@ function mediaElement(doc: Document, url: string, name: string, kind: string, re
     return m
   }
   if (kind === 'pdf') {
-    const b = doc.createElement('button')
-    b.className = 'pdf-card'
-    b.setAttribute('type', 'button')
-    b.setAttribute('data-resource-id', resId)
-    b.setAttribute('data-filename', name)
-    b.textContent = name
-    return b
+    // 占位盒：NoteView 阅读视图渲染后往里挂 pdfRender（内联嵌入），data-* 供其读取
+    const d = doc.createElement('div')
+    d.className = 'pdf-embed'
+    d.setAttribute('data-resource-id', resId)
+    d.setAttribute('data-filename', name)
+    return d
   }
   return null
 }

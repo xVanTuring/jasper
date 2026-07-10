@@ -22,9 +22,10 @@ const base = EditorView.theme({
 		overflow: 'auto',
 	},
 	'.cm-content': {
-		padding: '6px 0 40vh',
+		// 水平留白由 .cm-content 自带（与标题 36px 对齐）；滚动条在外层 .cm-scroller 上贴右缘。
+		padding: '6px 36px 40vh',
 		caretColor: 'var(--accent)',
-		maxWidth: '820px',
+		// 内容宽度（铺满 / 居中限宽）由 NoteView 的 .width-* 类控制，见 NoteView.svelte
 	},
 	'&.cm-focused': { outline: 'none' },
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },

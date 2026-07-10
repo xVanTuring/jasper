@@ -13,7 +13,7 @@ import { Decoration, WidgetType, EditorView, type DecorationSet } from '@codemir
 import { syntaxTree } from '@codemirror/language'
 import { StateField, StateEffect, type Range, type EditorState } from '@codemirror/state'
 import type { SyntaxNode } from '@lezer/common'
-import { ImageWidget, HrWidget, TableWidget, MathWidget, CheckboxWidget, BulletWidget, MediaWidget, PdfCardWidget, FileCardWidget } from './widgets'
+import { ImageWidget, HrWidget, TableWidget, MathWidget, CheckboxWidget, BulletWidget, MediaWidget, PdfEmbedWidget, FileCardWidget } from './widgets'
 import { parseResourceId } from '../api'
 import { mediaKind, resourceTitle } from '../resourceMeta.svelte'
 
@@ -152,7 +152,7 @@ function build(state: EditorState): Built {
 					const lkind = lid ? mediaKind(lid) : 'unknown'
 					if (lm && lid && !reveal(nf, nt) && (lkind === 'video' || lkind === 'audio' || lkind === 'pdf')) {
 						const nm = lm[1] || resourceTitle(lid) || 'file'
-						const w = lkind === 'pdf' ? new PdfCardWidget(lid, nm) : new MediaWidget(lm[2], lkind, nm)
+						const w = lkind === 'pdf' ? new PdfEmbedWidget(lid, nm) : new MediaWidget(lm[2], lkind, nm)
 						replaceWith(nf, nt, w)
 						consumed.push([nf, nt])
 						return false
@@ -185,7 +185,7 @@ function build(state: EditorState): Built {
 								kind === 'video' || kind === 'audio'
 									? new MediaWidget(url, kind, alt)
 									: kind === 'pdf' && id
-										? new PdfCardWidget(id, name)
+										? new PdfEmbedWidget(id, name)
 										: kind === 'file'
 											? new FileCardWidget(url, name)
 											: new ImageWidget(url, alt)
