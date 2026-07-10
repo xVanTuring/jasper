@@ -55,8 +55,9 @@ test.describe('AI 对话：选区上下文 + 会话持久化', () => {
 			})
 		})
 
-		// 打开一篇笔记（阅读视图）
+		// 打开一篇笔记并切到阅读视图（默认打开即进编辑态，选区捕获测的是 .content 阅读区）
 		await page.locator('button.note', { hasText: 'Plain Note' }).click()
+		await page.getByRole('button', { name: 'Read', exact: true }).click()
 		await expect(page.locator('.content')).toBeVisible()
 
 		// 打开 chat dock

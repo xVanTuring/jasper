@@ -70,8 +70,8 @@ test('input-phase editor plugin rewrites the source buffer after typing settles'
 	await fakeRoutes(page)
 	await openApp(page, { editor: 'source' })
 
+	// 打开笔记默认即进编辑态（源码引擎），无需再点「Edit」
 	await page.locator('button.note', { hasText: 'Plain Note' }).click()
-	await page.getByRole('button', { name: 'Edit' }).click()
 
 	const cm = page.locator('.cm-content')
 	await expect(cm).toBeVisible()

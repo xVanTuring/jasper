@@ -8,8 +8,8 @@ import { DATA_DIR } from './config'
 // 源码模式（CodeMirror）编辑 → 防抖自动保存 → 落盘 + API 可见。
 test('source-mode edit persists to disk and API', async ({ page, request }) => {
 	await openApp(page, { editor: 'source' })
+	// 打开笔记默认即进编辑态（源码引擎，因 editor:'source'），无需再点「Edit」
 	await page.locator('button.note', { hasText: 'Plain Note' }).click()
-	await page.getByRole('button', { name: 'Edit' }).click()
 
 	const cm = page.locator('.cm-content')
 	await expect(cm).toBeVisible()

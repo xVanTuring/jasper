@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { openApp } from './helpers'
+import { openApp, openNoteRead } from './helpers'
 
 test('loads the library: notebook and its notes', async ({ page }) => {
 	await openApp(page)
@@ -11,7 +11,7 @@ test('loads the library: notebook and its notes', async ({ page }) => {
 
 test('renders a note and resolves :/id images to the resource API', async ({ page }) => {
 	await openApp(page)
-	await page.locator('button.note', { hasText: 'Image Note' }).click()
+	await openNoteRead(page, 'Image Note')
 
 	const img = page.locator('.content img')
 	await expect(img).toHaveAttribute('src', /\/api\/resources\/5{32}$/)
@@ -23,12 +23,12 @@ test('renders a note and resolves :/id images to the resource API', async ({ pag
 
 test('todo note shows task-list progress', async ({ page }) => {
 	await openApp(page)
-	await page.locator('button.note', { hasText: 'Todo Note' }).click()
+	await openNoteRead(page, 'Todo Note')
 	await expect(page.getByText('Tasks 1/2').first()).toBeVisible()
 })
 
 test('renders markdown formatting', async ({ page }) => {
 	await openApp(page)
-	await page.locator('button.note', { hasText: 'Plain Note' }).click()
+	await openNoteRead(page, 'Plain Note')
 	await expect(page.locator('.content strong', { hasText: 'markdown' })).toBeVisible()
 })
