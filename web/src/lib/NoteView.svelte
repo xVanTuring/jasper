@@ -15,6 +15,7 @@
   import { enqueuePendingWrites } from './pendingWrites.svelte'
   import { getEngine, setEngine, getContentWidth, setContentWidth, type ContentWidth } from './editorPrefs'
   import { renderPdfInto, type PdfHandle } from './pdfRender'
+  import { Autosave } from './autosave'
 
   let {
     detail,
@@ -66,7 +67,10 @@
     setContentWidth(contentWidth)
   }
 
-  let dirty = false
+  // 自动保存协调（脏标记/在途/快照复核/外部回显门控）抽到纯逻辑 Autosave，见 autosave.ts
+  const autosave = new Autosave()
+  // 正在把外部变更写进编辑器缓冲：其间 setValue 触发的 onChange 是程序化写入，不应排自动保存
+  let applyingExternal = false
   let saveState = $state<'idle' | 'saving' | 'saved' | 'error'>('idle')
   let timer: ReturnType<typeof setTimeout> | undefined
 
@@ -79,28 +83,39 @@
 
   function scheduleSave() {
     if (!detail) return
-    dirty = true
+    autosave.markDirty()
     saveState = 'saving'
     clearTimeout(timer)
     timer = setTimeout(save, 800)
   }
 
   async function save() {
-    if (!detail || !dirty) return
+    if (!detail || !autosave.canBeginSave()) return
     clearTimeout(timer)
     const id = detail.id
+    // 快照本次要保存的内容：await 期间用户可能继续打字，届时不能把缓冲当作已保存——否则
+    // dirty 被误清后，自己写入的 SSE 回声会经 applyExternal 把更晚的输入连同光标一起重置回
+    // 服务端旧值（正是「编辑到一半被重置」的根因）。见 autosave.ts。
+    const saved = { title, body }
+    autosave.beginSave()
     try {
-      await api.updateNote(id, { title, body })
-      dirty = false
-      saveState = 'saved'
+      await api.updateNote(id, saved)
       onChanged()
+      if (autosave.finishSaveOk({ title, body }, saved)) {
+        saveState = 'saved'
+      } else {
+        // 保存期间又有新输入：仍是脏的，继续调度下一次保存，绝不清 dirty、绝不回退缓冲。
+        scheduleSave()
+      }
     } catch {
+      autosave.finishSaveErr()
       saveState = 'error'
     }
   }
 
   function onBodyChange(v: string) {
     body = v
+    if (applyingExternal) return // 程序化写入（外部同步）不排自动保存
     scheduleSave()
   }
 
@@ -146,11 +161,12 @@
   // 返回是否已应用，父级据此同步自己的 detail 快照。
   export function applyExternal(fresh: NoteDetail): boolean {
     if (!detail || fresh.id !== detail.id) return false
-    if (dirty || saveState === 'saving') return false
-    if (fresh.title === title && fresh.body === body) return false
+    if (!autosave.canApplyExternal({ title, body }, { title: fresh.title, body: fresh.body })) return false
+    applyingExternal = true
     title = fresh.title
     body = fresh.body
     editorHandle?.setValue(body) // 编辑器视图同步（阅读视图经 html derived 自动更新）
+    applyingExternal = false
     return true
   }
 
@@ -195,7 +211,7 @@
 
   // 切换笔记/卸载时，若有未保存改动则立即冲刷
   onDestroy(() => {
-    if (dirty && detail) {
+    if (autosave.dirty && detail) {
       clearTimeout(timer)
       const id = detail.id
       api.updateNote(id, { title, body }).then(onChanged).catch(() => {})
